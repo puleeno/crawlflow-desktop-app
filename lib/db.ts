@@ -109,6 +109,30 @@ export async function createProject(
     return { id, dbPath };
 }
 
+export async function createProjectFromPreset(
+    presetName: string,
+    presetDescription: string,
+    settings: Record<string, any>,
+    nodes: any[],
+    edges: any[]
+): Promise<{ id: string; dbPath: string }> {
+    const id = crypto.randomUUID();
+    const dbPath = `project_${id}.db`;
+
+    const master = await getMasterDb();
+    await master.execute(
+        `INSERT INTO projects (id, name, description, db_path) VALUES ($1, $2, $3, $4)`,
+        [id, presetName, presetDescription, dbPath]
+    );
+
+    const projectDb = await getProjectDb(id);
+    await initProjectDb(projectDb);
+
+    await saveProjectState(id, nodes, edges, settings);
+
+    return { id, dbPath };
+}
+
 export async function listProjects(): Promise<any[]> {
     const db = await getMasterDb();
     return await db.select('SELECT * FROM projects ORDER BY updated_at DESC');

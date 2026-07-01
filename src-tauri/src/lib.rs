@@ -83,6 +83,8 @@ pub fn run() {
             commands::summarize_parsed_html_cmd,
             // Marketplace commands
             commands::install_marketplace_item,
+            // Presets
+            commands::list_presets_cmd,
         ])
         .setup(|app| {
             let user_dir = get_user_plugins_dir();

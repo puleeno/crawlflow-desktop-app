@@ -1,20 +1,46 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { listPresets } from '../lib/presets';
+import PresetSelector from './PresetSelector';
+import type { Preset } from '../types';
 
 interface CreateProjectFormProps {
     onSubmit: (name: string, description: string) => void;
+    onApplyPreset: (preset: Preset) => void;
     onCancel: () => void;
     loading?: boolean;
 }
 
-export const CreateProjectForm: React.FC<CreateProjectFormProps> = ({ onSubmit, onCancel, loading }) => {
+export const CreateProjectForm: React.FC<CreateProjectFormProps> = ({ onSubmit, onApplyPreset, onCancel, loading }) => {
+    const [mode, setMode] = useState<'presets' | 'manual'>('presets');
     const [name, setName] = useState('');
     const [desc, setDesc] = useState('');
+    const [presets, setPresets] = useState<Preset[]>([]);
+    const [presetsLoading, setPresetsLoading] = useState(true);
+
+    useEffect(() => {
+        listPresets()
+            .then(setPresets)
+            .catch(() => setPresets([]))
+            .finally(() => setPresetsLoading(false));
+    }, []);
 
     const handleSubmit = () => {
         if (name.trim()) {
             onSubmit(name.trim(), desc.trim());
         }
     };
+
+    if (mode === 'presets') {
+        return (
+            <PresetSelector
+                presets={presets}
+                loading={presetsLoading}
+                onSelectPreset={onApplyPreset}
+                onManualCreate={() => setMode('manual')}
+                onCancel={onCancel}
+            />
+        );
+    }
 
     return (
         <div className="mb-6 p-5 bg-white rounded-xl border border-blue-200 shadow-md">
@@ -42,7 +68,14 @@ export const CreateProjectForm: React.FC<CreateProjectFormProps> = ({ onSubmit, 
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none"
                     />
                 </div>
-                <div className="flex gap-2 justify-end pt-2">
+                <div className="flex items-center gap-2 pt-1">
+                    <button
+                        onClick={() => setMode('presets')}
+                        className="px-3 py-1.5 text-xs font-medium text-gray-500 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                    >
+                        ← Quick Setup
+                    </button>
+                    <div className="flex-1" />
                     <button
                         onClick={onCancel}
                         className="px-4 py-2 text-sm font-semibold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"

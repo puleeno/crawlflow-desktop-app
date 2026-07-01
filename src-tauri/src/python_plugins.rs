@@ -198,6 +198,56 @@ impl PythonPluginEngine {
         &self.user_dir
     }
 
+    /// Collect presets from all Python plugins that expose a `register_presets()` function.
+    /// Returns a flattened list of preset definitions as JSON values.
+    pub fn collect_presets(&mut self) -> Vec<serde_json::Value> {
+        let mut presets = Vec::new();
+        let plugin_ids: Vec<String> = self.plugins.keys().cloned().collect();
+
+        for id in &plugin_ids {
+            let plugin = match self.plugins.get_mut(id) {
+                Some(p) => p,
+                None => continue,
+            };
+
+            let result: Result<Vec<serde_json::Value>, String> = Python::with_gil(|py| {
+                let globals = plugin
+                    .ensure_loaded(py)
+                    .map_err(|e| format!("Failed to load plugin: {}", e))?;
+
+                let func = match globals.get_item("register_presets") {
+                    Ok(Some(f)) if f.is_callable() => f,
+                    _ => return Ok(vec![]),
+                };
+
+                let result = func
+                    .call0()
+                    .map_err(|e| format!("Python plugin '{}.register_presets' failed: {}", id, e))?;
+
+                let result_str: String = result
+                    .extract()
+                    .map_err(|e| format!("Failed to extract preset string: {}", e))?;
+
+                let parsed: Vec<serde_json::Value> = serde_json::from_str(&result_str)
+                    .map_err(|e| format!("Failed to parse preset JSON: {}", e))?;
+
+                Ok(parsed)
+            });
+
+            if let Ok(plugin_presets) = result {
+                for mut p in plugin_presets {
+                    if let Some(obj) = p.as_object_mut() {
+                        obj.insert("source".into(), serde_json::Value::String("plugin".into()));
+                        obj.insert("plugin_id".into(), serde_json::Value::String(id.clone()));
+                    }
+                    presets.push(p);
+                }
+            }
+        }
+
+        presets
+    }
+
     // ── Hook helpers ──────────────────────────────────────────────
 
     /// Call any named function in a Python plugin.

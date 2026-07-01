@@ -72,6 +72,20 @@ pub struct PluginInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresetDefinition {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub icon: String,
+    pub icon_color: String,
+    pub source: String,
+    pub plugin_id: Option<String>,
+    pub project_settings: serde_json::Value,
+    pub nodes: serde_json::Value,
+    pub edges: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportRequest {
     pub format: String,
     pub data: Vec<serde_json::Value>,

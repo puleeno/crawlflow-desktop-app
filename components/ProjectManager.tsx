@@ -3,7 +3,8 @@ import { GlobeAltIcon, ArrowUpTrayIcon, PlusIcon } from './icons';
 import { CreateProjectForm } from './CreateProjectForm';
 import { ProjectCard } from './ProjectCard';
 import { EmptyState } from './EmptyState';
-import { listProjects, createProject, deleteProject } from '../lib/db';
+import { listProjects, createProject, createProjectFromPreset, deleteProject } from '../lib/db';
+import type { Preset } from '../types';
 
 interface ProjectRecord {
     id: string;
@@ -49,6 +50,26 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
             onOpenProject(id);
         } catch (e) {
             console.error('Failed to create project:', e);
+        }
+        setCreating(false);
+    };
+
+    const handleApplyPreset = async (preset: Preset) => {
+        setCreating(true);
+        try {
+            const presetName = preset.project_settings.name || preset.name;
+            const presetDesc = preset.description;
+            const { id } = await createProjectFromPreset(
+                presetName,
+                presetDesc,
+                preset.project_settings,
+                preset.nodes,
+                preset.edges
+            );
+            setShowCreate(false);
+            onOpenProject(id);
+        } catch (e) {
+            console.error('Failed to create project from preset:', e);
         }
         setCreating(false);
     };
@@ -111,10 +132,11 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
                     </div>
                 </div>
 
-                {/* Create Form */}
+                {/* Create Form / Preset Selector */}
                 {showCreate && (
                     <CreateProjectForm
                         onSubmit={handleCreate}
+                        onApplyPreset={handleApplyPreset}
                         onCancel={() => setShowCreate(false)}
                         loading={creating}
                     />

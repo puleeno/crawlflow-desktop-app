@@ -451,3 +451,32 @@ export interface ProcessorPluginMapping {
     config: Record<string, any>;
     enabled: boolean;
 }
+
+export interface PresetNode {
+    id: string;
+    type: string;
+    label: string;
+    position: { x: number; y: number };
+    data: Record<string, any>;
+}
+
+export interface PresetEdge {
+    id: string;
+    source: string;
+    target: string;
+    sourceHandle?: string;
+    targetHandle?: string;
+}
+
+export interface Preset {
+    id: string;
+    name: string;
+    description: string;
+    icon: string;
+    icon_color: string;
+    source: 'builtin' | 'plugin';
+    plugin_id?: string;
+    project_settings: Partial<ProjectSettings>;
+    nodes: PresetNode[];
+    edges: PresetEdge[];
+}

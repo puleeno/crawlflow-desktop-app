@@ -127,5 +127,67 @@ def export_data(data_json, config_json):
     return json.dumps(data)
 
 
+def register_presets():
+    return json.dumps([
+        {
+            "id": "json-transform-pipeline",
+            "name": "JSON Transform Pipeline",
+            "description": "Fetch JSON data, transform fields, and export as CSV.",
+            "icon": "Blocks",
+            "icon_color": "#eab308",
+            "project_settings": {
+                "name": "JSON Pipeline - {url}",
+                "description": "Transform JSON data from an API endpoint.",
+                "crawlDelay": 5000,
+                "userAgent": "CrawlFlow/1.0",
+                "concurrency": 3
+            },
+            "nodes": [
+                {
+                    "id": "ds-1",
+                    "type": "start",
+                    "label": "JSON API",
+                    "position": {"x": 50, "y": 200},
+                    "data": {
+                        "sourceType": "api",
+                        "sourceValue": "",
+                        "apiSettings": {
+                            "authType": "none",
+                            "authDetails": {},
+                            "paginationType": "none",
+                            "paginationDetails": {}
+                        }
+                    }
+                },
+                {
+                    "id": "proc-1",
+                    "type": "processor",
+                    "label": "JSON Transform",
+                    "position": {"x": 350, "y": 200},
+                    "data": {
+                        "processorType": "py-json-transformer",
+                        "processorConfig": {}
+                    }
+                },
+                {
+                    "id": "exp-1",
+                    "type": "csvExport",
+                    "label": "CSV Export",
+                    "position": {"x": 650, "y": 200},
+                    "data": {
+                        "presets": [],
+                        "mappings": [],
+                        "hasHeader": True
+                    }
+                }
+            ],
+            "edges": [
+                {"id": "e-ds-proc", "source": "ds-1", "target": "proc-1", "sourceHandle": "data-out", "targetHandle": "data-in"},
+                {"id": "e-proc-exp", "source": "proc-1", "target": "exp-1", "sourceHandle": "data-out", "targetHandle": "data-in"}
+            ]
+        }
+    ])
+
+
 def on_unload():
     crawlflow.log("JSON Transformer unloaded", "info")

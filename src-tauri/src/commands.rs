@@ -378,6 +378,14 @@ pub fn summarize_parsed_html_cmd(
     summary
 }
 
+// ── Presets ────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn list_presets_cmd(state: State<'_, AppState>) -> Vec<serde_json::Value> {
+    let mut guard = state.plugin_engine.lock().unwrap();
+    guard.list_presets()
+}
+
 // ── Marketplace installation ─────────────────────────────────────────
 
 fn get_user_plugins_dir() -> PathBuf {
