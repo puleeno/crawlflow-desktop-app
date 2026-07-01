@@ -8,6 +8,7 @@ import type {
     ProcessorDefinition,
     ParserDefinition,
 } from '../types';
+import { pythonPluginBridge } from './pythonPlugins';
 
 class PluginManager {
     private registry: Map<string, CrawlFlowPlugin> = new Map();
@@ -24,11 +25,18 @@ class PluginManager {
         this.loaded = true;
 
         const db = await this.getDb();
-        if (!db) return;
+        if (db) {
+            const rows: PluginRecord[] = await db.select('SELECT * FROM extensions WHERE enabled = 1');
+            for (const row of rows) {
+                this.enabledPlugins.add(row.id);
+            }
+        }
 
-        const rows: PluginRecord[] = await db.select('SELECT * FROM extensions WHERE enabled = 1');
-        for (const row of rows) {
-            this.enabledPlugins.add(row.id);
+        // Discover Python plugins (if running in Tauri)
+        try {
+            await pythonPluginBridge.init();
+        } catch {
+            // Not in Tauri or Python not available – silently skip
         }
     }
 

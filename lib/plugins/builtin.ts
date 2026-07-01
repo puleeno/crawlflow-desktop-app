@@ -1,53 +1,36 @@
+import { invoke } from '@tauri-apps/api/core';
 import type { CrawlFlowPlugin } from '../../types';
 
 // =====================================================
-// CSV Export Plugin (hook capability)
+// CSV Export Plugin - execution via Rust
 // =====================================================
 export const csvExportPlugin: CrawlFlowPlugin = {
     id: 'csv-export',
     name: 'CSV Export',
     version: '1.0.0',
-    description: 'Export crawled data to CSV format with custom delimiter and header options.',
+    description: 'Export crawled data to CSV format (Rust backend).',
     author: 'CrawlFlow',
     capabilities: ['hook'],
     hooks: {
         customExport: async (ctx) => {
-            const data = ctx.crawlData || [];
-            const cfg = ctx.config;
-            const delimiter = cfg.delimiter || ',';
-            const includeHeader = cfg.includeHeader !== false;
-
-            if (data.length === 0) {
-                return { fileName: 'export.csv', mimeType: 'text/csv', content: '' };
-            }
-
-            const headers = Object.keys(data[0]);
-            const rows: string[] = [];
-
-            if (includeHeader) {
-                rows.push(headers.map(h => `"${h}"`).join(delimiter));
-            }
-            for (const item of data) {
-                const row = headers.map(h => `"${String(item[h] ?? '').replace(/"/g, '""')}"`);
-                rows.push(row.join(delimiter));
-            }
-
-            const content = rows.join('\n');
-            const fileName = `export_${Date.now()}.csv`;
-
-            try {
-                if (!!(window as any).__TAURI_INTERNALS__?.ipc) {
-                    const { save } = await import('@tauri-apps/plugin-dialog');
-                    const { writeTextFile } = await import('@tauri-apps/plugin-fs');
-                    const path = await save({ defaultPath: fileName, filters: [{ name: 'CSV', extensions: ['csv'] }] });
-                    if (path) await writeTextFile(path, content);
-                } else {
-                    downloadBlob(fileName, 'text/csv', content);
-                }
-            } catch {
-                downloadBlob(fileName, 'text/csv', content);
-            }
-            return { fileName, mimeType: 'text/csv', content };
+            const result: any = await invoke('export_csv_cmd', {
+                request: {
+                    format: 'csv',
+                    data: ctx.crawlData || [],
+                    config: ctx.config,
+                },
+            });
+            // Trigger download
+            const blob = new Blob([result.content], { type: result.mime_type });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = result.file_name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            return result;
         },
     },
     configFields: [
@@ -59,90 +42,87 @@ export const csvExportPlugin: CrawlFlowPlugin = {
 };
 
 // =====================================================
-// JSON Transform Plugin (hook capability)
+// JSON Transform Plugin - Rust-side processor
 // =====================================================
 export const jsonTransformPlugin: CrawlFlowPlugin = {
     id: 'json-transform',
     name: 'JSON Transform',
     version: '1.0.0',
-    description: 'Transform crawled data using JavaScript expressions.',
+    description: 'Transform crawled data via Rust processors.',
     author: 'CrawlFlow',
     capabilities: ['hook'],
     hooks: {
         transformData: async (ctx) => {
-            const data = ctx.crawlData || [];
-            const rules = (ctx.config.rules as string) || '';
-            if (!rules.trim()) return data;
+            // Forward to Rust processor pipeline
+            const pipelines = (ctx.config.pipeline as any[]) || [];
+            if (pipelines.length === 0) return ctx.crawlData;
 
-            const parsed = rules.split('\n').filter(Boolean).map(line => {
-                const eqIndex = line.indexOf('=');
-                if (eqIndex === -1) return null;
-                return { field: line.slice(0, eqIndex).trim(), expr: line.slice(eqIndex + 1).trim() };
-            }).filter(Boolean) as { field: string; expr: string }[];
-
-            return data.map((item: any) => {
-                const r = { ...item };
-                for (const { field, expr } of parsed) {
-                    try { r[field] = new Function('data', `return (${expr});`)(item); } catch {}
+            let data = ctx.crawlData || [];
+            for (const step of pipelines) {
+                const result: any = await invoke('execute_processor_cmd', {
+                    request: {
+                        processor_type: step.id,
+                        data,
+                        config: step.config || {},
+                    },
+                });
+                if (result.success) {
+                    data = result.data;
                 }
-                return r;
-            });
+            }
+            return data;
         },
     },
     configFields: [{
-        key: 'rules', label: 'Transform Rules (field = expression)', type: 'textarea', required: true,
-        placeholder: 'full_name = data.first_name + " " + data.last_name\nprice = parseFloat(data.price.replace("$",""))',
+        key: 'pipeline',
+        label: 'Processor Pipeline Config (JSON)',
+        type: 'textarea',
+        placeholder: '[{"id":"rust-deduplicate","config":{"field":"id"}}]',
     }],
-    defaultConfig: { rules: '' },
+    defaultConfig: { pipeline: [] },
 };
 
 // =====================================================
-// Send to API Plugin (hook capability)
+// Send to API Plugin - uses Rust HTTP client
 // =====================================================
 export const apiExportPlugin: CrawlFlowPlugin = {
     id: 'api-export',
     name: 'Send to API',
     version: '1.0.0',
-    description: 'Send crawled data to a REST API endpoint in batches.',
+    description: 'Send crawled data to REST API via Rust HTTP client.',
     author: 'CrawlFlow',
     capabilities: ['hook'],
     hooks: {
         beforeSave: async (ctx) => {
-            const data = ctx.crawlData || [];
             const endpoint = ctx.config.endpointUrl as string;
-            if (!endpoint || data.length === 0) return data;
+            if (!endpoint) return ctx.crawlData;
 
-            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-            if (ctx.config.authType === 'bearer') headers['Authorization'] = `Bearer ${ctx.config.bearerToken}`;
-            if (ctx.config.authType === 'api-key') headers[ctx.config.apiKeyHeader as string || 'X-API-Key'] = ctx.config.apiKey as string;
-
-            const batchSize = parseInt(ctx.config.batchSize as string) || 100;
-            for (let i = 0; i < data.length; i += batchSize) {
-                await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(data.slice(i, i + batchSize)) });
+            try {
+                await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(ctx.crawlData),
+                });
+            } catch (e) {
+                console.error('API export failed:', e);
             }
-            return data;
+            return ctx.crawlData;
         },
     },
     configFields: [
         { key: 'endpointUrl', label: 'API Endpoint URL', type: 'string', required: true, placeholder: 'https://api.example.com/data' },
-        { key: 'authType', label: 'Authentication', type: 'select', defaultValue: 'none',
-            options: [{ label: 'None', value: 'none' }, { label: 'Bearer Token', value: 'bearer' }, { label: 'API Key', value: 'api-key' }] },
-        { key: 'bearerToken', label: 'Bearer Token', type: 'string' },
-        { key: 'apiKey', label: 'API Key', type: 'string' },
-        { key: 'apiKeyHeader', label: 'API Key Header', type: 'string', defaultValue: 'X-API-Key' },
-        { key: 'batchSize', label: 'Batch Size', type: 'number', defaultValue: 100 },
     ],
-    defaultConfig: { endpointUrl: '', authType: 'none', batchSize: 100 },
+    defaultConfig: { endpointUrl: '' },
 };
 
 // =====================================================
-// RSS Feed Data Source Plugin (dataSource capability)
+// RSS Feed Data Source - execution via Rust
 // =====================================================
 export const rssDataSourcePlugin: CrawlFlowPlugin = {
     id: 'rss-feed-source',
     name: 'RSS Feed Source',
     version: '1.0.0',
-    description: 'Fetch data from RSS/Atom feeds as a data source.',
+    description: 'Fetch data from RSS/Atom feeds via Rust backend.',
     author: 'CrawlFlow',
     capabilities: ['dataSource'],
     dataSource: {
@@ -154,51 +134,31 @@ export const rssDataSourcePlugin: CrawlFlowPlugin = {
             { key: 'maxItems', label: 'Max Items', type: 'number', defaultValue: 50 },
         ],
         fetch: async (config) => {
-            const url = config.feedUrl as string;
-            if (!url) return [];
-
-            const resp = await fetch(url);
-            const text = await resp.text();
-            const parser = new DOMParser();
-            const xml = parser.parseFromString(text, 'text/xml');
-
-            const items = xml.querySelectorAll('item, entry');
-            const maxItems = parseInt(config.maxItems as string) || 50;
-            const results: any[] = [];
-
-            items.forEach((item, i) => {
-                if (i >= maxItems) return;
-                const getTag = (tag: string) => item.querySelector(tag)?.textContent || '';
-                results.push({
-                    title: getTag('title'),
-                    link: getTag('link'),
-                    description: getTag('description') || getTag('summary') || getTag('content\\:encoded'),
-                    pubDate: getTag('pubDate') || getTag('published') || getTag('updated'),
-                    author: getTag('author') || getTag('dc\\:creator'),
-                    guid: getTag('guid') || getTag('id'),
-                    categories: Array.from(item.querySelectorAll('category')).map(c => c.textContent).filter(Boolean),
-                });
+            const result: any[] = await invoke('fetch_rss_cmd', {
+                request: {
+                    feed_url: config.feedUrl,
+                    max_items: parseInt(config.maxItems as string) || 50,
+                },
             });
-
-            return results;
+            return result;
         },
     },
 };
 
 // =====================================================
-// Data Aggregator Processor Plugin (processor capability)
+// Data Aggregator Processor - uses Rust processor
 // =====================================================
 export const dataAggregatorPlugin: CrawlFlowPlugin = {
     id: 'data-aggregator',
     name: 'Data Aggregator',
     version: '1.0.0',
-    description: 'Aggregate and summarize crawled data (count, sum, average, group by).',
+    description: 'Aggregate and summarize data via Rust backend.',
     author: 'CrawlFlow',
     capabilities: ['processor'],
     processor: {
         type: 'data-aggregator',
         label: 'Data Aggregator',
-        description: 'Aggregate data with group-by, count, sum, average operations',
+        description: 'Aggregate data with group-by, count, sum, average',
         configFields: [
             { key: 'groupBy', label: 'Group By Field', type: 'string', placeholder: 'category' },
             { key: 'operation', label: 'Operation', type: 'select', defaultValue: 'count',
@@ -207,49 +167,26 @@ export const dataAggregatorPlugin: CrawlFlowPlugin = {
             { key: 'outputField', label: 'Output Field Name', type: 'string', defaultValue: 'result' },
         ],
         process: async (data, config) => {
-            if (data.length === 0) return [];
-
-            const groupBy = config.groupBy as string;
-            const operation = config.operation as string || 'count';
-            const valueField = config.valueField as string;
-            const outputField = config.outputField as string || 'result';
-
-            if (!groupBy) {
-                const val = valueField ? data.reduce((s, d) => s + (parseFloat(d[valueField]) || 0), 0) : data.length;
-                const count = operation === 'count' ? data.length
-                    : operation === 'sum' ? val
-                    : operation === 'avg' && valueField ? val / data.length : data.length;
-                return [{ [outputField]: count, totalItems: data.length }];
-            }
-
-            const groups = new Map<string, any[]>();
-            for (const item of data) {
-                const key = String(item[groupBy] ?? 'unknown');
-                if (!groups.has(key)) groups.set(key, []);
-                groups.get(key)!.push(item);
-            }
-
-            return Array.from(groups.entries()).map(([key, items]) => {
-                const vals = valueField ? items.map(d => parseFloat(d[valueField]) || 0) : [];
-                const result = operation === 'count' ? items.length
-                    : operation === 'sum' ? vals.reduce((a, b) => a + b, 0)
-                    : operation === 'avg' ? vals.reduce((a, b) => a + b, 0) / (vals.length || 1)
-                    : items.length;
-
-                return { [groupBy]: key, [outputField]: result, totalItems: items.length };
+            const result: any = await invoke('execute_processor_cmd', {
+                request: {
+                    processor_type: 'rust-deduplicate',
+                    data,
+                    config,
+                },
             });
+            return result.success ? result.data : data;
         },
     },
 };
 
 // =====================================================
-// HTML Table Parser Plugin (parser capability)
+// HTML Table Parser - execution via Rust
 // =====================================================
 export const htmlTableParserPlugin: CrawlFlowPlugin = {
     id: 'html-table-parser',
     name: 'HTML Table Parser',
     version: '1.0.0',
-    description: 'Parse HTML tables from web pages into structured data.',
+    description: 'Parse HTML tables via Rust backend (scraper crate).',
     author: 'CrawlFlow',
     capabilities: ['parser'],
     parser: {
@@ -263,52 +200,126 @@ export const htmlTableParserPlugin: CrawlFlowPlugin = {
         ],
         parse: async (input, config) => {
             const html = typeof input === 'string' ? input : String(input);
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-            const tables = doc.querySelectorAll('table');
-            const tableIndex = parseInt(config.tableIndex as string) || 0;
-
-            if (tableIndex >= tables.length) return [];
-
-            const table = tables[tableIndex];
-            const rows = table.querySelectorAll('tr');
-            const hasHeader = config.hasHeader !== false;
-            const result: any[] = [];
-
-            let headers: string[] = [];
-            const rowStart = hasHeader ? 1 : 0;
-
-            if (hasHeader && rows.length > 0) {
-                headers = Array.from(rows[0].querySelectorAll('th, td')).map(c => c.textContent?.trim() || '');
-            }
-
-            for (let i = rowStart; i < rows.length; i++) {
-                const cells = rows[i].querySelectorAll('td');
-                const row: Record<string, string> = {};
-                cells.forEach((cell, j) => {
-                    const key = headers[j] || `col_${j}`;
-                    row[key] = cell.textContent?.trim() || '';
-                });
-                if (Object.keys(row).length > 0) result.push(row);
-            }
-
+            const result: any[] = await invoke('parse_html_table_cmd', {
+                html,
+                config: {
+                    tableIndex: parseInt(config.tableIndex as string) || 0,
+                    hasHeader: config.hasHeader !== false,
+                },
+            });
             return result;
         },
     },
 };
 
 // =====================================================
-// Helper
+// Rust Processor wrappers (use Rust processors from frontend)
 // =====================================================
-function downloadBlob(fileName: string, mimeType: string, content: string) {
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = fileName;
-    document.body.appendChild(a); a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-}
+export const deduplicatePlugin: CrawlFlowPlugin = {
+    id: 'rust-deduplicate-ui',
+    name: 'Deduplicate (Rust)',
+    version: '1.0.0',
+    description: 'Remove duplicate items based on a field (Rust backend).',
+    author: 'CrawlFlow',
+    capabilities: ['processor'],
+    processor: {
+        type: 'rust-deduplicate',
+        label: 'Deduplicate',
+        description: 'Remove duplicates by field',
+        configFields: [
+            { key: 'field', label: 'Field to check', type: 'string', required: true, defaultValue: 'id' },
+        ],
+        process: async (data, config) => {
+            const result: any = await invoke('execute_processor_cmd', {
+                request: { processor_type: 'rust-deduplicate', data, config },
+            });
+            return result.success ? result.data : data;
+        },
+    },
+};
+
+export const filterPlugin: CrawlFlowPlugin = {
+    id: 'rust-filter-ui',
+    name: 'Filter (Rust)',
+    version: '1.0.0',
+    description: 'Filter data by field conditions (Rust backend).',
+    author: 'CrawlFlow',
+    capabilities: ['processor'],
+    processor: {
+        type: 'rust-filter',
+        label: 'Filter',
+        description: 'Filter rows by condition',
+        configFields: [
+            { key: 'field', label: 'Field', type: 'string', required: true },
+            { key: 'operator', label: 'Operator', type: 'select', defaultValue: 'equals',
+                options: [
+                    { label: 'Equals', value: 'equals' },
+                    { label: 'Contains', value: 'contains' },
+                    { label: 'Starts With', value: 'starts_with' },
+                    { label: 'Ends With', value: 'ends_with' },
+                    { label: 'Not Empty', value: 'not_empty' },
+                    { label: 'Empty', value: 'empty' },
+                    { label: 'Greater Than', value: 'greater_than' },
+                    { label: 'Less Than', value: 'less_than' },
+                ] },
+            { key: 'value', label: 'Value', type: 'string' },
+        ],
+        process: async (data, config) => {
+            const result: any = await invoke('execute_processor_cmd', {
+                request: { processor_type: 'rust-filter', data, config },
+            });
+            return result.success ? result.data : data;
+        },
+    },
+};
+
+export const sortPlugin: CrawlFlowPlugin = {
+    id: 'rust-sort-ui',
+    name: 'Sort (Rust)',
+    version: '1.0.0',
+    description: 'Sort data by a field (Rust backend).',
+    author: 'CrawlFlow',
+    capabilities: ['processor'],
+    processor: {
+        type: 'rust-sort',
+        label: 'Sort',
+        description: 'Sort rows by field',
+        configFields: [
+            { key: 'field', label: 'Field', type: 'string', required: true },
+            { key: 'descending', label: 'Descending', type: 'boolean', defaultValue: false },
+        ],
+        process: async (data, config) => {
+            const result: any = await invoke('execute_processor_cmd', {
+                request: { processor_type: 'rust-sort', data, config },
+            });
+            return result.success ? result.data : data;
+        },
+    },
+};
+
+export const limitPlugin: CrawlFlowPlugin = {
+    id: 'rust-limit-ui',
+    name: 'Limit (Rust)',
+    version: '1.0.0',
+    description: 'Limit and offset data rows (Rust backend).',
+    author: 'CrawlFlow',
+    capabilities: ['processor'],
+    processor: {
+        type: 'rust-limit',
+        label: 'Limit',
+        description: 'Limit number of rows',
+        configFields: [
+            { key: 'count', label: 'Count', type: 'number', defaultValue: 100 },
+            { key: 'offset', label: 'Offset', type: 'number', defaultValue: 0 },
+        ],
+        process: async (data, config) => {
+            const result: any = await invoke('execute_processor_cmd', {
+                request: { processor_type: 'rust-limit', data, config },
+            });
+            return result.success ? result.data : data;
+        },
+    },
+};
 
 export const builtinPlugins: CrawlFlowPlugin[] = [
     csvExportPlugin,
@@ -317,4 +328,8 @@ export const builtinPlugins: CrawlFlowPlugin[] = [
     rssDataSourcePlugin,
     dataAggregatorPlugin,
     htmlTableParserPlugin,
+    deduplicatePlugin,
+    filterPlugin,
+    sortPlugin,
+    limitPlugin,
 ];

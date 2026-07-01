@@ -1,0 +1,7 @@
+{
+  "id": "json-transformer",
+  "name": "JSON Transformer",
+  "version": "1.0.0",
+  "description": "Transform, filter, and remap JSON data using Python",
+  "capabilities": ["processor", "dataSource", "export"]
+}
