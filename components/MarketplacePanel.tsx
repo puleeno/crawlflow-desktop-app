@@ -8,27 +8,32 @@ interface MarketplacePanelProps {
     onClose: () => void;
 }
 
+type Tab = 'plugins' | 'templates';
+
 const MarketplacePanel: React.FC<MarketplacePanelProps> = ({ isOpen, onClose }) => {
-    const [items, setItems] = useState<MarketplaceItem[]>([]);
+    const [plugins, setPlugins] = useState<MarketplaceItem[]>([]);
+    const [templates, setTemplates] = useState<MarketplaceItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [activeTab, setActiveTab] = useState<Tab>('plugins');
     const [searchQuery, setSearchQuery] = useState('');
-    const [itemTypeFilter, setItemTypeFilter] = useState<'all' | 'plugin' | 'template'>('all');
     const [installing, setInstalling] = useState<string | null>(null);
     const [installMsg, setInstallMsg] = useState<{ slug: string; ok: boolean; msg: string } | null>(null);
 
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const resp = await fetchItems({
-                type: itemTypeFilter === 'all' ? undefined : itemTypeFilter,
-            });
-            setItems(resp.data);
+            const [pluginResp, templateResp] = await Promise.all([
+                fetchItems({ type: 'plugin' }),
+                fetchItems({ type: 'template' }),
+            ]);
+            setPlugins(pluginResp.data);
+            setTemplates(templateResp.data);
         } catch (err) {
             console.error('Failed to fetch marketplace items', err);
         } finally {
             setLoading(false);
         }
-    }, [itemTypeFilter]);
+    }, []);
 
     useEffect(() => {
         if (isOpen) load();
@@ -56,6 +61,7 @@ const MarketplacePanel: React.FC<MarketplacePanelProps> = ({ isOpen, onClose }) 
         }
     };
 
+    const items = activeTab === 'plugins' ? plugins : templates;
     const filtered = items.filter(item =>
         item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         item.description.toLowerCase().includes(searchQuery.toLowerCase())
@@ -77,30 +83,30 @@ const MarketplacePanel: React.FC<MarketplacePanelProps> = ({ isOpen, onClose }) 
                 </div>
 
                 <div className="px-6 py-3 border-b border-gray-100 flex items-center gap-4">
+                    <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+                        {(['plugins', 'templates'] as const).map(t => (
+                            <button
+                                key={t}
+                                onClick={() => { setActiveTab(t); setSearchQuery(''); }}
+                                className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors capitalize ${
+                                    activeTab === t
+                                        ? 'bg-white text-gray-900 shadow-sm'
+                                        : 'text-gray-500 hover:text-gray-700'
+                                }`}
+                            >
+                                {t}
+                            </button>
+                        ))}
+                    </div>
                     <div className="flex-1 relative">
                         <input
                             type="text"
-                            placeholder="Search plugins & templates..."
+                            placeholder={`Search ${activeTab}...`}
                             value={searchQuery}
                             onChange={e => setSearchQuery(e.target.value)}
                             className="w-full pl-9 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         />
                         <span className="absolute left-3 top-2.5 text-gray-400"><SearchIcon /></span>
-                    </div>
-                    <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
-                        {(['all', 'plugin', 'template'] as const).map(t => (
-                            <button
-                                key={t}
-                                onClick={() => setItemTypeFilter(t)}
-                                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                                    itemTypeFilter === t
-                                        ? 'bg-white text-gray-900 shadow-sm'
-                                        : 'text-gray-500 hover:text-gray-700'
-                                }`}
-                            >
-                                {t === 'all' ? 'All' : t === 'plugin' ? 'Plugins' : 'Templates'}
-                            </button>
-                        ))}
                     </div>
                 </div>
 
@@ -108,7 +114,7 @@ const MarketplacePanel: React.FC<MarketplacePanelProps> = ({ isOpen, onClose }) 
                     {loading ? (
                         <div className="text-center py-16 text-gray-400 text-sm">Loading...</div>
                     ) : filtered.length === 0 ? (
-                        <div className="text-center py-16 text-gray-400 text-sm">No items found.</div>
+                        <div className="text-center py-16 text-gray-400 text-sm">No {activeTab} found.</div>
                     ) : (
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                             {filtered.map(item => (
