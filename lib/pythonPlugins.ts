@@ -180,6 +180,56 @@ class PythonPluginBridge {
         }
         return metas.map(m => m.id);
     }
+
+    // ── BeautifulSoup-specific helpers ──────────────────────────
+
+    /** Parse HTML via BeautifulSoup Python plugin → Rust ParsedHtmlItem structs */
+    async parseHtmlWithBs4(
+        html: string,
+        config?: Record<string, any>,
+    ): Promise<ParsedHtmlItem[]> {
+        const result: any = await invoke('parse_html_with_bs4_cmd', {
+            html,
+            config: config || {},
+        });
+        return result as ParsedHtmlItem[];
+    }
+
+    /** Summarize parsed HTML items (Rust-side processing) */
+    async summarizeParsedHtml(
+        items: ParsedHtmlItem[],
+    ): Promise<ParsedHtmlSummary> {
+        const result: any = await invoke('summarize_parsed_html_cmd', {
+            items,
+        });
+        return result as ParsedHtmlSummary;
+    }
+}
+
+// ── Types for BeautifulSoup parsed data (matches Rust structs) ──
+
+export interface ParsedHtmlItem {
+    tag: string;
+    text: string;
+    html: string;
+    type: string;
+    attributes: Record<string, string>;
+    href?: string;
+    src?: string;
+    name?: string;
+    selector?: string;
+    table_index?: number;
+    table_data?: string[][];
+}
+
+export interface ParsedHtmlSummary {
+    total_items: number;
+    links: ParsedHtmlItem[];
+    images: ParsedHtmlItem[];
+    headings: ParsedHtmlItem[];
+    meta_tags: ParsedHtmlItem[];
+    tables: ParsedHtmlItem[];
+    text_blocks: ParsedHtmlItem[];
 }
 
 export const pythonPluginBridge = new PythonPluginBridge();

@@ -57,6 +57,9 @@ pub fn run() {
             commands::call_python_export_cmd,
             commands::run_python_pipeline_cmd,
             commands::reload_python_plugins_cmd,
+            // BeautifulSoup commands
+            commands::parse_html_with_bs4_cmd,
+            commands::summarize_parsed_html_cmd,
         ])
         .setup(|app| {
             // Resolve plugin directory

@@ -1,0 +1,7 @@
+{
+  "id": "bs4-parser",
+  "name": "BeautifulSoup Parser",
+  "version": "1.0.0",
+  "description": "Parse HTML using Python BeautifulSoup, returns structured data to Rust backend",
+  "capabilities": ["processor", "parser"]
+}

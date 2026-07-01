@@ -48,7 +48,31 @@ Rust Command Handler
   │
   ├── Nếu là Rust built-in: execute_processor() trực tiếp
   │
-  └── Trả về kết quả (JSON) → Frontend render
+   └── Trả về kết quả (JSON) → Frontend render
+```
+
+### Luồng đặc biệt: BeautifulSoup HTML Parse (Python → Rust struct)
+
+```
+HTML (raw)
+  │
+  ▼
+Python Plugin (bs4-parser/main.py)
+  │ BeautifulSoup(html, "html.parser")
+  │ find_all('a', 'img', 'h1-h6', 'meta', 'table', ...)
+  ▼
+JSON (ParsedHtmlItem array: tag, text, html, type, attributes, href, ...)
+  │
+  ▼
+Rust Command (parse_html_with_bs4_cmd)
+  │ serde_json::from_value::<Vec<ParsedHtmlItem>>(json)
+  ▼
+Rust struct Vec<ParsedHtmlItem> (native Rust objects)
+  │
+  ├── summarize_parsed_html_cmd() → ParsedHtmlSummary
+  │     (links, images, headings, meta_tags, tables, text_blocks)
+  │
+  └── Có thể xử lý tiếp bằng Rust processors (filter, sort, v.v.)
 ```
 
 ### Luồng xử lý pipeline
@@ -94,9 +118,12 @@ crawlflow-desktop-app/
 │       └── builtin.ts           # 10 built-in JS plugins (wrapper invoke)
 │
 ├── plugins/                     # Python plugins (runtime directory)
-│   └── json_transformer/
+│   ├── json_transformer/
+│   │   ├── plugin.json          # Manifest
+│   │   └── main.py              # Hook implementations
+│   └── bs4-parser/
 │       ├── plugin.json          # Manifest
-│       └── main.py              # Hook implementations
+│       └── main.py              # BeautifulSoup HTML parser → Rust struct
 │
 └── src-tauri/
     ├── Cargo.toml               # Rust dependencies
@@ -144,6 +171,8 @@ crawlflow-desktop-app/
 | `call_python_export_cmd` | Gọi `export_data` Python | Python engine |
 | `run_python_pipeline_cmd` | Chạy pipeline Python steps | Python engine |
 | `reload_python_plugins_cmd` | Reload Python plugins | Python engine |
+| `parse_html_with_bs4_cmd` | Parse HTML via BeautifulSoup → Rust struct | Python bs4-parser → serde |
+| `summarize_parsed_html_cmd` | Summarize parsed items (Rust-side) | Rust `Vec<ParsedHtmlItem>` → `ParsedHtmlSummary` |
 
 ### `python_plugins.rs` — PyO3 Engine
 
@@ -186,6 +215,12 @@ crawlflow-desktop-app/
 ### `models.rs` — Shared types
 
 `CrawlRequest`, `CrawlResult`, `ExtractRule`, `ExtractedField`, `ProcessRequest`, `ProcessResult`, `ExportRequest`, `ExportResult`, `RssFetchRequest`, `PluginInfo`, `ParseRequest`
+
+**BeautifulSoup parsed data (Python → Rust struct):**
+- `ParsedHtmlItem` — Kết quả parse từ BeautifulSoup, gồm `tag`, `text`, `html`, `type`, `attributes`, `href`, `src`, `name`, `selector`, `table_index`, `table_data`
+- `ParsedHtmlSummary` — Tổng hợp sau khi xử lý: `total_items`, `links`, `images`, `headings`, `meta_tags`, `tables`, `text_blocks`
+
+Dữ liệu từ Python (JSON) → Rust (`serde_json::from_value`) → native structs → xử lý tiếp.
 
 ### `migrations.rs` — SQLite schema
 
@@ -244,6 +279,36 @@ plugins/<plugin_id>/
 
 Tất cả dữ liệu trao đổi dưới dạng JSON string. Python plugin tự `json.loads()` / `json.dumps()`.
 
+### BeautifulSoup Plugin (`bs4-parser`)
+
+Plugin này parse HTML bằng Python BeautifulSoup và trả về JSON mà Rust deserializes thành struct:
+
+```python
+# Python: bs4-parser/main.py
+from bs4 import BeautifulSoup
+
+def process_data(data_json, config_json):
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
+    for a in soup.find_all("a", href=True):
+        results.append({
+            "tag": "a", "text": a.get_text(strip=True),
+            "href": a["href"], "type": "link",
+            "attributes": dict(a.attrs),
+        })
+    return json.dumps(results)
+```
+
+```rust
+// Rust: nhận JSON từ Python → deserialize thành struct
+let items: Vec<ParsedHtmlItem> = serde_json::from_value(
+    serde_json::Value::Array(json_result)
+)?;
+// items[0].tag, items[0].item_type, items[0].attributes, ...
+```
+
+Yêu cầu: `pip3 install --user beautifulsoup4` (hoặc bundle trong app).
+
 ---
 
 ## Frontend (JavaScript/TypeScript)
@@ -262,6 +327,12 @@ Bridge phát hiện Python plugins từ Rust và wrap thành `CrawlFlowPlugin`:
 - Gọi `invoke('list_python_plugins_cmd')` → lấy metadata
 - Tự động tạo `DataSourceDefinition`, `ProcessorDefinition`, `ParserDefinition`
 - Mỗi `fetch`/`process`/`parse` gọi `invoke` tới command tương ứng
+
+**BeautifulSoup helpers:**
+- `pythonPluginBridge.parseHtmlWithBs4(html, config?)` → gọi `parse_html_with_bs4_cmd`, trả về `ParsedHtmlItem[]` (Rust struct)
+- `pythonPluginBridge.summarizeParsedHtml(items)` → gọi `summarize_parsed_html_cmd`, trả về `ParsedHtmlSummary`
+
+TypeScript types `ParsedHtmlItem` và `ParsedHtmlSummary` mirror chính xác Rust structs qua serde.
 
 ### `lib/plugins/builtin.ts`
 
@@ -313,6 +384,7 @@ Mỗi project có database riêng. Lưu nodes, edges (React Flow graph), crawl_d
 - Python interpreter khởi tạo tự động qua feature `auto-initialize`
 - Nếu không có Python, `init_python_plugins()` log warning, app vẫn chạy bình thường với Rust built-in processors
 - Plugin directory: `~/.local/share/crawlflow/plugins/` (Linux/macOS)
+- BeautifulSoup plugin yêu cầu `beautifulsoup4` package: `pip3 install --user beautifulsoup4`
 
 ---
 

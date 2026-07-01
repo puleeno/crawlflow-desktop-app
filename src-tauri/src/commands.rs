@@ -322,3 +322,57 @@ pub fn reload_python_plugins_cmd(state: State<'_, AppState>) -> Result<Vec<Strin
     let mut engine = state.plugin_engine.lock().unwrap();
     engine.reload_python_plugins()
 }
+
+// ── BeautifulSoup HTML parse: Python → Rust struct ──────────────
+
+/// Parse HTML using the BeautifulSoup Python plugin and deserialize
+/// into native Rust `ParsedHtmlItem` structs.
+#[tauri::command]
+pub fn parse_html_with_bs4_cmd(
+    state: State<'_, AppState>,
+    html: String,
+    config: serde_json::Value,
+) -> Result<Vec<ParsedHtmlItem>, String> {
+    let mut engine = state.plugin_engine.lock().unwrap();
+
+    // Pass HTML to the bs4-parser Python plugin's process_data hook
+    let input = vec![serde_json::json!({ "html": html })];
+    let json_result = engine.call_python_hook("bs4-parser", "process_data", input, config)?;
+
+    // Deserialize JSON into Rust structs
+    let items: Vec<ParsedHtmlItem> = serde_json::from_value(serde_json::Value::Array(json_result))
+        .map_err(|e| format!("Failed to deserialize bs4 output into Rust structs: {}", e))?;
+
+    Ok(items)
+}
+
+/// Process parsed HTML items — demonstrates Rust-side processing of
+/// data parsed by Python BeautifulSoup.
+#[tauri::command]
+pub fn summarize_parsed_html_cmd(
+    items: Vec<ParsedHtmlItem>,
+) -> ParsedHtmlSummary {
+    let mut summary = ParsedHtmlSummary {
+        total_items: items.len(),
+        links: vec![],
+        images: vec![],
+        headings: vec![],
+        meta_tags: vec![],
+        tables: vec![],
+        text_blocks: vec![],
+    };
+
+    for item in items {
+        match item.item_type.as_str() {
+            "link" => summary.links.push(item),
+            "image" => summary.images.push(item),
+            "heading" => summary.headings.push(item),
+            "meta" => summary.meta_tags.push(item),
+            "table" => summary.tables.push(item),
+            "text" => summary.text_blocks.push(item),
+            _ => summary.text_blocks.push(item),
+        }
+    }
+
+    summary
+}

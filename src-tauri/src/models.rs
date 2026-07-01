@@ -90,3 +90,42 @@ pub struct RssFetchRequest {
     pub feed_url: String,
     pub max_items: Option<usize>,
 }
+
+// ── BeautifulSoup Parsed HTML (Python → Rust) ─────────────────
+
+/// A single parsed HTML element, returned by the BeautifulSoup Python plugin.
+/// Rust deserializes this from JSON via serde.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParsedHtmlItem {
+    pub tag: String,
+    pub text: String,
+    pub html: String,
+    #[serde(rename = "type")]
+    pub item_type: String,
+    pub attributes: std::collections::HashMap<String, String>,
+
+    // Optional fields (only present for specific element types)
+    #[serde(default)]
+    pub href: String,
+    #[serde(default)]
+    pub src: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub selector: String,
+    #[serde(default)]
+    pub table_index: u32,
+    #[serde(default)]
+    pub table_data: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParsedHtmlSummary {
+    pub total_items: usize,
+    pub links: Vec<ParsedHtmlItem>,
+    pub images: Vec<ParsedHtmlItem>,
+    pub headings: Vec<ParsedHtmlItem>,
+    pub meta_tags: Vec<ParsedHtmlItem>,
+    pub tables: Vec<ParsedHtmlItem>,
+    pub text_blocks: Vec<ParsedHtmlItem>,
+}
