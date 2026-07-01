@@ -601,7 +601,7 @@ const App: React.FC = () => {
         const filePath = await save({ defaultPath: fileName, filters: [{ name: 'JSON', extensions: ['json'] }] });
         if (filePath) await writeTextFile(filePath, json);
         return;
-      } catch {}
+      } catch { }
     }
 
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(json);
@@ -654,7 +654,7 @@ const App: React.FC = () => {
           } else { alert('Invalid configuration file.'); }
         }
         return;
-      } catch {}
+      } catch { }
     }
 
     const input = document.createElement('input');
@@ -1000,20 +1000,20 @@ const App: React.FC = () => {
   return (
     <div className="flex flex-col h-screen font-sans bg-slate-100 overflow-hidden">
       {/* Project bar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-slate-200 shadow-sm">
+      <div className="flex items-center justify-between px-5 py-3 bg-white border-b border-slate-200 shadow-sm">
         <button
           onClick={handleCloseProject}
-          className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
         >
-          <HomeIcon className="w-4 h-4" />
+          <HomeIcon size={20} />
           Projects
         </button>
         <span className="text-sm font-semibold text-gray-700">{projectSettings.name}</span>
         <button
           onClick={() => setPluginManagerOpen(true)}
-          className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+          className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
         >
-          <PlusIcon className="w-4 h-4" />
+          <PlusIcon size={20} />
           Plugins
         </button>
       </div>
