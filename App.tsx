@@ -37,7 +37,8 @@ import HTMLDataExtractorNode, { CSVExtractorNode, JSONExtractorNode, XMLExtracto
 import ProcessorNode from './components/nodes/ProcessorNode';
 import CompletionNode from './components/nodes/CompletionNode';
 import ShapeNode from './components/nodes/ShapeNode';
-import { Bars3Icon, Cog6ToothIcon } from './components/icons';
+import { Bars3Icon, Cog6ToothIcon, HomeIcon } from './components/icons';
+import { ProjectManager } from './components/ProjectManager';
 
 
 import { NodeData, ProjectSettings, HTMLDataExtractorNodeData, ShapeNodeData, ShapeType } from './types';
@@ -152,6 +153,9 @@ const App: React.FC = () => {
 
   // State for mouse mode
   const [mouseMode, setMouseMode] = useState<MouseMode>('select');
+
+  // Navigation state
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
 
   // Ref for React Flow instance and wrapper
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
@@ -972,8 +976,40 @@ const App: React.FC = () => {
     handleCloseSettings();
   }, [rfInstance, nodes, setNodes, handleCloseSettings]);
 
+  const handleOpenProject = useCallback((projectId: string) => {
+    setCurrentProjectId(projectId);
+  }, []);
+
+  const handleCloseProject = useCallback(() => {
+    setCurrentProjectId(null);
+    setNodes([]);
+    setEdges([]);
+    setSelectedNode(null);
+  }, [setNodes, setEdges]);
+
+  if (!currentProjectId) {
+    return (
+      <ProjectManager
+        onOpenProject={handleOpenProject}
+        onImportProject={importConfiguration}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen font-sans bg-slate-100 overflow-hidden">
+      {/* Project bar */}
+      <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-slate-200 shadow-sm">
+        <button
+          onClick={handleCloseProject}
+          className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+        >
+          <HomeIcon className="w-4 h-4" />
+          Projects
+        </button>
+        <span className="text-sm font-semibold text-gray-700">{projectSettings.name}</span>
+        <div className="w-16" />
+      </div>
       <div className="flex flex-1 h-full overflow-hidden">
         <ReactFlowProvider>
           {/* Backdrop for mobile overlays */}
