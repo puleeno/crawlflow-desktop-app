@@ -8,6 +8,7 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        strictPort: true,
       },
       plugins: [react()],
       define: {
@@ -18,6 +19,11 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
-      }
+      },
+      build: {
+        target: 'esnext',
+      },
+      clearScreen: false,
+      envPrefix: ['VITE_', 'TAURI_'],
     };
 });

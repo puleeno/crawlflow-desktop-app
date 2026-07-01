@@ -1,7 +1,7 @@
 
 // FIX: The content for this file was missing. This is a complete implementation of the main App component.
 // FIX: Import `useState`, `useCallback`, `useMemo`, and `ChangeEvent` from React to fix missing name errors.
-import React, { useState, useCallback, useMemo, ChangeEvent, useEffect, MouseEvent, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, MouseEvent, useRef } from 'react';
 import ReactFlow, {
   ReactFlowProvider,
   addEdge,
@@ -578,60 +578,122 @@ const App: React.FC = () => {
     setProjectSettings(prev => ({ ...prev, ...update }));
   }, []);
 
-  const exportConfiguration = useCallback(() => {
-    const config = {
-      projectSettings,
-      nodes,
-      edges,
-    };
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(config, null, 2));
-    const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `${projectSettings.name.replace(/\s+/g, '_').toLowerCase()}.json`);
-    document.body.appendChild(downloadAnchorNode);
-    downloadAnchorNode.click();
-    downloadAnchorNode.remove();
-  }, [projectSettings, nodes, edges]);
-
-  const saveProject = useCallback(() => {
-    // In a real application, this would send data to a backend server.
-    // For now, we'll simulate a save by using localStorage.
-    const config = {
-      projectSettings,
-      nodes,
-      edges,
-    };
+  const exportConfiguration = useCallback(async () => {
     try {
-        localStorage.setItem('savedProject', JSON.stringify(config));
-        alert('Project saved successfully to local storage!');
-    } catch (e) {
-        alert('Failed to save project. Storage might be full.');
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const { writeTextFile } = await import('@tauri-apps/plugin-fs');
+
+      const filePath = await save({
+        defaultPath: `${projectSettings.name.replace(/\s+/g, '_').toLowerCase()}.json`,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+
+      if (filePath) {
+        const config = { projectSettings, nodes, edges };
+        await writeTextFile(filePath, JSON.stringify(config, null, 2));
+      }
+    } catch {
+      const config = { projectSettings, nodes, edges };
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(config, null, 2));
+      const downloadAnchorNode = document.createElement('a');
+      downloadAnchorNode.setAttribute("href", dataStr);
+      downloadAnchorNode.setAttribute("download", `${projectSettings.name.replace(/\s+/g, '_').toLowerCase()}.json`);
+      document.body.appendChild(downloadAnchorNode);
+      downloadAnchorNode.click();
+      downloadAnchorNode.remove();
     }
   }, [projectSettings, nodes, edges]);
 
-  const importConfiguration = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
+  const saveProject = useCallback(async () => {
+    try {
+      const { saveProjectState } = await import('./lib/db');
+      const master = await (await import('./lib/db')).getMasterDb();
+      const projects: any[] = await master.select(
+        "SELECT id FROM projects ORDER BY updated_at DESC LIMIT 1"
+      );
+      const projectId = projects.length > 0 ? projects[0].id : null;
+
+      if (projectId) {
+        await saveProjectState(projectId, nodes, edges, {
+          name: projectSettings.name,
+          description: projectSettings.description,
+          crawlDelay: String(projectSettings.crawlDelay),
+          userAgent: projectSettings.userAgent,
+          concurrency: String(projectSettings.concurrency),
+          enabled: String(projectSettings.enabled),
+        });
         try {
-          const config = JSON.parse(e.target?.result as string);
-          if (config.projectSettings && config.nodes && config.edges) {
-            setProjectSettings(config.projectSettings);
-            setNodes(config.nodes);
-            setEdges(config.edges);
-            setSelectedNode(null);
-          } else {
-            alert('Invalid configuration file.');
-          }
-        } catch (error) {
-          alert('Error reading configuration file.');
+          const { message } = await import('@tauri-apps/plugin-dialog');
+          await message('Project saved successfully!', { title: 'CrawlFlow', kind: 'info' });
+        } catch {
+          alert('Project saved successfully!');
+        }
+      } else {
+        const { createProject } = await import('./lib/db');
+        const { id } = await createProject(projectSettings.name, projectSettings.description);
+        const master = await (await import('./lib/db')).getMasterDb();
+        await master.execute("UPDATE projects SET updated_at = datetime('now') WHERE id = $1", [id]);
+        await (await import('./lib/db')).saveProjectState(id, nodes, edges, {
+          name: projectSettings.name, description: projectSettings.description,
+        });
+      }
+    } catch (e) {
+      try {
+        localStorage.setItem('savedProject', JSON.stringify({ projectSettings, nodes, edges }));
+        alert('Project saved to localStorage (Tauri APIs not available).');
+      } catch {
+        alert('Failed to save project.');
+      }
+    }
+  }, [projectSettings, nodes, edges]);
+
+  const importConfiguration = useCallback(async () => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const { readTextFile } = await import('@tauri-apps/plugin-fs');
+
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+
+      if (selected) {
+        const content = await readTextFile(selected as string);
+        const config = JSON.parse(content);
+        if (config.projectSettings && config.nodes && config.edges) {
+          setProjectSettings(config.projectSettings);
+          setNodes(config.nodes);
+          setEdges(config.edges);
+          setSelectedNode(null);
+        } else {
+          alert('Invalid configuration file.');
+        }
+      }
+    } catch {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      input.onchange = (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            try {
+              const config = JSON.parse(ev.target?.result as string);
+              if (config.projectSettings && config.nodes && config.edges) {
+                setProjectSettings(config.projectSettings);
+                setNodes(config.nodes);
+                setEdges(config.edges);
+                setSelectedNode(null);
+              } else {
+                alert('Invalid configuration file.');
+              }
+            } catch { alert('Error reading configuration file.'); }
+          };
+          reader.readAsText(file);
         }
       };
-      reader.readAsText(file);
-    }
-    if(event.target) {
-        event.target.value = '';
+      input.click();
     }
   }, [setNodes, setEdges]);
 

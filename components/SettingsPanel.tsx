@@ -15,7 +15,7 @@ interface SettingsPanelProps {
   onUpdateProjectSettings: (update: Partial<ProjectSettings>) => void;
   onExport: () => void;
   onSave: () => void;
-  onImport: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onImport: () => void;
   isOpen: boolean;
   // Inspector-related props
   onShowInspector: (htmlContent: string) => void;
@@ -1525,10 +1525,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                     <button onClick={onExport} className={`${commonButtonClasses} bg-indigo-600 hover:bg-indigo-700 flex items-center justify-center gap-2`}>
                         <ArrowDownTrayIcon /> Export JSON
                     </button>
-                     <label className={`${commonButtonClasses} bg-slate-600 hover:bg-slate-700 flex items-center justify-center gap-2 cursor-pointer`}>
+                    <button onClick={onImport} className={`${commonButtonClasses} bg-slate-600 hover:bg-slate-700 flex items-center justify-center gap-2`}>
                         <ArrowUpTrayIcon /> Import JSON
-                        <input type="file" onChange={onImport} className="hidden" accept=".json" />
-                    </label>
+                    </button>
                 </div>
                 <button
                     onClick={onSave}

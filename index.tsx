@@ -1,7 +1,7 @@
-
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import './index.css';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -21,9 +21,9 @@ console.error = (...args) => {
 };
 
 window.addEventListener('error', (event) => {
-    if (typeof event.message === 'string' && resizeObserverLoopErr.test(event.message)) {
-        event.stopImmediatePropagation();
-    }
+  if (typeof event.message === 'string' && resizeObserverLoopErr.test(event.message)) {
+    event.stopImmediatePropagation();
+  }
 });
 
 const root = ReactDOM.createRoot(rootElement);

@@ -1,22 +1,31 @@
 {
-  "name": "react-flow-crawler-configurator",
+  "name": "crawlflow-desktop",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "tauri": "tauri"
   },
   "dependencies": {
-    "react-dom": "^19.2.0",
+    "@medv/finder": "3.1.0",
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-fs": "^2.0.0",
+    "@tauri-apps/plugin-sql": "^2.0.0",
     "react": "^19.2.0",
-    "reactflow": "^11.11.4",
-    "@medv/finder": "3.1.0"
+    "react-dom": "^19.2.0",
+    "reactflow": "^11.11.4"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.5.2",
+    "postcss": "^8.5.16",
+    "tailwindcss": "^3.4.19",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }
