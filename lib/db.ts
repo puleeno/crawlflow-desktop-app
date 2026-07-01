@@ -168,10 +168,11 @@ export async function saveProjectState(
         );
     }
 
+    const status = (String(settings.enabled) === 'true' || settings.enabled === true) ? 'enabled' : 'disabled';
     const master = await getMasterDb();
     await master.execute(
-        "UPDATE projects SET updated_at = datetime('now') WHERE id = $1",
-        [projectId]
+        "UPDATE projects SET name = $1, description = $2, status = $3, updated_at = datetime('now') WHERE id = $4",
+        [settings.name || 'Untitled', settings.description || '', status, projectId]
     );
 }
 
