@@ -37,7 +37,7 @@ import HTMLDataExtractorNode, { CSVExtractorNode, JSONExtractorNode, XMLExtracto
 import ProcessorNode from './components/nodes/ProcessorNode';
 import CompletionNode from './components/nodes/CompletionNode';
 import ShapeNode from './components/nodes/ShapeNode';
-import { Bars3Icon, Cog6ToothIcon, HomeIcon, PlusIcon } from './components/icons';
+import { Bars3Icon, Cog6ToothIcon, HomeIcon, PlusIcon, PlayIcon } from './components/icons';
 import { ProjectManager } from './components/ProjectManager';
 import { PluginManagerPanel } from './components/PluginManagerPanel';
 
@@ -161,6 +161,8 @@ const App: React.FC = () => {
 
   // Ref for React Flow instance and wrapper
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
+  const [demoResult, setDemoResult] = useState<any[] | null>(null);
+  const [isDemoRunning, setIsDemoRunning] = useState(false);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   // Auto-save project metadata (name, status) to master DB with debounce
@@ -1014,6 +1016,21 @@ const App: React.FC = () => {
     }
   }, [setNodes, setEdges]);
 
+  const runDemo = useCallback(async () => {
+    if (isDemoRunning) return;
+    setIsDemoRunning(true);
+    setDemoResult(null);
+    try {
+      const result = await (window as any).__TAURI__?.invoke('run_demo_cmd');
+      setDemoResult(result || []);
+    } catch (e) {
+      console.error('Demo failed:', e);
+      setDemoResult([]);
+    } finally {
+      setIsDemoRunning(false);
+    }
+  }, [isDemoRunning]);
+
   const handleCloseProject = useCallback(() => {
     setCurrentProjectId(null);
     setNodes([]);
@@ -1047,6 +1064,15 @@ const App: React.FC = () => {
             {projectSettings.enabled ? 'Enabled' : 'Disabled'}
           </span>
         </div>
+        {(projectSettings as any).isDemo === 'true' && (
+          <button
+            onClick={runDemo}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors"
+          >
+            <PlayIcon size={20} />
+            Run Demo
+          </button>
+        )}
         <button
           onClick={() => setPluginManagerOpen(true)}
           className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
@@ -1156,6 +1182,50 @@ const App: React.FC = () => {
           onSelectorPicked={handleSelectorPicked}
           highlightedSelector={highlightedSelector}
         />
+      )}
+      {demoResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={() => setDemoResult(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full mx-4 max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-slate-200">
+              <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                <PlayIcon size={22} />
+                Demo Pipeline Results
+              </h2>
+              <button onClick={() => setDemoResult(null)} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-slate-100 rounded-lg transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {demoResult.map((step: any, i: number) => (
+                <div key={i} className="border border-slate-200 rounded-xl p-4 bg-slate-50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold">{i + 1}</span>
+                    <span className="font-semibold text-gray-800">{step.stage_name || step.stage}</span>
+                    <span className="text-xs text-gray-400 ml-auto">{step.input_count || step.input?.length || 0} → {step.output_count || step.output?.length || 0} items</span>
+                  </div>
+                  {step.detail && <p className="text-sm text-gray-600 mb-2">{step.detail}</p>}
+                  {step.output && step.output.length > 0 && (
+                    <div className="bg-white border border-slate-200 rounded-lg p-3 max-h-40 overflow-y-auto">
+                      {step.output.map((item: any, j: number) => (
+                        <div key={j} className="text-xs font-mono text-gray-600 py-0.5 border-b border-slate-100 last:border-0">
+                          {JSON.stringify(item)}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-slate-200 flex justify-between items-center text-sm text-gray-500">
+              <span>Pipeline steps: {demoResult.length}</span>
+              <button onClick={() => setDemoResult(null)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg transition-colors">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

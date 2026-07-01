@@ -171,6 +171,102 @@ impl PluginEngine {
 
         // Built-in presets
         presets.push(serde_json::json!({
+            "id": "demo-project",
+            "name": "Demo Project",
+            "description": "A fully self-contained demo showcasing the CrawlFlow pipeline. No network, no Python — just built-in sample data and processors. Click Run Demo to see results.",
+            "icon": "PlayIcon",
+            "icon_color": "#22c55e",
+            "source": "builtin",
+            "plugin_id": null,
+            "is_demo": true,
+            "project_settings": {
+                "name": "CrawlFlow Demo",
+                "description": "Self-contained demo — works offline with sample data.",
+                "crawlDelay": 0,
+                "userAgent": "CrawlFlow/1.0",
+                "concurrency": 1,
+                "isDemo": "true"
+            },
+            "nodes": [
+                {
+                    "id": "ds-1",
+                    "type": "start",
+                    "label": "Sample Data",
+                    "position": {"x": 50, "y": 250},
+                    "data": {
+                        "sourceType": "url",
+                        "sourceValue": "demo://internal/sample",
+                        "demoSource": true,
+                        "urlSettings": {
+                            "scope": "current-url",
+                            "excludeExtensions": [],
+                            "excludePatterns": [],
+                            "whitelistPatterns": [],
+                            "domainPolicy": "all",
+                            "domainWhitelist": []
+                        }
+                    }
+                },
+                {
+                    "id": "repo-1",
+                    "type": "repository",
+                    "label": "Raw Data (5 sample items)",
+                    "position": {"x": 250, "y": 250},
+                    "data": {}
+                },
+                {
+                    "id": "proc-1",
+                    "type": "processor",
+                    "label": "Filter (views > 500)",
+                    "position": {"x": 450, "y": 180},
+                    "data": {
+                        "processorType": "rust-filter",
+                        "processorConfig": {"field": "views", "operator": "greater_than", "value": "500"}
+                    }
+                },
+                {
+                    "id": "proc-2",
+                    "type": "processor",
+                    "label": "Sort (by views ↓)",
+                    "position": {"x": 450, "y": 320},
+                    "data": {
+                        "processorType": "rust-sort",
+                        "processorConfig": {"field": "views", "descending": true}
+                    }
+                },
+                {
+                    "id": "proc-3",
+                    "type": "processor",
+                    "label": "Limit (top 3)",
+                    "position": {"x": 650, "y": 250},
+                    "data": {
+                        "processorType": "rust-limit",
+                        "processorConfig": {"count": 3, "offset": 0}
+                    }
+                },
+                {
+                    "id": "exp-1",
+                    "type": "csvExport",
+                    "label": "CSV Export",
+                    "position": {"x": 850, "y": 250},
+                    "data": {
+                        "presets": [],
+                        "mappings": [],
+                        "hasHeader": true
+                    }
+                }
+            ],
+            "edges": [
+                {"id": "e-ds-repo", "source": "ds-1", "target": "repo-1", "sourceHandle": "data-out", "targetHandle": "data-in"},
+                {"id": "e-repo-filter", "source": "repo-1", "target": "proc-1", "sourceHandle": "data-out", "targetHandle": "data-in"},
+                {"id": "e-repo-sort", "source": "repo-1", "target": "proc-2", "sourceHandle": "data-out", "targetHandle": "data-in"},
+                {"id": "e-filter-limit", "source": "proc-1", "target": "proc-3", "sourceHandle": "data-out", "targetHandle": "data-in"},
+                {"id": "e-sort-limit", "source": "proc-2", "target": "proc-3", "sourceHandle": "data-out", "targetHandle": "data-in"},
+                {"id": "e-limit-csv", "source": "proc-3", "target": "exp-1", "sourceHandle": "data-out", "targetHandle": "data-in"}
+            ]
+        }));
+
+        presets.push(serde_json::json!({
             "id": "web-page-scraper",
             "name": "Web Page Scraper",
             "description": "Fetch a web page, extract content, and export to CSV.",
@@ -384,7 +480,7 @@ impl PluginEngine {
 // Built-in Rust plugins
 // ============================================================
 
-fn deduplicate_plugin(
+pub fn deduplicate_plugin(
     data: Vec<serde_json::Value>,
     config: serde_json::Value,
 ) -> Result<Vec<serde_json::Value>, String> {
@@ -405,7 +501,7 @@ fn deduplicate_plugin(
     Ok(result)
 }
 
-fn filter_plugin(
+pub fn filter_plugin(
     data: Vec<serde_json::Value>,
     config: serde_json::Value,
 ) -> Result<Vec<serde_json::Value>, String> {
@@ -469,7 +565,7 @@ fn filter_plugin(
     Ok(result)
 }
 
-fn sort_plugin(
+pub fn sort_plugin(
     data: Vec<serde_json::Value>,
     config: serde_json::Value,
 ) -> Result<Vec<serde_json::Value>, String> {
@@ -498,7 +594,7 @@ fn sort_plugin(
     Ok(result)
 }
 
-fn limit_plugin(
+pub fn limit_plugin(
     data: Vec<serde_json::Value>,
     config: serde_json::Value,
 ) -> Result<Vec<serde_json::Value>, String> {

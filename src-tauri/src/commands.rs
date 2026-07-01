@@ -386,6 +386,109 @@ pub fn list_presets_cmd(state: State<'_, AppState>) -> Vec<serde_json::Value> {
     guard.list_presets()
 }
 
+// ── Demo pipeline ──────────────────────────────────────────────────
+
+fn demo_sample_data() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({"id": 1, "title": "CrawlFlow Demo", "description": "A visual web crawler configurator", "author": "CrawlFlow Team", "url": "https://crawlflow.ai", "tags": ["crawler", "visual", "tool"], "views": 1520}),
+        serde_json::json!({"id": 2, "title": "Getting Started Guide", "description": "Learn how to use CrawlFlow in 5 minutes", "author": "Docs Team", "url": "https://crawlflow.ai/docs", "tags": ["guide", "tutorial"], "views": 890}),
+        serde_json::json!({"id": 3, "title": "Plugin Development", "description": "Create your own Python plugins", "author": "Dev Team", "url": "https://crawlflow.ai/plugins", "tags": ["python", "plugin", "dev"], "views": 340}),
+        serde_json::json!({"id": 4, "title": "Marketplace Launch", "description": "Browse and install community plugins", "author": "Community", "url": "https://crawlflow.ai/marketplace", "tags": ["marketplace", "community"], "views": 2100}),
+        serde_json::json!({"id": 5, "title": "Architecture Overview", "description": "Deep dive into the CrawlFlow architecture", "author": "CrawlFlow Team", "url": "https://crawlflow.ai/architecture", "tags": ["architecture", "deep-dive"], "views": 670}),
+    ]
+}
+
+#[tauri::command]
+pub fn run_demo_cmd() -> Result<serde_json::Value, String> {
+    use crate::plugins;
+
+    // Step 1: Get sample data
+    let data = demo_sample_data();
+    let mut result = serde_json::json!({
+        "step1_fetch": {
+            "label": "Fetched sample data",
+            "count": data.len(),
+            "data": data
+        }
+    });
+
+    // Step 2: Run deduplicate processor (remove duplicates by "id")
+    let dedup_config = serde_json::json!({"field": "id"});
+    let dedup_plugin = plugins::RustPlugin {
+        id: "rust-deduplicate".into(),
+        name: "Deduplicate".into(),
+        version: "1.0.0".into(),
+        description: "".into(),
+        capabilities: vec![],
+        execute: plugins::deduplicate_plugin,
+    };
+    let dedup_result = (dedup_plugin.execute)(data, dedup_config).map_err(|e| e)?;
+    result["step2_deduplicate"] = serde_json::json!({
+        "label": "Removed duplicate items by id field",
+        "count": dedup_result.len(),
+        "data": dedup_result
+    });
+
+    // Step 3: Run filter processor (only items with views > 500)
+    let filter_config = serde_json::json!({"field": "views", "operator": "greater_than", "value": "500"});
+    let filter_plugin = plugins::RustPlugin {
+        id: "rust-filter".into(),
+        name: "Filter".into(),
+        version: "1.0.0".into(),
+        description: "".into(),
+        capabilities: vec![],
+        execute: plugins::filter_plugin,
+    };
+    let filter_result = (filter_plugin.execute)(dedup_result, filter_config).map_err(|e| e)?;
+    result["step3_filter"] = serde_json::json!({
+        "label": "Filtered items with views > 500",
+        "count": filter_result.len(),
+        "data": filter_result
+    });
+
+    // Step 4: Run sort processor (by views descending)
+    let sort_config = serde_json::json!({"field": "views", "descending": true});
+    let sort_plugin = plugins::RustPlugin {
+        id: "rust-sort".into(),
+        name: "Sort".into(),
+        version: "1.0.0".into(),
+        description: "".into(),
+        capabilities: vec![],
+        execute: plugins::sort_plugin,
+    };
+    let sort_result = (sort_plugin.execute)(filter_result, sort_config).map_err(|e| e)?;
+    result["step4_sort"] = serde_json::json!({
+        "label": "Sorted by views (descending)",
+        "count": sort_result.len(),
+        "data": sort_result
+    });
+
+    // Step 5: Run limit processor (top 3)
+    let limit_config = serde_json::json!({"count": 3, "offset": 0});
+    let limit_plugin = plugins::RustPlugin {
+        id: "rust-limit".into(),
+        name: "Limit".into(),
+        version: "1.0.0".into(),
+        description: "".into(),
+        capabilities: vec![],
+        execute: plugins::limit_plugin,
+    };
+    let limit_result = (limit_plugin.execute)(sort_result, limit_config).map_err(|e| e)?;
+    result["step5_limit"] = serde_json::json!({
+        "label": "Limited to top 3 results",
+        "count": limit_result.len(),
+        "data": limit_result
+    });
+
+    result["final_output"] = serde_json::json!({
+        "label": "Final demo output (CSV-ready)",
+        "count": limit_result.len(),
+        "data": limit_result
+    });
+
+    Ok(result)
+}
+
 // ── Marketplace installation ─────────────────────────────────────────
 
 fn get_user_plugins_dir() -> PathBuf {
