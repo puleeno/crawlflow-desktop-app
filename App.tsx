@@ -41,6 +41,7 @@ import { Bars3Icon, Cog6ToothIcon, HomeIcon, PlusIcon, PlayIcon, StopIcon, Pause
 import { ProjectManager } from './components/ProjectManager';
 import { PluginManagerPanel } from './components/PluginManagerPanel';
 import LiveLogs from './components/LiveLogs';
+import AppSettings from './components/AppSettings';
 
 
 import { NodeData, ProjectSettings, HTMLDataExtractorNodeData, ShapeNodeData, ShapeType } from './types';
@@ -159,6 +160,7 @@ const App: React.FC = () => {
   // Navigation state
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [isPluginManagerOpen, setPluginManagerOpen] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   // Ref for React Flow instance and wrapper
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
@@ -1060,11 +1062,16 @@ const App: React.FC = () => {
     setSelectedNode(null);
   }, [setNodes, setEdges]);
 
+  if (showSettings) {
+    return <AppSettings onClose={() => setShowSettings(false)} />;
+  }
+
   if (!currentProjectId) {
     return (
       <ProjectManager
         onOpenProject={handleOpenProject}
         onImportProject={importConfiguration}
+        onOpenSettings={() => setShowSettings(true)}
       />
     );
   }
@@ -1118,6 +1125,13 @@ const App: React.FC = () => {
           >
             <PlusIcon size={20} />
             Plugins
+          </button>
+          <button
+            onClick={() => setShowSettings(true)}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
+          >
+            <Cog6ToothIcon />
+            Settings
           </button>
         </div>
       </div>

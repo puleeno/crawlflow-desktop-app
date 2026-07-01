@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { GlobeAltIcon, ArrowUpTrayIcon, PlusIcon } from './icons';
+import { GlobeAltIcon, ArrowUpTrayIcon, PlusIcon, Cog6ToothIcon } from './icons';
 import { CreateProjectForm } from './CreateProjectForm';
 import { ProjectCard } from './ProjectCard';
 import { EmptyState } from './EmptyState';
@@ -19,9 +19,10 @@ interface ProjectRecord {
 interface ProjectManagerProps {
     onOpenProject: (projectId: string) => void;
     onImportProject: () => void;
+    onOpenSettings?: () => void;
 }
 
-export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, onImportProject }) => {
+export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, onImportProject, onOpenSettings }) => {
     const [projects, setProjects] = useState<ProjectRecord[]>([]);
     const [loading, setLoading] = useState(true);
     const [showCreate, setShowCreate] = useState(false);
@@ -117,6 +118,14 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
+                        {onOpenSettings && (
+                            <button
+                                onClick={onOpenSettings}
+                                className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-700 transition-colors shadow-sm"
+                            >
+                                <Cog6ToothIcon /> Settings
+                            </button>
+                        )}
                         <button
                             onClick={onImportProject}
                             className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors shadow-sm"

@@ -581,6 +581,33 @@ pub fn clear_project_logs_cmd(
     format!("Logs cleared for project {}", project_id)
 }
 
+// ── System Service commands ────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_service_install_info_cmd() -> crate::system_service::ServiceInstallInfo {
+    crate::system_service::SystemServiceManager::get_info()
+}
+
+#[tauri::command]
+pub fn install_system_service_cmd() -> Result<String, String> {
+    crate::system_service::SystemServiceManager::install()
+}
+
+#[tauri::command]
+pub fn uninstall_system_service_cmd() -> Result<String, String> {
+    crate::system_service::SystemServiceManager::uninstall()
+}
+
+#[tauri::command]
+pub fn start_system_service_cmd() -> Result<String, String> {
+    crate::system_service::SystemServiceManager::start()
+}
+
+#[tauri::command]
+pub fn stop_system_service_cmd() -> Result<String, String> {
+    crate::system_service::SystemServiceManager::stop()
+}
+
 // ── Marketplace installation ─────────────────────────────────────────
 
 fn get_user_plugins_dir() -> PathBuf {

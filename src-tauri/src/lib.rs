@@ -7,6 +7,7 @@ mod pipeline;
 mod plugins;
 mod python_plugins;
 mod services;
+mod system_service;
 
 use commands::AppState;
 use logs::LogManager;
@@ -96,6 +97,12 @@ pub fn run() {
             // Log commands
             commands::get_project_logs_cmd,
             commands::clear_project_logs_cmd,
+            // System service commands
+            commands::get_service_install_info_cmd,
+            commands::install_system_service_cmd,
+            commands::uninstall_system_service_cmd,
+            commands::start_system_service_cmd,
+            commands::stop_system_service_cmd,
         ])
         .setup(|app| {
             let user_dir = get_user_plugins_dir();
