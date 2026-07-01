@@ -1,20 +1,29 @@
-import Database from '@tauri-apps/plugin-sql';
+let tauriAvailable = false;
 
-let masterDb: Database | null = null;
-
-export async function getMasterDb(): Promise<Database> {
-    if (!masterDb) {
-        masterDb = await Database.load('sqlite:crawlflow.db');
-    }
-    return masterDb;
+export function isTauri(): boolean {
+    try { return typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__?.ipc; }
+    catch { return false; }
 }
 
-export async function getProjectDb(projectId: string): Promise<Database> {
-    const dbPath = `sqlite:projects/${projectId}.db`;
-    return await Database.load(dbPath);
+export function setTauriAvailable(val: boolean) {
+    tauriAvailable = val;
 }
 
-export async function initProjectDb(db: Database): Promise<void> {
+export async function getMasterDb(): Promise<any> {
+    if (!isTauri()) throw new Error('Not in Tauri environment');
+
+    const { default: Database } = await import('@tauri-apps/plugin-sql');
+    return await Database.load('sqlite:crawlflow.db');
+}
+
+export async function getProjectDb(projectId: string): Promise<any> {
+    if (!isTauri()) throw new Error('Not in Tauri environment');
+
+    const { default: Database } = await import('@tauri-apps/plugin-sql');
+    return await Database.load(`sqlite:project_${projectId}.db`);
+}
+
+export async function initProjectDb(db: any): Promise<void> {
     const migrations = [
         `CREATE TABLE IF NOT EXISTS project_settings (
             key TEXT PRIMARY KEY,
@@ -75,7 +84,7 @@ export async function createProject(
     description: string = ''
 ): Promise<{ id: string; dbPath: string }> {
     const id = crypto.randomUUID();
-    const dbPath = `projects/${id}.db`;
+    const dbPath = `project_${id}.db`;
 
     const master = await getMasterDb();
     await master.execute(

@@ -53,19 +53,25 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
         setCreating(false);
     };
 
+    const isTauriEnv = () => {
+        try { return typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__?.ipc; }
+        catch { return false; }
+    };
+
     const handleDelete = async (id: string, name: string) => {
-        try {
-            const { ask } = await import('@tauri-apps/plugin-dialog');
-            const confirmed = await ask(`Delete "${name}"?`, { title: 'CrawlFlow', kind: 'warning' });
-            if (confirmed) {
-                await deleteProject(id);
-                await loadProjects();
-            }
-        } catch {
-            if (window.confirm(`Delete "${name}"?`)) {
-                await deleteProject(id);
-                await loadProjects();
-            }
+        let confirmed = false;
+        if (isTauriEnv()) {
+            try {
+                const { ask } = await import('@tauri-apps/plugin-dialog');
+                confirmed = await ask(`Delete "${name}"?`, { title: 'CrawlFlow', kind: 'warning' });
+            } catch {}
+        }
+        if (!confirmed) {
+            confirmed = window.confirm(`Delete "${name}"?`);
+        }
+        if (confirmed) {
+            await deleteProject(id);
+            await loadProjects();
         }
     };
 

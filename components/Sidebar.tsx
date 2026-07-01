@@ -182,7 +182,6 @@ const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onCl
 
   const handleAddNode = (type: string, data: NodeData, sourceNode?: Node | null) => {
     onAddNode(type, data, sourceNode);
-    onClose();
   }
 
   const addClickNode = () => {

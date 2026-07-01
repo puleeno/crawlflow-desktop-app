@@ -582,43 +582,42 @@ const App: React.FC = () => {
     setProjectSettings(prev => ({ ...prev, ...update }));
   }, []);
 
+  const isTauriEnv = useCallback(() => {
+    try { return typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__?.ipc; }
+    catch { return false; }
+  }, []);
+
   const exportConfiguration = useCallback(async () => {
-    try {
-      const { save } = await import('@tauri-apps/plugin-dialog');
-      const { writeTextFile } = await import('@tauri-apps/plugin-fs');
+    const config = { projectSettings, nodes, edges };
+    const json = JSON.stringify(config, null, 2);
+    const fileName = `${projectSettings.name.replace(/\s+/g, '_').toLowerCase()}.json`;
 
-      const filePath = await save({
-        defaultPath: `${projectSettings.name.replace(/\s+/g, '_').toLowerCase()}.json`,
-        filters: [{ name: 'JSON', extensions: ['json'] }],
-      });
-
-      if (filePath) {
-        const config = { projectSettings, nodes, edges };
-        await writeTextFile(filePath, JSON.stringify(config, null, 2));
-      }
-    } catch {
-      const config = { projectSettings, nodes, edges };
-      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(config, null, 2));
-      const downloadAnchorNode = document.createElement('a');
-      downloadAnchorNode.setAttribute("href", dataStr);
-      downloadAnchorNode.setAttribute("download", `${projectSettings.name.replace(/\s+/g, '_').toLowerCase()}.json`);
-      document.body.appendChild(downloadAnchorNode);
-      downloadAnchorNode.click();
-      downloadAnchorNode.remove();
+    if (isTauriEnv()) {
+      try {
+        const { save } = await import('@tauri-apps/plugin-dialog');
+        const { writeTextFile } = await import('@tauri-apps/plugin-fs');
+        const filePath = await save({ defaultPath: fileName, filters: [{ name: 'JSON', extensions: ['json'] }] });
+        if (filePath) await writeTextFile(filePath, json);
+        return;
+      } catch {}
     }
-  }, [projectSettings, nodes, edges]);
+
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(json);
+    const a = document.createElement('a');
+    a.href = dataStr; a.download = fileName;
+    document.body.appendChild(a); a.click(); a.remove();
+  }, [projectSettings, nodes, edges, isTauriEnv]);
 
   const saveProject = useCallback(async () => {
-    try {
-      const { saveProjectState } = await import('./lib/db');
-      const master = await (await import('./lib/db')).getMasterDb();
-      const projects: any[] = await master.select(
-        "SELECT id FROM projects ORDER BY updated_at DESC LIMIT 1"
-      );
-      const projectId = projects.length > 0 ? projects[0].id : null;
+    if (!currentProjectId) {
+      alert('No project is currently open. Create or open a project first.');
+      return;
+    }
 
-      if (projectId) {
-        await saveProjectState(projectId, nodes, edges, {
+    if (isTauriEnv()) {
+      try {
+        const { saveProjectState } = await import('./lib/db');
+        await saveProjectState(currentProjectId, nodes, edges, {
           name: projectSettings.name,
           description: projectSettings.description,
           crawlDelay: String(projectSettings.crawlDelay),
@@ -626,80 +625,56 @@ const App: React.FC = () => {
           concurrency: String(projectSettings.concurrency),
           enabled: String(projectSettings.enabled),
         });
-        try {
-          const { message } = await import('@tauri-apps/plugin-dialog');
-          await message('Project saved successfully!', { title: 'CrawlFlow', kind: 'info' });
-        } catch {
-          alert('Project saved successfully!');
-        }
-      } else {
-        const { createProject } = await import('./lib/db');
-        const { id } = await createProject(projectSettings.name, projectSettings.description);
-        const master = await (await import('./lib/db')).getMasterDb();
-        await master.execute("UPDATE projects SET updated_at = datetime('now') WHERE id = $1", [id]);
-        await (await import('./lib/db')).saveProjectState(id, nodes, edges, {
-          name: projectSettings.name, description: projectSettings.description,
-        });
-      }
-    } catch (e) {
-      try {
-        localStorage.setItem('savedProject', JSON.stringify({ projectSettings, nodes, edges }));
-        alert('Project saved to localStorage (Tauri APIs not available).');
-      } catch {
-        alert('Failed to save project.');
+        const { message } = await import('@tauri-apps/plugin-dialog');
+        await message('Project saved successfully!', { title: 'CrawlFlow', kind: 'info' });
+        return;
+      } catch (e) {
+        console.error('Tauri save failed:', e);
       }
     }
-  }, [projectSettings, nodes, edges]);
+
+    localStorage.setItem('savedProject', JSON.stringify({ projectSettings, nodes, edges }));
+    alert('Project saved to local storage!');
+  }, [currentProjectId, projectSettings, nodes, edges, isTauriEnv]);
 
   const importConfiguration = useCallback(async () => {
-    try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const { readTextFile } = await import('@tauri-apps/plugin-fs');
-
-      const selected = await open({
-        multiple: false,
-        filters: [{ name: 'JSON', extensions: ['json'] }],
-      });
-
-      if (selected) {
-        const content = await readTextFile(selected as string);
-        const config = JSON.parse(content);
-        if (config.projectSettings && config.nodes && config.edges) {
-          setProjectSettings(config.projectSettings);
-          setNodes(config.nodes);
-          setEdges(config.edges);
-          setSelectedNode(null);
-        } else {
-          alert('Invalid configuration file.');
+    if (isTauriEnv()) {
+      try {
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const { readTextFile } = await import('@tauri-apps/plugin-fs');
+        const selected = await open({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
+        if (selected) {
+          const config = JSON.parse(await readTextFile(selected as string));
+          if (config.projectSettings && config.nodes && config.edges) {
+            setProjectSettings(config.projectSettings);
+            setNodes(config.nodes); setEdges(config.edges);
+            setSelectedNode(null);
+          } else { alert('Invalid configuration file.'); }
         }
-      }
-    } catch {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.json';
-      input.onchange = (e) => {
-        const file = (e.target as HTMLInputElement).files?.[0];
-        if (file) {
-          const reader = new FileReader();
-          reader.onload = (ev) => {
-            try {
-              const config = JSON.parse(ev.target?.result as string);
-              if (config.projectSettings && config.nodes && config.edges) {
-                setProjectSettings(config.projectSettings);
-                setNodes(config.nodes);
-                setEdges(config.edges);
-                setSelectedNode(null);
-              } else {
-                alert('Invalid configuration file.');
-              }
-            } catch { alert('Error reading configuration file.'); }
-          };
-          reader.readAsText(file);
-        }
-      };
-      input.click();
+        return;
+      } catch {}
     }
-  }, [setNodes, setEdges]);
+
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = '.json';
+    input.onchange = (e: any) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const config = JSON.parse(ev.target?.result as string);
+          if (config.projectSettings && config.nodes && config.edges) {
+            setProjectSettings(config.projectSettings);
+            setNodes(config.nodes); setEdges(config.edges);
+            setSelectedNode(null);
+          } else { alert('Invalid configuration file.'); }
+        } catch { alert('Error reading configuration file.'); }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  }, [setNodes, setEdges, isTauriEnv]);
 
 
   const onNodeDragStop: NodeDragHandler = useCallback((event, node) => {
@@ -976,9 +951,33 @@ const App: React.FC = () => {
     handleCloseSettings();
   }, [rfInstance, nodes, setNodes, handleCloseSettings]);
 
-  const handleOpenProject = useCallback((projectId: string) => {
-    setCurrentProjectId(projectId);
-  }, []);
+  const handleOpenProject = useCallback(async (projectId: string) => {
+    try {
+      const { loadProjectState } = await import('./lib/db');
+      const state = await loadProjectState(projectId);
+      if (state.nodes.length > 0) {
+        setNodes(state.nodes);
+      }
+      if (state.edges.length > 0) {
+        setEdges(state.edges);
+      }
+      if (state.settings.name) {
+        setProjectSettings(prev => ({
+          ...prev,
+          name: state.settings.name,
+          description: state.settings.description || prev.description,
+          crawlDelay: Number(state.settings.crawlDelay) || prev.crawlDelay,
+          userAgent: state.settings.userAgent || prev.userAgent,
+          concurrency: Number(state.settings.concurrency) || prev.concurrency,
+          enabled: state.settings.enabled === 'true' || state.settings.enabled === '1' || prev.enabled,
+        }));
+      }
+      setCurrentProjectId(projectId);
+    } catch (e) {
+      console.error('Failed to load project:', e);
+      setCurrentProjectId(projectId);
+    }
+  }, [setNodes, setEdges]);
 
   const handleCloseProject = useCallback(() => {
     setCurrentProjectId(null);
