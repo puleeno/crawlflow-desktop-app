@@ -4,6 +4,7 @@ import { Node, Edge } from 'reactflow';
 import { XMarkIcon, Cog6ToothIcon, ArrowUpTrayIcon, ArrowDownTrayIcon, TrashIcon, ChevronDownIcon, ChevronUpIcon, CursorArrowRaysIcon, CloudIcon } from './icons';
 import { NodeData, StartNodeData, ClickNodeData, ExtractionRule, FileInputMethod, MySQLConnection, ProjectSettings, LoopNodeData, WorkerNodeData, HTMLDataExtractorNodeData, ProcessorNodeData, WorkerRule, WorkerRuleType, URLFormatRule, HTMLContainsRule, DOMValueRule, TagAttributeRule, ExtractFrom, URLSourceSettings, APISourceSettings, APIKeyAuth, BearerTokenAuth, BasicAuth, XMLSourceSettings, JSONSourceSettings, PagePagination, OffsetLimitPagination, NextURLPagination, RuleCondition, SaveToDbSettings, SendToApiSettings, GenerateCsvSettings, SendEmailSettings, CSVExtractorNodeData, ColumnMapping, JSONExtractorNodeData, PathMapping, XMLExtractorNodeData, MySQLExtractorNodeData, ShapeNodeData, DataSourceTypeRule } from '../types';
 import { PRESETS, PROCESSORS } from '../presets';
+import ServiceControls from './ServiceControls';
 
 
 interface SettingsPanelProps {
@@ -27,6 +28,8 @@ interface SettingsPanelProps {
   highlightedSelector: string | null;
   nodes?: Node[];
   edges?: Edge[];
+  projectId?: string | null;
+  onOpenLogs?: () => void;
 }
 
 const commonInputClasses = "w-full p-2 bg-white text-gray-900 border border-slate-300 rounded-md shadow-sm placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-slate-100 disabled:text-gray-500";
@@ -1476,6 +1479,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
     const renderProjectSettings = () => (
         <div className="space-y-4">
             <h3 className="text-lg font-bold text-gray-800 border-b pb-2">Project Settings</h3>
+            
+            {props.projectId && (
+                <ServiceControls
+                    projectId={props.projectId}
+                    onOpenLogs={() => props.onOpenLogs?.()}
+                />
+            )}
             
             <div className="flex items-center justify-between mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
                 <div className="flex flex-col">

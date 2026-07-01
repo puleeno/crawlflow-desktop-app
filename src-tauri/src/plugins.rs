@@ -610,6 +610,184 @@ pub fn limit_plugin(
     Ok(data.into_iter().skip(offset).take(count).collect())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deduplicate_by_field() {
+        let data = vec![
+            serde_json::json!({"id": 1, "name": "a"}),
+            serde_json::json!({"id": 2, "name": "b"}),
+            serde_json::json!({"id": 1, "name": "c"}),
+        ];
+        let config = serde_json::json!({"field": "id"});
+        let result = deduplicate_plugin(data, config).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0]["name"], "a");
+        assert_eq!(result[1]["name"], "b");
+    }
+
+    #[test]
+    fn test_deduplicate_default_field() {
+        let data = vec![
+            serde_json::json!({"id": 1}),
+            serde_json::json!({"id": 2}),
+            serde_json::json!({"id": 1}),
+        ];
+        let config = serde_json::json!({});
+        let result = deduplicate_plugin(data, config).unwrap();
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_equals() {
+        let data = vec![
+            serde_json::json!({"name": "apple", "color": "red"}),
+            serde_json::json!({"name": "banana", "color": "yellow"}),
+            serde_json::json!({"name": "cherry", "color": "red"}),
+        ];
+        let config = serde_json::json!({"field": "color", "operator": "equals", "value": "red"});
+        let result = filter_plugin(data, config).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0]["name"], "apple");
+        assert_eq!(result[1]["name"], "cherry");
+    }
+
+    #[test]
+    fn test_filter_greater_than() {
+        let data = vec![
+            serde_json::json!({"val": 1}),
+            serde_json::json!({"val": 5}),
+            serde_json::json!({"val": 10}),
+        ];
+        let config = serde_json::json!({"field": "val", "operator": "greater_than", "value": "5"});
+        let result = filter_plugin(data, config).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["val"], 10);
+    }
+
+    #[test]
+    fn test_filter_empty_field_error() {
+        let data = vec![serde_json::json!({"a": 1})];
+        let config = serde_json::json!({"field": "", "operator": "equals", "value": "x"});
+        let result = filter_plugin(data, config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_filter_not_empty() {
+        let data = vec![
+            serde_json::json!({"name": "hello"}),
+            serde_json::json!({"name": ""}),
+            serde_json::json!({"name": "world"}),
+        ];
+        let config = serde_json::json!({"field": "name", "operator": "not_empty"});
+        let result = filter_plugin(data, config).unwrap();
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_contains() {
+        let data = vec![
+            serde_json::json!({"title": "Hello World"}),
+            serde_json::json!({"title": "Goodbye World"}),
+            serde_json::json!({"title": "Foo Bar"}),
+        ];
+        let config = serde_json::json!({"field": "title", "operator": "contains", "value": "World"});
+        let result = filter_plugin(data, config).unwrap();
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_sort_ascending() {
+        let data = vec![
+            serde_json::json!({"name": "zebra"}),
+            serde_json::json!({"name": "apple"}),
+            serde_json::json!({"name": "banana"}),
+        ];
+        let config = serde_json::json!({"field": "name", "descending": false});
+        let result = sort_plugin(data, config).unwrap();
+        assert_eq!(result[0]["name"], "apple");
+        assert_eq!(result[1]["name"], "banana");
+        assert_eq!(result[2]["name"], "zebra");
+    }
+
+    #[test]
+    fn test_sort_descending() {
+        let data = vec![
+            serde_json::json!({"name": "apple"}),
+            serde_json::json!({"name": "zebra"}),
+            serde_json::json!({"name": "banana"}),
+        ];
+        let config = serde_json::json!({"field": "name", "descending": true});
+        let result = sort_plugin(data, config).unwrap();
+        assert_eq!(result[0]["name"], "zebra");
+        assert_eq!(result[2]["name"], "apple");
+    }
+
+    #[test]
+    fn test_sort_empty_field_error() {
+        let data = vec![serde_json::json!({"a": 1})];
+        let config = serde_json::json!({"field": ""});
+        let result = sort_plugin(data, config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_limit_basic() {
+        let data = vec![
+            serde_json::json!({"id": 1}),
+            serde_json::json!({"id": 2}),
+            serde_json::json!({"id": 3}),
+            serde_json::json!({"id": 4}),
+            serde_json::json!({"id": 5}),
+        ];
+        let config = serde_json::json!({"count": 3, "offset": 0});
+        let result = limit_plugin(data, config).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0]["id"], 1);
+        assert_eq!(result[2]["id"], 3);
+    }
+
+    #[test]
+    fn test_limit_with_offset() {
+        let data = vec![
+            serde_json::json!({"id": 1}),
+            serde_json::json!({"id": 2}),
+            serde_json::json!({"id": 3}),
+            serde_json::json!({"id": 4}),
+            serde_json::json!({"id": 5}),
+        ];
+        let config = serde_json::json!({"count": 2, "offset": 2});
+        let result = limit_plugin(data, config).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0]["id"], 3);
+        assert_eq!(result[1]["id"], 4);
+    }
+
+    #[test]
+    fn test_limit_default_count() {
+        let data = (0..200).map(|i| serde_json::json!({"id": i})).collect();
+        let config = serde_json::json!({});
+        let result = limit_plugin(data, config).unwrap();
+        assert_eq!(result.len(), 100); // default count
+    }
+
+    #[test]
+    fn test_register_builtin_plugins() {
+        let mut engine = PluginEngine::new(None, PathBuf::from("/tmp"));
+        register_builtin_plugins(&mut engine);
+        let plugins = engine.list_plugins();
+        assert!(plugins.len() >= 4);
+        let ids: Vec<_> = plugins.iter().map(|p| p.id.as_str()).collect();
+        assert!(ids.contains(&"rust-deduplicate"));
+        assert!(ids.contains(&"rust-filter"));
+        assert!(ids.contains(&"rust-sort"));
+        assert!(ids.contains(&"rust-limit"));
+    }
+}
+
 pub fn register_builtin_plugins(engine: &mut PluginEngine) {
     engine.register(RustPlugin {
         id: "rust-deduplicate".to_string(),

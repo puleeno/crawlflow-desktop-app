@@ -1,12 +1,16 @@
 use crate::crawler;
+use crate::logs::LogManager;
 use crate::models::*;
 use crate::plugins::PluginEngine;
-use std::sync::Mutex;
+use crate::services::ServiceManager;
+use std::sync::{Arc, Mutex};
 use tauri::State;
 use std::path::PathBuf;
 
 pub struct AppState {
     pub plugin_engine: Mutex<PluginEngine>,
+    pub log_manager: Arc<LogManager>,
+    pub service_manager: Arc<ServiceManager>,
 }
 
 // ── Tauri commands (called from frontend) ─────────────────────
@@ -487,6 +491,94 @@ pub fn run_demo_cmd() -> Result<serde_json::Value, String> {
     });
 
     Ok(result)
+}
+
+// ── Service commands ───────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn start_project_service_cmd(
+    state: State<'_, AppState>,
+    project_id: String,
+    nodes: Vec<serde_json::Value>,
+    edges: Vec<serde_json::Value>,
+    settings: serde_json::Value,
+) -> Result<String, String> {
+    state
+        .service_manager
+        .start_service(&project_id, nodes, edges, settings)
+        .map(|_| format!("Service started for project {}", project_id))
+}
+
+#[tauri::command]
+pub fn stop_project_service_cmd(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<String, String> {
+    state
+        .service_manager
+        .stop_service(&project_id)
+        .map(|_| format!("Service stopped for project {}", project_id))
+}
+
+#[tauri::command]
+pub fn pause_project_service_cmd(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<String, String> {
+    state
+        .service_manager
+        .pause_service(&project_id)
+        .map(|_| format!("Service paused for project {}", project_id))
+}
+
+#[tauri::command]
+pub fn resume_project_service_cmd(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<String, String> {
+    state
+        .service_manager
+        .resume_service(&project_id)
+        .map(|_| format!("Service resumed for project {}", project_id))
+}
+
+#[tauri::command]
+pub fn get_service_status_cmd(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Option<crate::services::ServiceInfo> {
+    state.service_manager.get_service_info(&project_id)
+}
+
+#[tauri::command]
+pub fn list_project_services_cmd(
+    state: State<'_, AppState>,
+) -> Vec<crate::services::ServiceInfo> {
+    state.service_manager.list_service_infos()
+}
+
+// ── Log commands ────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_project_logs_cmd(
+    state: State<'_, AppState>,
+    project_id: String,
+    since_id: Option<u64>,
+    level_filter: Option<String>,
+    limit: Option<usize>,
+) -> Vec<crate::logs::LogEntry> {
+    state
+        .log_manager
+        .get_logs(&project_id, since_id, level_filter.as_deref(), limit)
+}
+
+#[tauri::command]
+pub fn clear_project_logs_cmd(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> String {
+    state.log_manager.clear(&project_id);
+    format!("Logs cleared for project {}", project_id)
 }
 
 // ── Marketplace installation ─────────────────────────────────────────

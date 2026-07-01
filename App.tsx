@@ -37,9 +37,10 @@ import HTMLDataExtractorNode, { CSVExtractorNode, JSONExtractorNode, XMLExtracto
 import ProcessorNode from './components/nodes/ProcessorNode';
 import CompletionNode from './components/nodes/CompletionNode';
 import ShapeNode from './components/nodes/ShapeNode';
-import { Bars3Icon, Cog6ToothIcon, HomeIcon, PlusIcon, PlayIcon } from './components/icons';
+import { Bars3Icon, Cog6ToothIcon, HomeIcon, PlusIcon, PlayIcon, StopIcon, PauseIcon } from './components/icons';
 import { ProjectManager } from './components/ProjectManager';
 import { PluginManagerPanel } from './components/PluginManagerPanel';
+import LiveLogs from './components/LiveLogs';
 
 
 import { NodeData, ProjectSettings, HTMLDataExtractorNodeData, ShapeNodeData, ShapeType } from './types';
@@ -163,6 +164,9 @@ const App: React.FC = () => {
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const [demoResult, setDemoResult] = useState<any[] | null>(null);
   const [isDemoRunning, setIsDemoRunning] = useState(false);
+  const [isLogPanelOpen, setLogPanelOpen] = useState(false);
+  const [serviceStatus, setServiceStatus] = useState<string>('stopped');
+  const [serviceCycleCount, setServiceCycleCount] = useState(0);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   // Auto-save project metadata (name, status) to master DB with debounce
@@ -189,6 +193,24 @@ const App: React.FC = () => {
 
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   }, [projectSettings, currentProjectId]);
+
+  // Subscribe to service status events
+  useEffect(() => {
+    if (!currentProjectId) return;
+    let unlisten: (() => void) | null = null;
+    const setup = async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        unlisten = await listen<any>(`service-status:${currentProjectId}`, (event) => {
+          const p = event.payload;
+          setServiceStatus(p.status || 'stopped');
+          setServiceCycleCount(p.cycle_count || 0);
+        });
+      } catch (e) { /* not in tauri */ }
+    };
+    setup();
+    return () => { if (unlisten) unlisten(); };
+  }, [currentProjectId]);
 
   // Effect to clean up the entire workflow when no start nodes exist
   useEffect(() => {
@@ -1073,13 +1095,31 @@ const App: React.FC = () => {
             Run Demo
           </button>
         )}
-        <button
-          onClick={() => setPluginManagerOpen(true)}
-          className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
-        >
-          <PlusIcon size={20} />
-          Plugins
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Service status indicator */}
+          <button
+            onClick={() => setLogPanelOpen(!isLogPanelOpen)}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
+          >
+            <span className={`inline-block w-2.5 h-2.5 rounded-full ${
+              serviceStatus === 'running' ? 'bg-green-500 animate-pulse' :
+              serviceStatus === 'paused' ? 'bg-amber-500' :
+              serviceStatus?.startsWith('error') ? 'bg-red-500' :
+              'bg-gray-400'
+            }`} />
+            Service
+            {serviceCycleCount > 0 && (
+              <span className="text-xs text-gray-400">#{serviceCycleCount}</span>
+            )}
+          </button>
+          <button
+            onClick={() => setPluginManagerOpen(true)}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
+          >
+            <PlusIcon size={20} />
+            Plugins
+          </button>
+        </div>
       </div>
       <PluginManagerPanel isOpen={isPluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
       <div className="flex flex-1 h-full overflow-hidden">
@@ -1171,6 +1211,8 @@ const App: React.FC = () => {
             highlightedSelector={highlightedSelector}
             nodes={nodes}
             edges={edges}
+            projectId={currentProjectId}
+            onOpenLogs={() => setLogPanelOpen(true)}
           />
         </ReactFlowProvider>
       </div>
@@ -1181,6 +1223,12 @@ const App: React.FC = () => {
           onClose={hideInspector}
           onSelectorPicked={handleSelectorPicked}
           highlightedSelector={highlightedSelector}
+        />
+      )}
+      {isLogPanelOpen && currentProjectId && (
+        <LiveLogs
+          projectId={currentProjectId}
+          onClose={() => setLogPanelOpen(false)}
         />
       )}
       {demoResult && (

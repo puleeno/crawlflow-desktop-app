@@ -1,20 +1,21 @@
 mod commands;
 mod crawler;
+mod logs;
 mod migrations;
 mod models;
+mod pipeline;
 mod plugins;
 mod python_plugins;
+mod services;
 
 use commands::AppState;
+use logs::LogManager;
 use plugins::PluginEngine;
+use services::ServiceManager;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
-/// User-installed plugins directory.
-/// - Windows: %APPDATA%/crawlflow/plugins
-/// - Linux:   ~/.config/crawlflow/plugins
-/// - macOS:   ~/Library/Application Support/crawlflow/plugins
 fn get_user_plugins_dir() -> PathBuf {
     dirs_next::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -22,18 +23,13 @@ fn get_user_plugins_dir() -> PathBuf {
         .join("plugins")
 }
 
-/// Built-in plugins bundled with the app (read-only, ships in the app binary).
-/// Falls back to `<project>/plugins/` during development.
 fn get_builtin_plugins_dir(app: &tauri::App) -> Option<PathBuf> {
-    // Bundled resources path (used in release/packaged builds)
     if let Ok(resource_dir) = app.path().resource_dir() {
         let path = resource_dir.join("plugins");
         if path.is_dir() {
             return Some(path);
         }
     }
-
-    // Dev fallback: check for `<project>/plugins/` relative to src-tauri/
     let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(|p| p.join("plugins"))
@@ -41,18 +37,26 @@ fn get_builtin_plugins_dir(app: &tauri::App) -> Option<PathBuf> {
     if dev_path.is_dir() {
         return Some(dev_path);
     }
-
     None
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut engine = PluginEngine::new(None, get_user_plugins_dir());
-    plugins::register_builtin_plugins(&mut engine);
+    let log_manager = Arc::new(LogManager::new());
+    let _initial_plugin_engine = {
+        let mut e = PluginEngine::new(None, get_user_plugins_dir());
+        plugins::register_builtin_plugins(&mut e);
+        e
+    };
+
+    // Build service_manager stub — real init happens in setup
+    let service_manager = Arc::new(ServiceManager::new_uninitialized());
 
     tauri::Builder::default()
         .manage(AppState {
-            plugin_engine: Mutex::new(engine),
+            plugin_engine: Mutex::new(PluginEngine::new(None, get_user_plugins_dir())),
+            log_manager: log_manager.clone(),
+            service_manager: service_manager.clone(),
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -71,44 +75,57 @@ pub fn run() {
             commands::fetch_rss_cmd,
             commands::export_csv_cmd,
             commands::parse_html_table_cmd,
-            // Python plugin commands
             commands::list_python_plugins_cmd,
             commands::execute_python_hook_cmd,
             commands::call_python_data_source_cmd,
             commands::call_python_export_cmd,
             commands::run_python_pipeline_cmd,
             commands::reload_python_plugins_cmd,
-            // BeautifulSoup commands
             commands::parse_html_with_bs4_cmd,
             commands::summarize_parsed_html_cmd,
-            // Marketplace commands
             commands::install_marketplace_item,
-            // Presets
             commands::list_presets_cmd,
-            // Demo
             commands::run_demo_cmd,
+            // Service commands
+            commands::start_project_service_cmd,
+            commands::stop_project_service_cmd,
+            commands::pause_project_service_cmd,
+            commands::resume_project_service_cmd,
+            commands::get_service_status_cmd,
+            commands::list_project_services_cmd,
+            // Log commands
+            commands::get_project_logs_cmd,
+            commands::clear_project_logs_cmd,
         ])
         .setup(|app| {
             let user_dir = get_user_plugins_dir();
             let builtin_dir = get_builtin_plugins_dir(app);
 
             std::fs::create_dir_all(&user_dir).ok();
-
             if let Some(ref bd) = builtin_dir {
                 log::info!("Built-in plugin directory: {:?}", bd);
             }
             log::info!("User plugin directory: {:?}", user_dir);
 
             let state: tauri::State<'_, AppState> = app.state();
-            let mut guard = state.plugin_engine.lock().unwrap();
-            *guard = PluginEngine::new(builtin_dir.clone(), user_dir);
-            plugins::register_builtin_plugins(&mut *guard);
 
-            match guard.init_python_plugins() {
-                Ok(discovered) => log::info!("Python plugins initialized: {:?}", discovered),
-                Err(e) => log::warn!("Python plugin init (ok to ignore): {}", e),
+            // Initialize plugin engine
+            {
+                let mut guard = state.plugin_engine.lock().unwrap();
+                *guard = PluginEngine::new(builtin_dir.clone(), user_dir);
+                plugins::register_builtin_plugins(&mut *guard);
+                match guard.init_python_plugins() {
+                    Ok(discovered) => log::info!("Python plugins initialized: {:?}", discovered),
+                    Err(e) => log::warn!("Python plugin init (ok to ignore): {}", e),
+                }
             }
-            drop(guard);
+
+            // Initialize log manager with app handle
+            let app_handle = app.handle().clone();
+            state.log_manager.set_app_handle(app_handle.clone());
+
+            // Initialize service manager
+            state.service_manager.initialize(app_handle, state.log_manager.clone());
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
