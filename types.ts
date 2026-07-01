@@ -101,14 +101,18 @@ export interface JSONSourceSettings {
 export interface StartNodeData {
   sourceType: DataSourceType;
   sourceValue: string | MySQLConnection;
-  inputMethod?: FileInputMethod; // Relevant for xml, csv, json
-  fileName?: string; // For file uploads
+  inputMethod?: FileInputMethod;
+  fileName?: string;
   
   // New detailed settings
   urlSettings?: URLSourceSettings;
   apiSettings?: APISourceSettings;
   xmlSettings?: XMLSourceSettings;
   jsonSettings?: JSONSourceSettings;
+
+  // Plugin data source
+  pluginSourceType?: string;
+  pluginConfig?: Record<string, any>;
 }
 // --- END OF NEW TYPES ---
 
@@ -341,4 +345,109 @@ export type CustomNodeProps<T = NodeData> = NodeProps<T> & {
 
 export interface CustomNode extends Node<NodeData> {
     data: NodeData;
+}
+
+// --- PLUGIN SYSTEM ---
+
+export type PluginCapability = 'hook' | 'dataSource' | 'processor' | 'parser';
+
+export type PluginHook =
+    | 'beforeCrawl'
+    | 'afterExtract'
+    | 'beforeSave'
+    | 'afterSave'
+    | 'transformData'
+    | 'customExport';
+
+export interface PluginConfigField {
+    key: string;
+    label: string;
+    type: 'string' | 'number' | 'boolean' | 'select' | 'textarea';
+    required?: boolean;
+    defaultValue?: any;
+    options?: { label: string; value: string }[];
+    placeholder?: string;
+}
+
+export interface CrawlContext {
+    sourceUrl?: string;
+    sourceType: string;
+    rawData?: any;
+    config: Record<string, any>;
+}
+
+export interface PluginHookContext {
+    crawlData?: any[];
+    nodeId?: string;
+    nodeType?: string;
+    config: Record<string, any>;
+}
+
+export interface PluginExportResult {
+    fileName: string;
+    mimeType: string;
+    content: string | Blob;
+}
+
+export interface DataSourceDefinition {
+    type: string;
+    label: string;
+    description: string;
+    icon?: string;
+    configFields: PluginConfigField[];
+    fetch: (config: Record<string, any>) => Promise<any[]>;
+}
+
+export interface ProcessorDefinition {
+    type: string;
+    label: string;
+    description: string;
+    icon?: string;
+    configFields: PluginConfigField[];
+    process: (data: any[], config: Record<string, any>) => Promise<any[]>;
+}
+
+export interface ParserDefinition {
+    id: string;
+    name: string;
+    description: string;
+    inputFormats: string[];
+    configFields: PluginConfigField[];
+    parse: (input: string | any, config: Record<string, any>) => Promise<any[]>;
+}
+
+export interface CrawlFlowPlugin {
+    id: string;
+    name: string;
+    version: string;
+    description: string;
+    author?: string;
+    icon?: string;
+    capabilities: PluginCapability[];
+    hooks?: Partial<Record<PluginHook, (ctx: PluginHookContext) => Promise<any>>>;
+    dataSource?: DataSourceDefinition;
+    processor?: ProcessorDefinition;
+    parser?: ParserDefinition;
+    configFields?: PluginConfigField[];
+    defaultConfig?: Record<string, any>;
+}
+
+export interface PluginRecord {
+    id: string;
+    name: string;
+    description: string;
+    version: string;
+    author?: string;
+    type: string;
+    config: string;
+    enabled: number;
+    installed_at: string;
+}
+
+export interface ProcessorPluginMapping {
+    processorId: string;
+    pluginId: string;
+    hook: PluginHook;
+    config: Record<string, any>;
+    enabled: boolean;
 }

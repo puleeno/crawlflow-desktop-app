@@ -1,7 +1,8 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import './index.css';
+import { pluginManager } from './lib/pluginManager';
+import { builtinPlugins } from './lib/plugins/builtin';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -9,7 +10,6 @@ if (!rootElement) {
 }
 
 // Suppress the benign "ResizeObserver loop" error.
-// This error is a browser warning that often crashes React apps in development but is safe to ignore.
 const resizeObserverLoopErr = /ResizeObserver loop limit exceeded|ResizeObserver loop completed with undelivered notifications/;
 
 const originalError = console.error;
@@ -25,6 +25,10 @@ window.addEventListener('error', (event) => {
     event.stopImmediatePropagation();
   }
 });
+
+// Initialize plugin system
+builtinPlugins.forEach(p => pluginManager.register(p));
+pluginManager.init().catch(console.error);
 
 const root = ReactDOM.createRoot(rootElement);
 root.render(

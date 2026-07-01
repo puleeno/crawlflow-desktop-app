@@ -22,6 +22,7 @@ import {
   FolderIcon,
 } from './icons';
 import { PROCESSORS } from '../presets';
+import { pluginManager } from '../lib/pluginManager';
 
 interface SidebarProps {
   onAddNode: (type: string, data: NodeData, sourceNode?: Node | null) => void;
@@ -263,9 +264,20 @@ const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onCl
   };
 
 
-  const addProcessorNode = () => {
+  const addProcessorNode = (pluginType?: string) => {
+    if (pluginType) {
+      const procDef = pluginManager.getProcessor(pluginType);
+      if (procDef) {
+        const data = {
+          processorType: pluginType,
+          settings: {},
+          _pluginProcessor: true,
+        } as any;
+        handleAddNode('processor', data, selectedNode);
+      }
+      return;
+    }
     const defaultProcessor = PROCESSORS[0];
-    // FIX: Cast the created data object to ProcessorNodeData. This is necessary because TypeScript cannot infer the correlation between the 'id' and 'defaultSettings' properties from the PROCESSORS array, leading to a type error with the discriminated union.
     const data = {
       processorType: defaultProcessor.id,
       settings: defaultProcessor.defaultSettings
@@ -293,6 +305,17 @@ const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onCl
                 >
                   {source.icon}
                   <span className="text-sm font-semibold text-center">{source.label}</span>
+                </button>
+              ))}
+              {pluginManager.getDataSources().map(ds => (
+                <button
+                  key={ds.type}
+                  onClick={() => addStartNode({ sourceType: ds.type as any, sourceValue: '', pluginSourceType: ds.type })}
+                  className="flex flex-col items-center justify-center gap-2 p-3 text-white rounded-lg transition-all duration-200 shadow-md transform hover:scale-105 bg-cyan-500 hover:bg-cyan-600"
+                  title={ds.description}
+                >
+                  <GlobeAltIcon />
+                  <span className="text-sm font-semibold text-center">{ds.label}</span>
                 </button>
               ))}
             </div>
@@ -389,12 +412,23 @@ const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onCl
             </p>
             <div className="flex flex-col gap-3">
               <button
-                onClick={addProcessorNode}
+                onClick={() => addProcessorNode()}
                 className="flex items-center gap-3 p-3 bg-slate-500 text-white rounded-lg hover:bg-slate-600 transition-all duration-200 shadow-md transform hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
               >
                 <Cog6ToothIcon />
                 <span className="font-semibold">Add Processor</span>
               </button>
+              {pluginManager.getProcessors().map(proc => (
+                <button
+                  key={proc.type}
+                  onClick={() => addProcessorNode(proc.type)}
+                  className="flex items-center gap-3 p-3 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-all duration-200 shadow-md transform hover:scale-105"
+                  title={proc.description}
+                >
+                  <CpuChipIcon />
+                  <span className="font-semibold">{proc.label}</span>
+                </button>
+              ))}
             </div>
           </div>
         </>
@@ -408,12 +442,22 @@ const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onCl
           <p className="text-sm text-gray-600 mt-2 mb-4">Add another processor to chain operations.</p>
           <div className="flex flex-col gap-3">
             <button
-              onClick={addProcessorNode}
+              onClick={() => addProcessorNode()}
               className="flex items-center gap-3 p-3 bg-slate-500 text-white rounded-lg hover:bg-slate-600 transition-all duration-200 shadow-md transform hover:scale-105"
             >
               <Cog6ToothIcon />
               <span className="font-semibold">Add Processor</span>
             </button>
+            {pluginManager.getProcessors().map(proc => (
+              <button
+                key={proc.type}
+                onClick={() => addProcessorNode(proc.type)}
+                className="flex items-center gap-3 p-3 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-all duration-200 shadow-md transform hover:scale-105"
+              >
+                <CpuChipIcon />
+                <span className="font-semibold">{proc.label}</span>
+              </button>
+            ))}
           </div>
         </div>
       )

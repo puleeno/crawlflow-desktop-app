@@ -37,8 +37,9 @@ import HTMLDataExtractorNode, { CSVExtractorNode, JSONExtractorNode, XMLExtracto
 import ProcessorNode from './components/nodes/ProcessorNode';
 import CompletionNode from './components/nodes/CompletionNode';
 import ShapeNode from './components/nodes/ShapeNode';
-import { Bars3Icon, Cog6ToothIcon, HomeIcon } from './components/icons';
+import { Bars3Icon, Cog6ToothIcon, HomeIcon, PlusIcon } from './components/icons';
 import { ProjectManager } from './components/ProjectManager';
+import { PluginManagerPanel } from './components/PluginManagerPanel';
 
 
 import { NodeData, ProjectSettings, HTMLDataExtractorNodeData, ShapeNodeData, ShapeType } from './types';
@@ -156,6 +157,7 @@ const App: React.FC = () => {
 
   // Navigation state
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [isPluginManagerOpen, setPluginManagerOpen] = useState(false);
 
   // Ref for React Flow instance and wrapper
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
@@ -1007,8 +1009,15 @@ const App: React.FC = () => {
           Projects
         </button>
         <span className="text-sm font-semibold text-gray-700">{projectSettings.name}</span>
-        <div className="w-16" />
+        <button
+          onClick={() => setPluginManagerOpen(true)}
+          className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
+        >
+          <PlusIcon className="w-4 h-4" />
+          Plugins
+        </button>
       </div>
+      <PluginManagerPanel isOpen={isPluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
       <div className="flex flex-1 h-full overflow-hidden">
         <ReactFlowProvider>
           {/* Backdrop for mobile overlays */}
