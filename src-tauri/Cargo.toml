@@ -14,6 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
+pyo3-build-config = { version = "0.23", features = ["resolve-config"] }
 
 [dependencies]
 serde_json = "1.0"
@@ -27,5 +28,6 @@ tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 reqwest = { version = "0.12", features = ["json"] }
 scraper = "0.22"
 tokio = { version = "1", features = ["full"] }
-pyo3 = { version = "0.23", features = ["auto-initialize", "extension-module", "serde"] }
+pyo3 = { version = "0.23", features = ["auto-initialize", "serde"] }
 dirs-next = "2.0"
+zip = "2.2"

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { pluginManager } from '../lib/pluginManager';
 import { XMarkIcon, Cog6ToothIcon, PlusIcon } from './icons';
 import type { CrawlFlowPlugin, PluginConfigField } from '../types';
+import MarketplacePanel from './MarketplacePanel';
 
 interface PluginManagerPanelProps {
     isOpen: boolean;
@@ -118,6 +119,7 @@ const PluginCard: React.FC<{
 export const PluginManagerPanel: React.FC<PluginManagerPanelProps> = ({ isOpen, onClose }) => {
     const [plugins, setPlugins] = useState<CrawlFlowPlugin[]>([]);
     const [enabled, setEnabled] = useState<Set<string>>(new Set());
+    const [marketplaceOpen, setMarketplaceOpen] = useState(false);
 
     const refresh = () => {
         setPlugins(pluginManager.getAllPlugins());
@@ -150,9 +152,10 @@ export const PluginManagerPanel: React.FC<PluginManagerPanelProps> = ({ isOpen, 
                         <PluginCard key={p.id} plugin={p} onToggle={handleToggle} enabled={enabled.has(p.id)} />
                     ))}
                 </div>
-            </div>
-        );
-    };
+            <MarketplacePanel isOpen={marketplaceOpen} onClose={() => setMarketplaceOpen(false)} />
+        </div>
+    );
+};
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -162,9 +165,17 @@ export const PluginManagerPanel: React.FC<PluginManagerPanelProps> = ({ isOpen, 
                         <h2 className="text-lg font-bold text-gray-900">Plugin Manager</h2>
                         <p className="text-xs text-gray-500">Enable/disable plugins and configure their behavior</p>
                     </div>
-                    <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                        <XMarkIcon />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setMarketplaceOpen(true)}
+                            className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                        >
+                            Browse Marketplace
+                        </button>
+                        <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+                            <XMarkIcon />
+                        </button>
+                    </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto px-6 py-4">

@@ -3,6 +3,7 @@ use crate::models::*;
 use crate::plugins::PluginEngine;
 use std::sync::Mutex;
 use tauri::State;
+use std::path::PathBuf;
 
 pub struct AppState {
     pub plugin_engine: Mutex<PluginEngine>,
@@ -375,4 +376,64 @@ pub fn summarize_parsed_html_cmd(
     }
 
     summary
+}
+
+// ── Marketplace installation ─────────────────────────────────────────
+
+fn get_data_dir() -> PathBuf {
+    dirs_next::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("crawlflow")
+}
+
+#[tauri::command]
+pub async fn install_marketplace_item(
+    slug: String,
+    item_type: String,
+    download_url: String,
+) -> Result<String, String> {
+    let base_dir = if item_type == "template" {
+        get_data_dir().join("templates").join(&slug)
+    } else {
+        get_data_dir().join("plugins").join(&slug)
+    };
+
+    std::fs::create_dir_all(&base_dir).map_err(|e| format!("Failed to create dir: {}", e))?;
+
+    // Download the zip
+    let response = reqwest::get(&download_url)
+        .await
+        .map_err(|e| format!("Download failed: {}", e))?;
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    // Extract zip
+    let reader = std::io::Cursor::new(&bytes);
+    let mut archive = zip::ZipArchive::new(reader)
+        .map_err(|e| format!("Failed to open zip: {}", e))?;
+
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| format!("Failed to read zip entry: {}", e))?;
+
+        let out_path = base_dir.join(file.name());
+
+        if file.is_dir() {
+            std::fs::create_dir_all(&out_path).ok();
+        } else {
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            let mut outfile = std::fs::File::create(&out_path)
+                .map_err(|e| format!("Failed to create file {:?}: {}", out_path, e))?;
+            std::io::copy(&mut file, &mut outfile)
+                .map_err(|e| format!("Failed to write file: {}", e))?;
+        }
+    }
+
+    Ok(base_dir.to_string_lossy().to_string())
 }

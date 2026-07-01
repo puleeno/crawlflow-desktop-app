@@ -60,6 +60,8 @@ pub fn run() {
             // BeautifulSoup commands
             commands::parse_html_with_bs4_cmd,
             commands::summarize_parsed_html_cmd,
+            // Marketplace commands
+            commands::install_marketplace_item,
         ])
         .setup(|app| {
             // Resolve plugin directory
