@@ -163,6 +163,31 @@ const App: React.FC = () => {
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
+  // Auto-save project metadata (name, status) to master DB with debounce
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!currentProjectId) return;
+
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        const { isTauri } = await import('./lib/db');
+        if (!isTauri()) return;
+        const { getMasterDb } = await import('./lib/db');
+        const master = await getMasterDb();
+        const status = projectSettings.enabled ? 'enabled' : 'disabled';
+        await master.execute(
+          "UPDATE projects SET name = $1, description = $2, status = $3, updated_at = datetime('now') WHERE id = $4",
+          [projectSettings.name || 'Untitled', projectSettings.description || '', status, currentProjectId]
+        );
+      } catch (e) {
+        console.warn('Auto-save metadata failed:', e);
+      }
+    }, 1500);
+
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+  }, [projectSettings, currentProjectId]);
+
   // Effect to clean up the entire workflow when no start nodes exist
   useEffect(() => {
     const hasStartNode = nodes.some(n => n.type === 'start');
@@ -1008,7 +1033,12 @@ const App: React.FC = () => {
           <HomeIcon size={20} />
           Projects
         </button>
-        <span className="text-sm font-semibold text-gray-700">{projectSettings.name}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-gray-700">{projectSettings.name}</span>
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${projectSettings.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+            {projectSettings.enabled ? 'Enabled' : 'Disabled'}
+          </span>
+        </div>
         <button
           onClick={() => setPluginManagerOpen(true)}
           className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
