@@ -136,7 +136,7 @@ const DiagramElementsPanel: React.FC<{ onAddShapeNode: (shapeType: ShapeType) =>
     <div className="mt-6">
       <h2 className="text-xl font-bold text-gray-800 border-b pb-2">Diagram Elements</h2>
       <p className="text-sm text-gray-600 mt-2 mb-4">Click an element to add it to the canvas.</p>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-3">
         <button
           onClick={() => onAddShapeNode('rectangle')}
           className="flex flex-col items-center justify-center text-center gap-3 p-4 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-all duration-200 shadow-md"
@@ -285,7 +285,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onCl
           <div>
             <h2 className="text-xl font-bold text-gray-800 border-b pb-2">Data Sources</h2>
             <p className="text-sm text-gray-600 mt-2 mb-4">Click to add a starting point for your crawl.</p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               {dataSources.map(source => (
                 <button
                   key={source.type}
@@ -456,10 +456,10 @@ const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onCl
   }
 
   return (
-    <aside className={`fixed top-0 left-0 h-full w-64 bg-white p-4 border-r border-gray-200 shadow-lg z-40 flex flex-col gap-4 transform transition-transform duration-300 ease-in-out md:relative md:w-64 md:transform-none md:z-20 ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-      <div className="flex justify-between items-center md:block">
-        <h1 className="text-2xl font-bold text-gray-800">Crawler Builder</h1>
-        <button onClick={onClose} className="p-1 text-gray-500 hover:text-gray-800 md:hidden">
+    <aside className={`fixed top-0 left-0 h-full w-96 bg-white p-4 border-r border-gray-200 shadow-lg z-40 flex flex-col gap-4 transition-all duration-300 ease-in-out md:relative md:z-20 ${isOpen ? 'translate-x-0 md:ml-0' : '-translate-x-full md:-ml-96'}`}>
+      <div className="flex justify-between items-center">
+        <h1 className="text-xl font-bold text-gray-800">Crawler Builder</h1>
+        <button onClick={onClose} className="p-1 text-gray-500 hover:text-gray-800">
           <XMarkIcon />
         </button>
       </div>

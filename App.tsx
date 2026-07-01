@@ -64,16 +64,16 @@ const getId = () => `${id++}`;
 const EXTRACTOR_NODE_TYPES = ['html-data-extractor', 'csv-extractor', 'json-extractor', 'xml-extractor', 'mysql-extractor'];
 
 interface InspectorConfig {
-    htmlContent: string;
-    pickingState: {
-        nodeId: string;
-        ruleId: string;
-    } | null;
+  htmlContent: string;
+  pickingState: {
+    nodeId: string;
+    ruleId: string;
+  } | null;
 }
 
 interface MenuConfig {
-    top: number;
-    left: number;
+  top: number;
+  left: number;
 }
 
 type MouseMode = 'select' | 'pan';
@@ -137,9 +137,9 @@ const App: React.FC = () => {
     userAgent: 'Crawler/1.0',
     concurrency: 5,
   });
-  
+
   // State for UI panels
-  const [isSidebarOpen, setSidebarOpen] = useState(false);
+  const [isSidebarOpen, setSidebarOpen] = useState(typeof window !== 'undefined' && window.innerWidth >= 768);
   // Initialize settings panel as open on desktop (>768px), closed on mobile
   const [isSettingsOpen, setSettingsOpen] = useState(typeof window !== 'undefined' && window.innerWidth >= 768);
 
@@ -170,24 +170,24 @@ const App: React.FC = () => {
       setSelectedNode(null);
     }
   }, [nodes, setNodes, setEdges]);
-  
-  
+
+
   // Effect to recenter repository node
   useEffect(() => {
     const startNodes = nodes.filter(n => n.type === 'start');
     const repoNode = nodes.find(n => n.id === REPOSITORY_NODE_ID);
 
     if (startNodes.length > 0 && repoNode) {
-        const newAvgX = startNodes.reduce((sum, node) => sum + node.position.x, 0) / startNodes.length;
-        if (repoNode.position.x !== newAvgX) {
-            setNodes(nds => 
-                nds.map(n => 
-                    n.id === REPOSITORY_NODE_ID 
-                    ? { ...n, position: { ...n.position, x: newAvgX } } 
-                    : n
-                )
-            );
-        }
+      const newAvgX = startNodes.reduce((sum, node) => sum + node.position.x, 0) / startNodes.length;
+      if (repoNode.position.x !== newAvgX) {
+        setNodes(nds =>
+          nds.map(n =>
+            n.id === REPOSITORY_NODE_ID
+              ? { ...n, position: { ...n.position, x: newAvgX } }
+              : n
+          )
+        );
+      }
     }
   }, [nodes, setNodes]);
 
@@ -198,82 +198,82 @@ const App: React.FC = () => {
 
     // Case 1: No processors exist. Remove completion node if it exists.
     if (processorNodes.length === 0) {
-        if (completionNode) {
-            setNodes(nds => nds.filter(n => n.id !== COMPLETION_NODE_ID));
-            setEdges(eds => eds.filter(e => e.target !== COMPLETION_NODE_ID));
-        }
-        return;
+      if (completionNode) {
+        setNodes(nds => nds.filter(n => n.id !== COMPLETION_NODE_ID));
+        setEdges(eds => eds.filter(e => e.target !== COMPLETION_NODE_ID));
+      }
+      return;
     }
 
     // Case 2: Processors exist, but completion node doesn't. Add it.
     if (processorNodes.length > 0 && !completionNode) {
-        const avgX = processorNodes.reduce((sum, n) => sum + n.position.x, 0) / processorNodes.length;
-        const maxY = Math.max(...processorNodes.map(n => n.position.y));
-        const newCompletionNode: Node = {
-            id: COMPLETION_NODE_ID,
-            type: 'completion',
-            position: { x: avgX, y: maxY + NODE_V_SPACING + 50 },
-            data: {},
-            deletable: false,
-            draggable: false,
-        };
-        setNodes(nds => [...nds, newCompletionNode]);
-        return; // Edges will be handled in the next render cycle
+      const avgX = processorNodes.reduce((sum, n) => sum + n.position.x, 0) / processorNodes.length;
+      const maxY = Math.max(...processorNodes.map(n => n.position.y));
+      const newCompletionNode: Node = {
+        id: COMPLETION_NODE_ID,
+        type: 'completion',
+        position: { x: avgX, y: maxY + NODE_V_SPACING + 50 },
+        data: {},
+        deletable: false,
+        draggable: false,
+      };
+      setNodes(nds => [...nds, newCompletionNode]);
+      return; // Edges will be handled in the next render cycle
     }
-    
+
     // Case 3: Both processors and completion node exist. Manage positions and connections.
     if (processorNodes.length > 0 && completionNode) {
-        // Identify "last" processors (those not connected to another processor)
-        const processorsThatAreSourcesForOtherProcessors = new Set<string>();
-        for (const edge of edges) {
-            const sourceNode = nodes.find(n => n.id === edge.source);
-            const targetNode = nodes.find(n => n.id === edge.target);
-            if (sourceNode?.type === 'processor' && targetNode?.type === 'processor') {
-                processorsThatAreSourcesForOtherProcessors.add(sourceNode.id);
-            }
+      // Identify "last" processors (those not connected to another processor)
+      const processorsThatAreSourcesForOtherProcessors = new Set<string>();
+      for (const edge of edges) {
+        const sourceNode = nodes.find(n => n.id === edge.source);
+        const targetNode = nodes.find(n => n.id === edge.target);
+        if (sourceNode?.type === 'processor' && targetNode?.type === 'processor') {
+          processorsThatAreSourcesForOtherProcessors.add(sourceNode.id);
         }
+      }
 
-        const lastProcessorIds = processorNodes
-            .filter(p => !processorsThatAreSourcesForOtherProcessors.has(p.id))
-            .map(p => p.id);
-        
-        const lastProcessorNodes = nodes.filter(n => lastProcessorIds.includes(n.id));
+      const lastProcessorIds = processorNodes
+        .filter(p => !processorsThatAreSourcesForOtherProcessors.has(p.id))
+        .map(p => p.id);
 
-        // Update position of completion node based on the "last" processors for a cleaner layout
-        if (lastProcessorNodes.length > 0) {
-            const avgX = lastProcessorNodes.reduce((sum, n) => sum + n.position.x, 0) / lastProcessorNodes.length;
-            const maxY = Math.max(...lastProcessorNodes.map(n => n.position.y));
-            const newY = maxY + NODE_V_SPACING + 50;
+      const lastProcessorNodes = nodes.filter(n => lastProcessorIds.includes(n.id));
 
-            if (completionNode.position.x !== avgX || completionNode.position.y !== newY) {
-                setNodes(nds => nds.map(n => 
-                    n.id === COMPLETION_NODE_ID 
-                    ? { ...n, position: { x: avgX, y: newY } }
-                    : n
-                ));
-            }
+      // Update position of completion node based on the "last" processors for a cleaner layout
+      if (lastProcessorNodes.length > 0) {
+        const avgX = lastProcessorNodes.reduce((sum, n) => sum + n.position.x, 0) / lastProcessorNodes.length;
+        const maxY = Math.max(...lastProcessorNodes.map(n => n.position.y));
+        const newY = maxY + NODE_V_SPACING + 50;
+
+        if (completionNode.position.x !== avgX || completionNode.position.y !== newY) {
+          setNodes(nds => nds.map(n =>
+            n.id === COMPLETION_NODE_ID
+              ? { ...n, position: { x: avgX, y: newY } }
+              : n
+          ));
         }
+      }
 
-        // Synchronize edges to the completion node
-        const currentCompletionEdges = edges.filter(e => e.target === COMPLETION_NODE_ID);
-        const edgesToCreate = lastProcessorIds.filter(id => !currentCompletionEdges.some(e => e.source === id));
-        const edgesToRemove = currentCompletionEdges.filter(e => !lastProcessorIds.includes(e.source as string));
+      // Synchronize edges to the completion node
+      const currentCompletionEdges = edges.filter(e => e.target === COMPLETION_NODE_ID);
+      const edgesToCreate = lastProcessorIds.filter(id => !currentCompletionEdges.some(e => e.source === id));
+      const edgesToRemove = currentCompletionEdges.filter(e => !lastProcessorIds.includes(e.source as string));
 
-        if (edgesToCreate.length > 0 || edgesToRemove.length > 0) {
-            setEdges(eds => {
-                const filteredEdges = eds.filter(e => !edgesToRemove.some(er => er.id === e.id));
-                const newEdges = edgesToCreate.map(sourceId => ({
-                    id: `e-${sourceId}-${COMPLETION_NODE_ID}`,
-                    source: sourceId,
-                    target: COMPLETION_NODE_ID,
-                    type: 'smoothstep',
-                }));
-                return [...filteredEdges, ...newEdges];
-            });
-        }
+      if (edgesToCreate.length > 0 || edgesToRemove.length > 0) {
+        setEdges(eds => {
+          const filteredEdges = eds.filter(e => !edgesToRemove.some(er => er.id === e.id));
+          const newEdges = edgesToCreate.map(sourceId => ({
+            id: `e-${sourceId}-${COMPLETION_NODE_ID}`,
+            source: sourceId,
+            target: COMPLETION_NODE_ID,
+            type: 'smoothstep',
+          }));
+          return [...filteredEdges, ...newEdges];
+        });
+      }
     }
   }, [nodes, edges, setNodes, setEdges]);
-  
+
   // Effect for keyboard shortcuts to switch mouse mode
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -282,7 +282,7 @@ const App: React.FC = () => {
       if (activeEl && ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName)) {
         return;
       }
-      
+
       if (event.key.toLowerCase() === 'h') {
         event.preventDefault();
         setMouseMode('pan');
@@ -315,7 +315,7 @@ const App: React.FC = () => {
     setSelectedNode(newSelectedNode);
     // Automatically open settings when a node is selected
     if (newSelectedNode) {
-        setSettingsOpen(true);
+      setSettingsOpen(true);
     }
   }, []);
 
@@ -337,7 +337,7 @@ const App: React.FC = () => {
         // is true during the drag and false on the final event.
         if (dimensionChange && !dimensionChange.resizing && node.type === 'shape') {
           const data = node.data as ShapeNodeData;
-          
+
           // `node.width` and `node.height` are the final dimensions after the resize.
           const { width, height } = node;
 
@@ -375,12 +375,12 @@ const App: React.FC = () => {
         position: startNodePosition,
         data,
       };
-      
+
       const repoNodeExists = nodes.some(n => n.id === REPOSITORY_NODE_ID);
 
       const currentStartXSum = startNodes.reduce((sum, node) => sum + node.position.x, 0);
       const newAvgX = (currentStartXSum + startNodePosition.x) / (startNodes.length + 1);
-      
+
       const startToRepoEdge: Edge = {
         id: `e-${newStartNode.id}-${REPOSITORY_NODE_ID}`,
         source: newStartNode.id,
@@ -389,31 +389,31 @@ const App: React.FC = () => {
       };
 
       if (!repoNodeExists) {
-        const newRepoNode: Node = { 
-          id: REPOSITORY_NODE_ID, 
-          type: 'repository', 
-          position: { x: newAvgX, y: LEVEL_Y_POSITIONS.repository }, 
+        const newRepoNode: Node = {
+          id: REPOSITORY_NODE_ID,
+          type: 'repository',
+          position: { x: newAvgX, y: LEVEL_Y_POSITIONS.repository },
           data: {},
           deletable: false,
           draggable: false,
         };
-        
+
         setNodes((nds) => nds.concat(newStartNode, newRepoNode));
         setEdges((eds) => eds.concat([startToRepoEdge]));
       } else {
-        setNodes((nds) => 
-            nds.map(n => 
-                n.id === REPOSITORY_NODE_ID 
-                ? { ...n, position: { x: newAvgX, y: LEVEL_Y_POSITIONS.repository } } 
-                : n
-            ).concat(newStartNode)
+        setNodes((nds) =>
+          nds.map(n =>
+            n.id === REPOSITORY_NODE_ID
+              ? { ...n, position: { x: newAvgX, y: LEVEL_Y_POSITIONS.repository } }
+              : n
+          ).concat(newStartNode)
         );
         setEdges((eds) => addEdge(startToRepoEdge, eds));
       }
 
       return;
     }
-    
+
     // Worker Node Logic
     if (type === 'worker') {
       const workerNodesCount = nodes.filter(n => n.type === 'worker').length;
@@ -442,41 +442,41 @@ const App: React.FC = () => {
 
     // Worker Input Nodes (All Extractor Types)
     if (EXTRACTOR_NODE_TYPES.includes(type) && sourceNode?.type === 'worker') {
-        const hasExtractorInput = edges.some(edge => {
-            if (edge.target !== sourceNode.id) return false;
-            const sourceNodeFromEdge = nodes.find(n => n.id === edge.source);
-            return sourceNodeFromEdge && EXTRACTOR_NODE_TYPES.includes(sourceNodeFromEdge.type as string);
-        });
+      const hasExtractorInput = edges.some(edge => {
+        if (edge.target !== sourceNode.id) return false;
+        const sourceNodeFromEdge = nodes.find(n => n.id === edge.source);
+        return sourceNodeFromEdge && EXTRACTOR_NODE_TYPES.includes(sourceNodeFromEdge.type as string);
+      });
 
-        if (hasExtractorInput) {
-            alert("This Worker node can only have one Data Extractor input.");
-            return;
-        }
-
-        const worker = sourceNode;
-        const workerInputNodes = edges.filter(e => e.target === worker.id && nodes.find(n => n.id === e.source && EXTRACTOR_NODE_TYPES.includes(n.type as string))).length;
-        const newNodeId = getId();
-        
-        const position : XYPosition = {
-             x: worker.position.x - (NODE_H_SPACING / 4) + (workerInputNodes * (NODE_H_SPACING / 2)),
-             y: worker.position.y - NODE_V_SPACING,
-        };
-        
-        const newNode: Node = {
-            id: newNodeId,
-            type,
-            position,
-            data,
-        };
-
-        const newEdge: Edge = {
-            id: `e-${newNodeId}-${worker.id}`,
-            source: newNodeId,
-            target: worker.id,
-        };
-        setNodes((nds) => nds.concat(newNode));
-        setEdges((eds) => addEdge(newEdge, eds));
+      if (hasExtractorInput) {
+        alert("This Worker node can only have one Data Extractor input.");
         return;
+      }
+
+      const worker = sourceNode;
+      const workerInputNodes = edges.filter(e => e.target === worker.id && nodes.find(n => n.id === e.source && EXTRACTOR_NODE_TYPES.includes(n.type as string))).length;
+      const newNodeId = getId();
+
+      const position: XYPosition = {
+        x: worker.position.x - (NODE_H_SPACING / 4) + (workerInputNodes * (NODE_H_SPACING / 2)),
+        y: worker.position.y - NODE_V_SPACING,
+      };
+
+      const newNode: Node = {
+        id: newNodeId,
+        type,
+        position,
+        data,
+      };
+
+      const newEdge: Edge = {
+        id: `e-${newNodeId}-${worker.id}`,
+        source: newNodeId,
+        target: worker.id,
+      };
+      setNodes((nds) => nds.concat(newNode));
+      setEdges((eds) => addEdge(newEdge, eds));
+      return;
     }
 
     // Standard logic for other action nodes (Click, Loop, Processor)
@@ -485,46 +485,46 @@ const App: React.FC = () => {
     if (type === 'processor' && sourceNode?.type === 'worker') {
       // If adding a processor from a worker, find the end of the existing chain
       let lastProcessorInChainId: string | null = null;
-      
-      const firstProcessorEdge = edges.find(e => 
-          e.source === sourceNode.id && nodes.find(n => n.id === e.target)?.type === 'processor'
+
+      const firstProcessorEdge = edges.find(e =>
+        e.source === sourceNode.id && nodes.find(n => n.id === e.target)?.type === 'processor'
       );
-      
+
       if (firstProcessorEdge) {
-          lastProcessorInChainId = firstProcessorEdge.target;
-          let isLast = false;
-          while (!isLast) {
-              const nextEdge = edges.find(e => 
-                  e.source === lastProcessorInChainId && nodes.find(n => n.id === e.target)?.type === 'processor'
-              );
-              if (nextEdge) {
-                  lastProcessorInChainId = nextEdge.target;
-              } else {
-                  isLast = true;
-              }
+        lastProcessorInChainId = firstProcessorEdge.target;
+        let isLast = false;
+        while (!isLast) {
+          const nextEdge = edges.find(e =>
+            e.source === lastProcessorInChainId && nodes.find(n => n.id === e.target)?.type === 'processor'
+          );
+          if (nextEdge) {
+            lastProcessorInChainId = nextEdge.target;
+          } else {
+            isLast = true;
           }
+        }
       }
-      
+
       if (lastProcessorInChainId) {
-          finalSourceNode = nodes.find(n => n.id === lastProcessorInChainId) || sourceNode;
+        finalSourceNode = nodes.find(n => n.id === lastProcessorInChainId) || sourceNode;
       }
     }
 
     const newNodeId = getId();
     let position: XYPosition;
     if (finalSourceNode) {
-      if(type === 'processor') {
-          // Stack processors vertically for a clear chain
-          position = {
-              x: finalSourceNode.position.x,
-              y: finalSourceNode.position.y + NODE_V_SPACING
-          };
+      if (type === 'processor') {
+        // Stack processors vertically for a clear chain
+        position = {
+          x: finalSourceNode.position.x,
+          y: finalSourceNode.position.y + NODE_V_SPACING
+        };
       } else {
-          const childEdgesCount = edges.filter(e => e.source === finalSourceNode!.id).length;
-          position = { 
-            x: finalSourceNode.position.x + (childEdgesCount * (NODE_H_SPACING / 2)),
-            y: finalSourceNode.position.y + NODE_V_SPACING
-          };
+        const childEdgesCount = edges.filter(e => e.source === finalSourceNode!.id).length;
+        position = {
+          x: finalSourceNode.position.x + (childEdgesCount * (NODE_H_SPACING / 2)),
+          y: finalSourceNode.position.y + NODE_V_SPACING
+        };
       }
     } else {
       position = { // Fallback position
@@ -552,7 +552,7 @@ const App: React.FC = () => {
       setEdges((eds) => addEdge(newEdge, eds));
     }
   };
-  
+
   const updateNodeData = (nodeId: string, data: NodeData) => {
     setNodes((nds) =>
       nds.map((node) => {
@@ -567,7 +567,7 @@ const App: React.FC = () => {
       setSelectedNode((prev) => (prev ? { ...prev, data } : null));
     }
   };
-  
+
   const deleteNode = useCallback((nodeId: string) => {
     setNodes((nds) => nds.filter((node) => node.id !== nodeId));
     setEdges((eds) => eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
@@ -699,31 +699,31 @@ const App: React.FC = () => {
 
 
   const onNodeDragStop: NodeDragHandler = useCallback((event, node) => {
-    const parentNode = nodes.find(n => 
-        node.position.x >= n.position.x &&
-        node.position.y >= n.position.y &&
-        node.position.x <= n.position.x + (n.width ?? 0) &&
-        node.position.y <= n.position.y + (n.height ?? 0) &&
-        n.id !== node.id &&
-        n.type === 'loop'
+    const parentNode = nodes.find(n =>
+      node.position.x >= n.position.x &&
+      node.position.y >= n.position.y &&
+      node.position.x <= n.position.x + (n.width ?? 0) &&
+      node.position.y <= n.position.y + (n.height ?? 0) &&
+      n.id !== node.id &&
+      n.type === 'loop'
     );
 
     if (parentNode) {
-        setNodes(nds => nds.map(n => {
-            if (n.id === node.id) {
-                return {...n, parentNode: parentNode.id, extent: 'parent'};
-            }
-            return n;
-        }))
+      setNodes(nds => nds.map(n => {
+        if (n.id === node.id) {
+          return { ...n, parentNode: parentNode.id, extent: 'parent' };
+        }
+        return n;
+      }))
     } else {
-         setNodes(nds => nds.map(n => {
-            if (n.id === node.id) {
-                // remove parentNode and extent properties
-                const { parentNode, extent, ...rest } = n;
-                return rest;
-            }
-            return n;
-        }))
+      setNodes(nds => nds.map(n => {
+        if (n.id === node.id) {
+          // remove parentNode and extent properties
+          const { parentNode, extent, ...rest } = n;
+          return rest;
+        }
+        return n;
+      }))
     }
   }, [nodes, setNodes]);
 
@@ -758,44 +758,44 @@ const App: React.FC = () => {
 
   // Inspector Panel Handlers
   const showInspector = useCallback((htmlContent: string) => {
-      setInspectorConfig(prev => ({ ...(prev ?? { pickingState: null }), htmlContent }));
+    setInspectorConfig(prev => ({ ...(prev ?? { pickingState: null }), htmlContent }));
   }, []);
 
   const hideInspector = useCallback(() => {
-      setInspectorConfig(null);
-      setHighlightedSelector(null); // Also clear highlight when inspector closes
+    setInspectorConfig(null);
+    setHighlightedSelector(null); // Also clear highlight when inspector closes
   }, []);
 
   const handleStartPicking = useCallback((nodeId: string, ruleId: string) => {
-      setHighlightedSelector(null); // Clear any highlights when starting to pick
-      setInspectorConfig(prev => {
-          if (!prev) return prev;
-          return { ...prev, pickingState: { nodeId, ruleId } };
-      });
+    setHighlightedSelector(null); // Clear any highlights when starting to pick
+    setInspectorConfig(prev => {
+      if (!prev) return prev;
+      return { ...prev, pickingState: { nodeId, ruleId } };
+    });
   }, []);
 
   const handleStopPicking = useCallback(() => {
-      setInspectorConfig(prev => {
-          if (!prev) return prev;
-          return { ...prev, pickingState: null };
-      });
+    setInspectorConfig(prev => {
+      if (!prev) return prev;
+      return { ...prev, pickingState: null };
+    });
   }, []);
 
   const handleSelectorPicked = useCallback((selector: string) => {
-      if (!inspectorConfig?.pickingState) return;
+    if (!inspectorConfig?.pickingState) return;
 
-      const { nodeId, ruleId } = inspectorConfig.pickingState;
-      const targetNode = nodes.find(n => n.id === nodeId);
+    const { nodeId, ruleId } = inspectorConfig.pickingState;
+    const targetNode = nodes.find(n => n.id === nodeId);
 
-      if (targetNode && targetNode.type === 'html-data-extractor') {
-          const nodeData = targetNode.data as HTMLDataExtractorNodeData;
-          const updatedRules = nodeData.customRules.map(rule =>
-              rule.id === ruleId ? { ...rule, selector } : rule
-          );
-          updateNodeData(nodeId, { ...nodeData, customRules: updatedRules });
-      }
+    if (targetNode && targetNode.type === 'html-data-extractor') {
+      const nodeData = targetNode.data as HTMLDataExtractorNodeData;
+      const updatedRules = nodeData.customRules.map(rule =>
+        rule.id === ruleId ? { ...rule, selector } : rule
+      );
+      updateNodeData(nodeId, { ...nodeData, customRules: updatedRules });
+    }
 
-      handleStopPicking();
+    handleStopPicking();
   }, [inspectorConfig, nodes, updateNodeData, handleStopPicking]);
 
   // Context Menu Handlers
@@ -813,7 +813,7 @@ const App: React.FC = () => {
         selected: n.id === node.id,
       })));
     }
-    
+
     // Show the context menu. Actions will operate on all selected nodes.
     setMenu({
       top: event.clientY,
@@ -822,257 +822,259 @@ const App: React.FC = () => {
   }, [nodes, setNodes]);
 
   const onPaneContextMenu = useCallback((event: MouseEvent) => {
-      event.preventDefault();
-      setMenu(null);
+    event.preventDefault();
+    setMenu(null);
   }, []);
 
   const onPaneClick = useCallback(() => {
-      setMenu(null);
+    setMenu(null);
   }, []);
-  
+
   const onMoveStart = useCallback(() => {
-      setMenu(null);
+    setMenu(null);
   }, []);
-  
+
   const handleDeleteSelectedNodes = useCallback(() => {
-      const deletableNodeIds = nodes.filter(n => n.selected && n.deletable !== false).map(n => n.id);
-      
-      if (deletableNodeIds.length > 0) {
-          setEdges(eds => eds.filter(e => !deletableNodeIds.includes(e.source) && !deletableNodeIds.includes(e.target)));
-          setNodes(nds => nds.filter(n => !deletableNodeIds.includes(n.id)));
-      }
-      setMenu(null);
+    const deletableNodeIds = nodes.filter(n => n.selected && n.deletable !== false).map(n => n.id);
+
+    if (deletableNodeIds.length > 0) {
+      setEdges(eds => eds.filter(e => !deletableNodeIds.includes(e.source) && !deletableNodeIds.includes(e.target)));
+      setNodes(nds => nds.filter(n => !deletableNodeIds.includes(n.id)));
+    }
+    setMenu(null);
   }, [nodes, setNodes, setEdges]);
-  
+
   const handleDuplicateSelectedNodes = useCallback(() => {
-      const nodesToDuplicate = nodes.filter(n => n.selected && n.deletable !== false);
-      if (nodesToDuplicate.length === 0) {
-          setMenu(null);
-          return;
-      }
-
-      const newNodes: Node[] = [];
-      const oldIdToNewIdMap = new Map<string, string>();
-
-      nodesToDuplicate.forEach(node => {
-          const newNodeId = getId();
-          oldIdToNewIdMap.set(node.id, newNodeId);
-          newNodes.push({
-              ...node,
-              id: newNodeId,
-              position: { x: node.position.x + 20, y: node.position.y + 20 },
-              selected: true,
-          });
-      });
-
-      const newEdges: Edge[] = [];
-      const duplicatedIds = new Set(nodesToDuplicate.map(n => n.id));
-
-      edges.forEach(edge => {
-          if (duplicatedIds.has(edge.source) && duplicatedIds.has(edge.target)) {
-              const newSourceId = oldIdToNewIdMap.get(edge.source)!;
-              const newTargetId = oldIdToNewIdMap.get(edge.target)!;
-              newEdges.push({
-                  ...edge,
-                  id: `e-${newSourceId}-${newTargetId}-${getId()}`,
-                  source: newSourceId,
-                  target: newTargetId,
-              });
-          }
-      });
-      
-      setNodes(nds => [
-          ...nds.map(n => ({ ...n, selected: false })),
-          ...newNodes
-      ]);
-      setEdges(eds => eds.concat(newEdges));
+    const nodesToDuplicate = nodes.filter(n => n.selected && n.deletable !== false);
+    if (nodesToDuplicate.length === 0) {
       setMenu(null);
+      return;
+    }
+
+    const newNodes: Node[] = [];
+    const oldIdToNewIdMap = new Map<string, string>();
+
+    nodesToDuplicate.forEach(node => {
+      const newNodeId = getId();
+      oldIdToNewIdMap.set(node.id, newNodeId);
+      newNodes.push({
+        ...node,
+        id: newNodeId,
+        position: { x: node.position.x + 20, y: node.position.y + 20 },
+        selected: true,
+      });
+    });
+
+    const newEdges: Edge[] = [];
+    const duplicatedIds = new Set(nodesToDuplicate.map(n => n.id));
+
+    edges.forEach(edge => {
+      if (duplicatedIds.has(edge.source) && duplicatedIds.has(edge.target)) {
+        const newSourceId = oldIdToNewIdMap.get(edge.source)!;
+        const newTargetId = oldIdToNewIdMap.get(edge.target)!;
+        newEdges.push({
+          ...edge,
+          id: `e-${newSourceId}-${newTargetId}-${getId()}`,
+          source: newSourceId,
+          target: newTargetId,
+        });
+      }
+    });
+
+    setNodes(nds => [
+      ...nds.map(n => ({ ...n, selected: false })),
+      ...newNodes
+    ]);
+    setEdges(eds => eds.concat(newEdges));
+    setMenu(null);
   }, [nodes, edges, setNodes, setEdges]);
-  
+
   const addShapeNode = useCallback((shapeType: ShapeType) => {
     if (!rfInstance || !reactFlowWrapper.current) return;
 
     // --- Helper function for collision detection ---
-    const isOverlapping = (rect1: {x: number, y: number, width: number, height: number}, rect2: {x: number, y: number, width: number, height: number}) => {
-        // Add a small buffer to avoid placing nodes directly touching each other
-        const buffer = 20; 
-        return (
-            rect1.x < rect2.x + rect2.width + buffer &&
-            rect1.x + rect1.width + buffer > rect2.x &&
-            rect1.y < rect2.y + rect2.height + buffer &&
-            rect1.y + rect1.height + buffer > rect2.y
-        );
+    const isOverlapping = (rect1: { x: number, y: number, width: number, height: number }, rect2: { x: number, y: number, width: number, height: number }) => {
+      // Add a small buffer to avoid placing nodes directly touching each other
+      const buffer = 20;
+      return (
+        rect1.x < rect2.x + rect2.width + buffer &&
+        rect1.x + rect1.width + buffer > rect2.x &&
+        rect1.y < rect2.y + rect2.height + buffer &&
+        rect1.y + rect1.height + buffer > rect2.y
+      );
     };
-    
+
     // --- Find a free position on the canvas ---
     const findFreePosition = (initialPos: XYPosition, nodeWidth: number, nodeHeight: number) => {
-        let testPosition = { 
-            x: initialPos.x - nodeWidth / 2, 
-            y: initialPos.y - nodeHeight / 2 
-        };
-        
-        const shiftAmount = 40;
-        let attempt = 0;
-        const maxAttempts = 50; // Safety break
+      let testPosition = {
+        x: initialPos.x - nodeWidth / 2,
+        y: initialPos.y - nodeHeight / 2
+      };
 
-        while (attempt < maxAttempts) {
-            const newNodeRect = { ...testPosition, width: nodeWidth, height: nodeHeight };
-            let overlapping = false;
+      const shiftAmount = 40;
+      let attempt = 0;
+      const maxAttempts = 50; // Safety break
 
-            for (const node of nodes) {
-                 const existingNodeRect = {
-                    x: node.position.x,
-                    y: node.position.y,
-                    width: node.width || 150, // Fallback width
-                    height: node.height || 50, // Fallback height
-                };
+      while (attempt < maxAttempts) {
+        const newNodeRect = { ...testPosition, width: nodeWidth, height: nodeHeight };
+        let overlapping = false;
 
-                if (isOverlapping(newNodeRect, existingNodeRect)) {
-                    overlapping = true;
-                    break;
-                }
-            }
+        for (const node of nodes) {
+          const existingNodeRect = {
+            x: node.position.x,
+            y: node.position.y,
+            width: node.width || 150, // Fallback width
+            height: node.height || 50, // Fallback height
+          };
 
-            if (!overlapping) {
-                return testPosition; // Found a free spot
-            }
-            
-            // If overlapping, shift position down and slightly right for the next check
-            testPosition.y += shiftAmount;
-            testPosition.x += shiftAmount / 2;
-            attempt++;
+          if (isOverlapping(newNodeRect, existingNodeRect)) {
+            overlapping = true;
+            break;
+          }
         }
 
-        // Fallback to the initial position if no free spot is found after max attempts
-        return { x: initialPos.x - nodeWidth / 2, y: initialPos.y - nodeHeight / 2 };
+        if (!overlapping) {
+          return testPosition; // Found a free spot
+        }
+
+        // If overlapping, shift position down and slightly right for the next check
+        testPosition.y += shiftAmount;
+        testPosition.x += shiftAmount / 2;
+        attempt++;
+      }
+
+      // Fallback to the initial position if no free spot is found after max attempts
+      return { x: initialPos.x - nodeWidth / 2, y: initialPos.y - nodeHeight / 2 };
     };
 
     // --- Original logic to get initial position and node data ---
     const initialCenterPosition = rfInstance.screenToFlowPosition({
-        x: reactFlowWrapper.current.clientWidth / 2,
-        y: reactFlowWrapper.current.clientHeight / 2,
+      x: reactFlowWrapper.current.clientWidth / 2,
+      y: reactFlowWrapper.current.clientHeight / 2,
     });
 
     const { width, height } = defaultShapeSizes[shapeType];
     const data: ShapeNodeData = { ...defaultShapeData[shapeType], width, height };
-    
+
     // --- Use the new function to get the final position ---
     const finalPosition = findFreePosition(initialCenterPosition, width, height);
 
     const newNode: Node<ShapeNodeData> = {
-        id: getId(),
-        type: 'shape',
-        position: finalPosition,
-        data,
-        width,
-        height,
-        zIndex: -1,
+      id: getId(),
+      type: 'shape',
+      position: finalPosition,
+      data,
+      width,
+      height,
+      zIndex: -1,
     };
     setNodes((nds) => nds.concat(newNode));
     handleCloseSettings();
-}, [rfInstance, nodes, setNodes, handleCloseSettings]);
+  }, [rfInstance, nodes, setNodes, handleCloseSettings]);
 
   return (
     <div className="flex flex-col h-screen font-sans bg-slate-100 overflow-hidden">
-        <div className="flex flex-1 h-full overflow-hidden">
-            <ReactFlowProvider>
-                {/* Backdrop for mobile overlays */}
-                <div 
-                    className={`fixed inset-0 bg-black bg-opacity-50 z-30 md:hidden transition-opacity ${(isSidebarOpen || isSettingsOpen) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-                    onClick={handleClosePanels}
-                />
+      <div className="flex flex-1 h-full overflow-hidden">
+        <ReactFlowProvider>
+          {/* Backdrop for mobile overlays */}
+          <div
+            className={`fixed inset-0 bg-black bg-opacity-50 z-30 md:hidden transition-opacity ${(isSidebarOpen || isSettingsOpen) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+            onClick={handleClosePanels}
+          />
 
-                <Sidebar 
-                    onAddNode={addNode} 
-                    selectedNode={selectedNode}
-                    isOpen={isSidebarOpen}
-                    onClose={() => setSidebarOpen(false)}
-                    nodes={nodes}
-                    edges={edges}
-                    mouseMode={mouseMode}
-                    onSetMouseMode={setMouseMode}
-                    onAddShapeNode={addShapeNode}
-                />
-                <main className="flex-1 h-full relative" ref={reactFlowWrapper}>
-                <ReactFlow
-                    nodes={nodes}
-                    edges={edges}
-                    onNodesChange={onNodesChangeHandler}
-                    onEdgesChange={onEdgesChange}
-                    onConnect={onConnect}
-                    nodeTypes={nodeTypes}
-                    onSelectionChange={onSelectionChange}
-                    onNodeDragStop={onNodeDragStop}
-                    onInit={setRfInstance}
-                    fitView
-                    className="bg-slate-100"
-                    selectionOnDrag={mouseMode === 'select'}
-                    panOnDrag={mouseMode === 'pan'}
-                    onNodeContextMenu={onNodeContextMenu}
-                    onPaneContextMenu={onPaneContextMenu}
-                    onPaneClick={onPaneClick}
-                    onMoveStart={onMoveStart}
-                >
-                    <Controls />
-                    <MiniMap nodeStrokeWidth={3} zoomable pannable />
-                    <Background gap={16} size={1} />
-                </ReactFlow>
-                 {menu && (
-                    <ContextMenu
-                        top={menu.top}
-                        left={menu.left}
-                        onClose={() => setMenu(null)}
-                        onDelete={handleDeleteSelectedNodes}
-                        onDuplicate={handleDuplicateSelectedNodes}
-                    />
-                )}
-                {/* Toggle Buttons */}
-                <div className="absolute top-4 left-4 z-10 md:hidden">
-                    <button onClick={() => setSidebarOpen(true)} className="p-2 bg-white rounded-full shadow-lg text-gray-700 hover:bg-gray-100">
-                        <Bars3Icon />
-                    </button>
-                </div>
-                <div className="absolute top-4 right-4 z-10">
-                    {!isSettingsOpen && (
-                        <button onClick={() => setSettingsOpen(true)} className="p-2 bg-white rounded-full shadow-lg text-gray-700 hover:bg-gray-100">
-                            <Cog6ToothIcon />
-                        </button>
-                    )}
-                </div>
-                </main>
-                <SettingsPanel
-                  key={selectedNode?.id ?? 'project-settings'}
-                  node={selectedNode}
-                  onUpdateNode={updateNodeData}
-                  onDeleteNode={deleteNode}
-                  onClose={handleCloseSettings}
-                  projectSettings={projectSettings}
-                  onUpdateProjectSettings={updateProjectSettings}
-                  onExport={exportConfiguration}
-                  onSave={saveProject}
-                  onImport={importConfiguration}
-                  isOpen={isSettingsOpen}
-                  onShowInspector={showInspector}
-                  onHideInspector={hideInspector}
-                  onStartPicking={handleStartPicking}
-                  onStopPicking={handleStopPicking}
-                  pickingRuleId={inspectorConfig?.pickingState?.ruleId ?? null}
-                  onInspectSelector={setHighlightedSelector}
-                  highlightedSelector={highlightedSelector}
-                  nodes={nodes}
-                  edges={edges}
-                />
-            </ReactFlowProvider>
-        </div>
-        {inspectorConfig && (
-            <InspectorPanel
-                htmlContent={inspectorConfig.htmlContent}
-                isPicking={!!inspectorConfig.pickingState}
-                onClose={hideInspector}
-                onSelectorPicked={handleSelectorPicked}
-                highlightedSelector={highlightedSelector}
-            />
-        )}
+          <Sidebar
+            onAddNode={addNode}
+            selectedNode={selectedNode}
+            isOpen={isSidebarOpen}
+            onClose={() => setSidebarOpen(false)}
+            nodes={nodes}
+            edges={edges}
+            mouseMode={mouseMode}
+            onSetMouseMode={setMouseMode}
+            onAddShapeNode={addShapeNode}
+          />
+          <main className="flex-1 h-full relative" ref={reactFlowWrapper}>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChangeHandler}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              nodeTypes={nodeTypes}
+              onSelectionChange={onSelectionChange}
+              onNodeDragStop={onNodeDragStop}
+              onInit={setRfInstance}
+              fitView
+              className="bg-slate-100"
+              selectionOnDrag={mouseMode === 'select'}
+              panOnDrag={mouseMode === 'pan'}
+              onNodeContextMenu={onNodeContextMenu}
+              onPaneContextMenu={onPaneContextMenu}
+              onPaneClick={onPaneClick}
+              onMoveStart={onMoveStart}
+            >
+              <Controls />
+              <MiniMap nodeStrokeWidth={3} zoomable pannable />
+              <Background gap={16} size={1} />
+            </ReactFlow>
+            {menu && (
+              <ContextMenu
+                top={menu.top}
+                left={menu.left}
+                onClose={() => setMenu(null)}
+                onDelete={handleDeleteSelectedNodes}
+                onDuplicate={handleDuplicateSelectedNodes}
+              />
+            )}
+            {/* Toggle Buttons */}
+            {!isSidebarOpen && (
+              <div className="absolute top-4 left-4 z-10 transition-opacity duration-300">
+                <button onClick={() => setSidebarOpen(true)} className="p-2 bg-white rounded-full shadow-lg text-gray-700 hover:bg-gray-100">
+                  <Bars3Icon />
+                </button>
+              </div>
+            )}
+            <div className="absolute top-4 right-4 z-10">
+              {!isSettingsOpen && (
+                <button onClick={() => setSettingsOpen(true)} className="p-2 bg-white rounded-full shadow-lg text-gray-700 hover:bg-gray-100">
+                  <Cog6ToothIcon />
+                </button>
+              )}
+            </div>
+          </main>
+          <SettingsPanel
+            key={selectedNode?.id ?? 'project-settings'}
+            node={selectedNode}
+            onUpdateNode={updateNodeData}
+            onDeleteNode={deleteNode}
+            onClose={handleCloseSettings}
+            projectSettings={projectSettings}
+            onUpdateProjectSettings={updateProjectSettings}
+            onExport={exportConfiguration}
+            onSave={saveProject}
+            onImport={importConfiguration}
+            isOpen={isSettingsOpen}
+            onShowInspector={showInspector}
+            onHideInspector={hideInspector}
+            onStartPicking={handleStartPicking}
+            onStopPicking={handleStopPicking}
+            pickingRuleId={inspectorConfig?.pickingState?.ruleId ?? null}
+            onInspectSelector={setHighlightedSelector}
+            highlightedSelector={highlightedSelector}
+            nodes={nodes}
+            edges={edges}
+          />
+        </ReactFlowProvider>
+      </div>
+      {inspectorConfig && (
+        <InspectorPanel
+          htmlContent={inspectorConfig.htmlContent}
+          isPicking={!!inspectorConfig.pickingState}
+          onClose={hideInspector}
+          onSelectorPicked={handleSelectorPicked}
+          highlightedSelector={highlightedSelector}
+        />
+      )}
     </div>
   );
 };
