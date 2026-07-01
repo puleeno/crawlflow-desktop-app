@@ -11,22 +11,43 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::Manager;
 
-fn resolve_plugin_dir(_app: &tauri::App) -> PathBuf {
-    let home = dirs_next::data_dir()
+/// User-installed plugins directory.
+/// - Windows: %APPDATA%/crawlflow/plugins
+/// - Linux:   ~/.config/crawlflow/plugins
+/// - macOS:   ~/Library/Application Support/crawlflow/plugins
+fn get_user_plugins_dir() -> PathBuf {
+    dirs_next::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("crawlflow")
-        .join("plugins");
+        .join("plugins")
+}
 
-    // Ensure the directory exists
-    std::fs::create_dir_all(&home).ok();
+/// Built-in plugins bundled with the app (read-only, ships in the app binary).
+/// Falls back to `<project>/plugins/` during development.
+fn get_builtin_plugins_dir(app: &tauri::App) -> Option<PathBuf> {
+    // Bundled resources path (used in release/packaged builds)
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let path = resource_dir.join("plugins");
+        if path.is_dir() {
+            return Some(path);
+        }
+    }
 
-    // Also try app-local resource dir for bundled plugins
-    home
+    // Dev fallback: check for `<project>/plugins/` relative to src-tauri/
+    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.join("plugins"))
+        .unwrap_or_default();
+    if dev_path.is_dir() {
+        return Some(dev_path);
+    }
+
+    None
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut engine = PluginEngine::new(PathBuf::from(".")); // placeholder, updated in setup
+    let mut engine = PluginEngine::new(None, get_user_plugins_dir());
     plugins::register_builtin_plugins(&mut engine);
 
     tauri::Builder::default()
@@ -64,14 +85,19 @@ pub fn run() {
             commands::install_marketplace_item,
         ])
         .setup(|app| {
-            // Resolve plugin directory
-            let plugin_dir = resolve_plugin_dir(app);
-            log::info!("Python plugin directory: {:?}", plugin_dir);
+            let user_dir = get_user_plugins_dir();
+            let builtin_dir = get_builtin_plugins_dir(app);
 
-            // Replace the managed state engine with the correct plugin dir
+            std::fs::create_dir_all(&user_dir).ok();
+
+            if let Some(ref bd) = builtin_dir {
+                log::info!("Built-in plugin directory: {:?}", bd);
+            }
+            log::info!("User plugin directory: {:?}", user_dir);
+
             let state: tauri::State<'_, AppState> = app.state();
             let mut guard = state.plugin_engine.lock().unwrap();
-            *guard = PluginEngine::new(plugin_dir);
+            *guard = PluginEngine::new(builtin_dir.clone(), user_dir);
             plugins::register_builtin_plugins(&mut *guard);
 
             match guard.init_python_plugins() {

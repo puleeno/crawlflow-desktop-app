@@ -1,4 +1,4 @@
-const MARKETPLACE_API = 'https://crawlflow-marketplace.pages.dev/api';
+const MARKETPLACE_API = 'https://crawlflow.pages.dev/api';
 
 export interface MarketplaceItem {
     id: number;

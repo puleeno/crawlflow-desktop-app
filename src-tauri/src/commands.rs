@@ -380,8 +380,8 @@ pub fn summarize_parsed_html_cmd(
 
 // ── Marketplace installation ─────────────────────────────────────────
 
-fn get_data_dir() -> PathBuf {
-    dirs_next::data_dir()
+fn get_user_plugins_dir() -> PathBuf {
+    dirs_next::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("crawlflow")
 }
@@ -393,9 +393,9 @@ pub async fn install_marketplace_item(
     download_url: String,
 ) -> Result<String, String> {
     let base_dir = if item_type == "template" {
-        get_data_dir().join("templates").join(&slug)
+        get_user_plugins_dir().join("templates").join(&slug)
     } else {
-        get_data_dir().join("plugins").join(&slug)
+        get_user_plugins_dir().join("plugins").join(&slug)
     };
 
     std::fs::create_dir_all(&base_dir).map_err(|e| format!("Failed to create dir: {}", e))?;

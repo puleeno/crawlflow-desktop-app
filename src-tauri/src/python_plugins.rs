@@ -11,6 +11,7 @@ pub struct PythonPluginMeta {
     pub version: String,
     pub description: String,
     pub capabilities: Vec<String>,
+    pub source: PluginSource,
 }
 
 impl From<&PythonPlugin> for PythonPluginMeta {
@@ -21,6 +22,7 @@ impl From<&PythonPlugin> for PythonPluginMeta {
             version: p.version.clone(),
             description: p.description.clone(),
             capabilities: p.capabilities.clone(),
+            source: p.source.clone(),
         }
     }
 }
@@ -33,8 +35,15 @@ pub struct PythonPlugin {
     pub description: String,
     pub capabilities: Vec<String>,
     pub script_path: PathBuf,
+    pub source: PluginSource,
     /// Cached globals dict so the script is only compiled once.
     globals: Option<Py<PyDict>>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum PluginSource {
+    BuiltIn,
+    User,
 }
 
 impl PythonPlugin {
@@ -66,23 +75,21 @@ impl PythonPlugin {
 
 pub struct PythonPluginEngine {
     plugins: HashMap<String, PythonPlugin>,
-    plugin_dir: PathBuf,
+    builtin_dir: Option<PathBuf>,
+    user_dir: PathBuf,
 }
 
 impl PythonPluginEngine {
-    pub fn new(plugin_dir: PathBuf) -> Self {
+    pub fn new(builtin_dir: Option<PathBuf>, user_dir: PathBuf) -> Self {
         Self {
             plugins: HashMap::new(),
-            plugin_dir,
+            builtin_dir,
+            user_dir,
         }
     }
 
-    /// Discover Python plugins from the plugin directory.
-    /// Each plugin is a subdirectory with a plugin.json manifest and main.py.
-    pub fn discover(&mut self) -> Result<Vec<String>, String> {
-        let mut discovered = Vec::new();
-
-        let entries = std::fs::read_dir(&self.plugin_dir).map_err(|e| e.to_string())?;
+    fn scan_dir(&mut self, dir: &PathBuf, source: PluginSource, discovered: &mut Vec<String>) -> Result<(), String> {
+        let entries = std::fs::read_dir(dir).map_err(|e| e.to_string())?;
         for entry in entries.flatten() {
             let path = entry.path();
             if !path.is_dir() {
@@ -143,12 +150,34 @@ impl PythonPluginEngine {
                 description,
                 capabilities,
                 script_path: main_path,
+                source: source.clone(),
                 globals: None,
             };
 
+            // User plugins override built-in plugins with the same ID
             self.plugins.insert(id.clone(), plugin);
             discovered.push(id);
         }
+
+        Ok(())
+    }
+
+    /// Discover Python plugins from the user directory first, then built-in.
+    /// User plugins override built-in plugins with the same ID.
+    pub fn discover(&mut self) -> Result<Vec<String>, String> {
+        let mut discovered = Vec::new();
+
+        // Clone paths to avoid borrow conflicts
+        let builtin = self.builtin_dir.clone();
+        let user = self.user_dir.clone();
+
+        // Built-in plugins first (lower priority)
+        if let Some(ref builtin_dir) = builtin {
+            self.scan_dir(builtin_dir, PluginSource::BuiltIn, &mut discovered)?;
+        }
+
+        // User plugins second (higher priority — overrides built-in IDs)
+        self.scan_dir(&user, PluginSource::User, &mut discovered)?;
 
         Ok(discovered)
     }
@@ -161,12 +190,12 @@ impl PythonPluginEngine {
         self.plugins.get_mut(id)
     }
 
-    pub fn set_plugin_dir(&mut self, dir: PathBuf) {
-        self.plugin_dir = dir;
+    pub fn plugin_dirs(&self) -> (&Option<PathBuf>, &PathBuf) {
+        (&self.builtin_dir, &self.user_dir)
     }
 
-    pub fn plugin_dir(&self) -> &PathBuf {
-        &self.plugin_dir
+    pub fn user_plugin_dir(&self) -> &PathBuf {
+        &self.user_dir
     }
 
     // ── Hook helpers ──────────────────────────────────────────────

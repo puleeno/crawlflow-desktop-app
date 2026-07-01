@@ -1,8 +1,14 @@
 let tauriAvailable = false;
 
 export function isTauri(): boolean {
-    try { return typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__?.ipc; }
-    catch { return false; }
+    try {
+        return typeof window !== 'undefined' && (
+            !!(window as any).__TAURI_INTERNALS__ ||
+            !!(window as any).__TAURI__
+        );
+    } catch {
+        return false;
+    }
 }
 
 export function setTauriAvailable(val: boolean) {

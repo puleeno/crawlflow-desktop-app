@@ -18,10 +18,10 @@ pub struct PluginEngine {
 }
 
 impl PluginEngine {
-    pub fn new(plugin_dir: PathBuf) -> Self {
+    pub fn new(builtin_dir: Option<PathBuf>, user_dir: PathBuf) -> Self {
         Self {
             plugins: HashMap::new(),
-            python_engine: PythonPluginEngine::new(plugin_dir),
+            python_engine: PythonPluginEngine::new(builtin_dir, user_dir),
         }
     }
 
@@ -159,7 +159,8 @@ impl PluginEngine {
     }
 
     pub fn reload_python_plugins(&mut self) -> Result<Vec<String>, String> {
-        self.python_engine = PythonPluginEngine::new(self.python_engine.plugin_dir().clone());
+        let (builtin, user) = self.python_engine.plugin_dirs();
+        self.python_engine = PythonPluginEngine::new(builtin.clone(), user.clone());
         self.python_engine.discover()
     }
 }

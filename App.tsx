@@ -610,8 +610,14 @@ const App: React.FC = () => {
   }, []);
 
   const isTauriEnv = useCallback(() => {
-    try { return typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__?.ipc; }
-    catch { return false; }
+    try {
+      return typeof window !== 'undefined' && (
+        !!(window as any).__TAURI_INTERNALS__ ||
+        !!(window as any).__TAURI__
+      );
+    } catch {
+      return false;
+    }
   }, []);
 
   const exportConfiguration = useCallback(async () => {
@@ -626,7 +632,7 @@ const App: React.FC = () => {
         const filePath = await save({ defaultPath: fileName, filters: [{ name: 'JSON', extensions: ['json'] }] });
         if (filePath) await writeTextFile(filePath, json);
         return;
-      } catch { }
+      } catch {}
     }
 
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(json);
@@ -657,6 +663,8 @@ const App: React.FC = () => {
         return;
       } catch (e) {
         console.error('Tauri save failed:', e);
+        alert(`Failed to save project to SQLite database: ${e instanceof Error ? e.message : e}`);
+        return; // Prevent falling through to localStorage
       }
     }
 

@@ -54,8 +54,14 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
     };
 
     const isTauriEnv = () => {
-        try { return typeof window !== 'undefined' && !!(window as any).__TAURI_INTERNALS__?.ipc; }
-        catch { return false; }
+        try {
+            return typeof window !== 'undefined' && (
+                !!(window as any).__TAURI_INTERNALS__ ||
+                !!(window as any).__TAURI__
+            );
+        } catch {
+            return false;
+        }
     };
 
     const handleDelete = async (id: string, name: string) => {
@@ -64,7 +70,7 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
             try {
                 const { ask } = await import('@tauri-apps/plugin-dialog');
                 confirmed = await ask(`Delete "${name}"?`, { title: 'CrawlFlow', kind: 'warning' });
-            } catch {}
+            } catch { }
         }
         if (!confirmed) {
             confirmed = window.confirm(`Delete "${name}"?`);
