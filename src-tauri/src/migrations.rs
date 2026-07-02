@@ -1,5 +1,95 @@
 use tauri_plugin_sql::{Migration, MigrationKind};
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_master_migrations_version() {
+        let migrations = get_master_migrations();
+        assert!(!migrations.is_empty());
+        assert_eq!(migrations[0].version, 1);
+        assert!(format!("{:?}", migrations[0].kind).contains("Up"));
+    }
+
+    #[test]
+    fn test_master_migrations_contains_projects_table() {
+        let migrations = get_master_migrations();
+        let sql = &migrations[0].sql;
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS projects"));
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS extensions"));
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS app_settings"));
+    }
+
+    #[test]
+    fn test_master_migrations_has_project_id_pk() {
+        let migrations = get_master_migrations();
+        let sql = &migrations[0].sql;
+        assert!(sql.contains("id TEXT PRIMARY KEY"));
+    }
+
+    #[test]
+    fn test_project_migrations_version() {
+        let migrations = get_project_migrations();
+        assert!(!migrations.is_empty());
+        assert_eq!(migrations[0].version, 1);
+    }
+
+    #[test]
+    fn test_project_migrations_contains_all_tables() {
+        let migrations = get_project_migrations();
+        let sql = &migrations[0].sql;
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS project_settings"));
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS nodes"));
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS edges"));
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS crawl_data"));
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS crawl_logs"));
+    }
+
+    #[test]
+    fn test_project_migrations_has_indexes() {
+        let migrations = get_project_migrations();
+        let sql = &migrations[0].sql;
+        assert!(sql.contains("CREATE INDEX IF NOT EXISTS idx_nodes_type"));
+        assert!(sql.contains("CREATE INDEX IF NOT EXISTS idx_edges_source"));
+        assert!(sql.contains("CREATE INDEX IF NOT EXISTS idx_edges_target"));
+        assert!(sql.contains("CREATE INDEX IF NOT EXISTS idx_crawl_data_field"));
+    }
+
+    #[test]
+    fn test_master_migrations_description() {
+        let migrations = get_master_migrations();
+        assert_eq!(migrations[0].description, "create master database tables");
+    }
+
+    #[test]
+    fn test_project_migrations_description() {
+        let migrations = get_project_migrations();
+        assert_eq!(migrations[0].description, "create project database tables");
+    }
+
+    #[test]
+    fn test_crawl_data_columns() {
+        let migrations = get_project_migrations();
+        let sql = &migrations[0].sql;
+        assert!(sql.contains("source_url TEXT"));
+        assert!(sql.contains("field_name TEXT NOT NULL"));
+        assert!(sql.contains("field_value TEXT"));
+        assert!(sql.contains("raw_data TEXT"));
+        assert!(sql.contains("node_id TEXT"));
+        assert!(sql.contains("extracted_at TEXT"));
+    }
+
+    #[test]
+    fn test_nodes_has_position_columns() {
+        let migrations = get_project_migrations();
+        let sql = &migrations[0].sql;
+        assert!(sql.contains("position_x REAL"));
+        assert!(sql.contains("position_y REAL"));
+        assert!(sql.contains("deletable INTEGER"));
+    }
+}
+
 pub fn get_master_migrations() -> Vec<Migration> {
     vec![
         Migration {

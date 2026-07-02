@@ -260,13 +260,13 @@ mod tests {
         assert_eq!(p.client_type, "reqwest");
         assert_eq!(p.user_agent.unwrap(), "CrawlFlow/1.0");
         assert_eq!(p.timeout_secs.unwrap(), 30);
+        assert!(p.proxy_url.is_none());
+        assert!(p.chrome_args.is_none());
     }
 
     #[test]
     fn test_find_chrome_returns_something() {
-        // Should return either a path or None (depending on system)
         let result = find_chrome();
-        // On any system, this should not panic
         assert!(result.is_none() || result.is_some());
     }
 
@@ -282,8 +282,93 @@ mod tests {
     fn test_simple_hash_different_inputs() {
         let h1 = simple_hash("url-a");
         let h2 = simple_hash("url-b");
-        // Very unlikely to collide
         assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn test_simple_hash_empty() {
+        let h = simple_hash("");
+        assert!(!h.is_empty());
+    }
+
+    #[test]
+    fn test_simple_hash_unicode() {
+        let h1 = simple_hash("cà phê sữa đá");
+        let h2 = simple_hash("cà phê sữa đá");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_simple_hash_url() {
+        let h = simple_hash("https://oreka.vn/san-pham/abc-123");
+        assert_eq!(h.len(), 16);
+    }
+
+    #[test]
+    fn test_build_reqwest_client_default() {
+        let profile = ClientProfile::default();
+        let client = build_reqwest_client(&profile);
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_build_reqwest_client_with_proxy() {
+        let profile = ClientProfile {
+            proxy_url: Some("http://invalid-proxy:9999".into()),
+            ..Default::default()
+        };
+        let client = build_reqwest_client(&profile);
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_build_reqwest_client_with_all_options() {
+        let profile = ClientProfile {
+            user_agent: Some("CustomBot/2.0".into()),
+            timeout_secs: Some(120),
+            proxy_url: None,
+            ..Default::default()
+        };
+        let client = build_reqwest_client(&profile);
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_fetch_with_client_unknown_type_falls_back_to_reqwest() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let profile = ClientProfile {
+            client_type: "unknown-xxx".into(),
+            ..Default::default()
+        };
+        let result = rt.block_on(fetch_with_client("http://0.0.0.0:1", &profile, None));
+        assert_eq!(result.url, "http://0.0.0.0:1");
+        assert!(result.error.is_some() || result.status == 0);
+    }
+
+    #[test]
+    #[ignore = "Spawns Chrome browser - only run manually"]
+    fn test_fetch_with_client_chrome() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let profile = ClientProfile {
+            client_type: "chrome".into(),
+            ..Default::default()
+        };
+        let result = rt.block_on(fetch_with_client("http://0.0.0.0:1", &profile, None));
+        assert_eq!(result.url, "http://0.0.0.0:1");
+    }
+
+    #[test]
+    fn test_fetch_with_client_with_extract_rules() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let profile = ClientProfile::default();
+        let rules = vec![ExtractRule {
+            field: "test".into(),
+            selector: "h1".into(),
+            attribute: None,
+            extract_multiple: None,
+        }];
+        let result = rt.block_on(fetch_with_client("http://0.0.0.0:1", &profile, Some(rules)));
+        assert_eq!(result.url, "http://0.0.0.0:1");
     }
 }
 

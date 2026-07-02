@@ -1,5 +1,149 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_client_profile_default() {
+        let p = ClientProfile::default();
+        assert_eq!(p.client_type, "reqwest");
+        assert_eq!(p.user_agent, Some("CrawlFlow/1.0".into()));
+        assert_eq!(p.timeout_secs, Some(30));
+        assert!(p.proxy_url.is_none());
+        assert!(p.headers.is_none());
+    }
+
+    #[test]
+    fn test_client_profile_serde_roundtrip() {
+        let p = ClientProfile {
+            client_type: "chrome".into(),
+            user_agent: Some("TestBot/1.0".into()),
+            proxy_url: Some("http://proxy:8080".into()),
+            headers: Some(vec![("X-Custom".into(), "val".into())]),
+            timeout_secs: Some(60),
+            profile_dir: Some("/tmp/profiles".into()),
+            chrome_args: Some(vec!["--no-sandbox".into()]),
+            wait_for_selector: Some(".loaded".into()),
+            extra_nav_args: Some(vec!["--flag".into()]),
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let back: ClientProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.client_type, "chrome");
+        assert_eq!(back.user_agent, Some("TestBot/1.0".into()));
+        assert_eq!(back.proxy_url, Some("http://proxy:8080".into()));
+        assert_eq!(back.timeout_secs, Some(60));
+        assert_eq!(back.profile_dir, Some("/tmp/profiles".into()));
+        assert_eq!(back.wait_for_selector, Some(".loaded".into()));
+    }
+
+    #[test]
+    fn test_crawl_request_serde_roundtrip() {
+        let req = CrawlRequest {
+            url: "https://example.com".into(),
+            method: Some("GET".into()),
+            headers: Some(vec![HeaderPair { key: "Accept".into(), value: "text/html".into() }]),
+            body: None,
+            use_browser: Some(false),
+            wait_for_selector: None,
+            extract_rules: Some(vec![ExtractRule {
+                field: "title".into(),
+                selector: "h1".into(),
+                attribute: None,
+                extract_multiple: None,
+            }]),
+            client_profile: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let back: CrawlRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.url, "https://example.com");
+        assert_eq!(back.method, Some("GET".into()));
+        assert!(back.client_profile.is_none());
+        assert_eq!(back.extract_rules.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_crawl_result_serde_roundtrip() {
+        let result = CrawlResult {
+            url: "https://example.com".into(),
+            status: 200,
+            html: Some("<h1>OK</h1>".into()),
+            text: Some("OK".into()),
+            extracted: Some(vec![ExtractedField {
+                field: "title".into(),
+                values: vec!["OK".into()],
+            }]),
+            error: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: CrawlResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.status, 200);
+        assert_eq!(back.text, Some("OK".into()));
+        assert!(back.error.is_none());
+    }
+
+    #[test]
+    fn test_crawl_result_with_error() {
+        let result = CrawlResult {
+            url: "https://example.com".into(),
+            status: 0,
+            html: None,
+            text: None,
+            extracted: None,
+            error: Some("Connection refused".into()),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: CrawlResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.status, 0);
+        assert_eq!(back.error, Some("Connection refused".into()));
+        assert!(back.html.is_none());
+    }
+
+    #[test]
+    fn test_extract_rule_defaults() {
+        let rule: ExtractRule = serde_json::from_str(r#"{"field":"title","selector":"h1"}"#).unwrap();
+        assert_eq!(rule.field, "title");
+        assert_eq!(rule.selector, "h1");
+        assert!(rule.attribute.is_none());
+        assert!(rule.extract_multiple.is_none());
+    }
+
+    #[test]
+    fn test_plugin_info_serde() {
+        let info = PluginInfo {
+            id: "test-plugin".into(),
+            name: "Test".into(),
+            version: "1.0.0".into(),
+            description: "A test".into(),
+            capabilities: vec!["processor".into(), "export".into()],
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let back: PluginInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, "test-plugin");
+        assert_eq!(back.capabilities.len(), 2);
+    }
+
+    #[test]
+    fn test_parsed_html_item_defaults() {
+        let json = r#"{"tag":"h1","text":"Title","html":"<h1>Title</h1>","type":"heading","attributes":{}}"#;
+        let item: ParsedHtmlItem = serde_json::from_str(json).unwrap();
+        assert_eq!(item.tag, "h1");
+        assert_eq!(item.item_type, "heading");
+        assert!(item.href.is_empty());
+        assert!(item.src.is_empty());
+        assert_eq!(item.table_index, 0);
+    }
+
+    #[test]
+    fn test_parsed_html_item_with_table() {
+        let json = r#"{"tag":"table","text":"","html":"<table>...</table>","type":"table","attributes":{},"table_index":1,"table_data":[["a","b"],["c","d"]]}"#;
+        let item: ParsedHtmlItem = serde_json::from_str(json).unwrap();
+        assert_eq!(item.table_index, 1);
+        assert_eq!(item.table_data.len(), 2);
+        assert_eq!(item.table_data[0][0], "a");
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientProfile {
     pub client_type: String,

@@ -394,4 +394,69 @@ mod tests {
         assert!(s.ends_with("Z"));
         assert_eq!(s.len(), 24);
     }
+
+    #[test]
+    fn test_service_status_serde_roundtrip() {
+        for (variant, expected) in &[
+            (ServiceStatus::Idle, "\"idle\""),
+            (ServiceStatus::Running, "\"running\""),
+            (ServiceStatus::Paused, "\"paused\""),
+            (ServiceStatus::Stopped, "\"stopped\""),
+        ] {
+            let json = serde_json::to_string(variant).unwrap();
+            assert_eq!(json, *expected);
+            let back: ServiceStatus = serde_json::from_str(expected).unwrap();
+            assert_eq!(format!("{:?}", back), format!("{:?}", variant));
+        }
+    }
+
+    #[test]
+    fn test_service_status_error_serde() {
+        let err = ServiceStatus::Error("boom".into());
+        let json = serde_json::to_string(&err).unwrap();
+        assert_eq!(json, r#"{"error":"boom"}"#);
+        let back: ServiceStatus = serde_json::from_str(r#"{"error":"boom"}"#).unwrap();
+        match back {
+            ServiceStatus::Error(msg) => assert_eq!(msg, "boom"),
+            _ => panic!("Expected Error variant"),
+        }
+    }
+
+    #[test]
+    fn test_service_info_serde_roundtrip() {
+        let info = ServiceInfo {
+            project_id: "proj-1".into(),
+            status: "running".into(),
+            cycle_count: 5,
+            started_at: "2026-01-01T00:00:00.000Z".into(),
+            last_run_at: "2026-01-02T00:00:00.000Z".into(),
+            last_error: None,
+            interval_seconds: 60,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let back: ServiceInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.project_id, "proj-1");
+        assert_eq!(back.status, "running");
+        assert_eq!(back.cycle_count, 5);
+        assert_eq!(back.interval_seconds, 60);
+        assert!(back.last_error.is_none());
+    }
+
+    #[test]
+    fn test_service_info_with_last_error() {
+        let info = ServiceInfo {
+            project_id: "proj-2".into(),
+            status: "error: timeout".into(),
+            cycle_count: 3,
+            started_at: "2026-01-01T00:00:00.000Z".into(),
+            last_run_at: "2026-01-03T00:00:00.000Z".into(),
+            last_error: Some("timeout".into()),
+            interval_seconds: 30,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let back: ServiceInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.status, "error: timeout");
+        assert_eq!(back.last_error, Some("timeout".into()));
+        assert_eq!(back.interval_seconds, 30);
+    }
 }
