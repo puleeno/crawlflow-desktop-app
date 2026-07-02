@@ -1,79 +1,26 @@
 use crate::models::*;
+use crate::request_clients;
 use scraper::{Html, Selector};
 
 pub async fn fetch_url(request: CrawlRequest) -> CrawlResult {
-    let client = reqwest::Client::builder()
-        .user_agent("CrawlFlow/1.0")
-        .danger_accept_invalid_certs(false)
-        .build()
-        .map_err(|e| e.to_string());
+    let profile = request.client_profile.unwrap_or_default();
 
-    let client = match client {
-        Ok(c) => c,
-        Err(e) => {
-            return CrawlResult {
-                url: request.url.clone(),
-                status: 0,
-                html: None,
-                text: None,
-                extracted: None,
-                error: Some(format!("Failed to create HTTP client: {}", e)),
-            }
-        }
-    };
-
-    let mut req = client.get(&request.url);
-    if let Some(headers) = &request.headers {
-        for h in headers {
-            req = req.header(&h.key, &h.value);
-        }
+    if profile.client_type == "chrome" || request.use_browser.unwrap_or(false) {
+        let chrome_profile = ClientProfile {
+            client_type: "chrome".into(),
+            user_agent: profile.user_agent,
+            proxy_url: profile.proxy_url,
+            headers: profile.headers,
+            timeout_secs: profile.timeout_secs,
+            profile_dir: profile.profile_dir,
+            chrome_args: profile.chrome_args,
+            wait_for_selector: request.wait_for_selector.clone().or(profile.wait_for_selector),
+            extra_nav_args: profile.extra_nav_args,
+        };
+        return request_clients::fetch_with_client(&request.url, &chrome_profile, request.extract_rules).await;
     }
 
-    let response = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            return CrawlResult {
-                url: request.url.clone(),
-                status: 0,
-                html: None,
-                text: None,
-                extracted: None,
-                error: Some(format!("HTTP request failed: {}", e)),
-            }
-        }
-    };
-
-    let status = response.status().as_u16();
-    let html = match response.text().await {
-        Ok(t) => t,
-        Err(e) => {
-            return CrawlResult {
-                url: request.url.clone(),
-                status,
-                html: None,
-                text: None,
-                extracted: None,
-                error: Some(format!("Failed to read response body: {}", e)),
-            }
-        }
-    };
-
-    let text = strip_html_tags(&html);
-
-    let extracted = if let Some(rules) = &request.extract_rules {
-        Some(extract_from_html(&html, rules))
-    } else {
-        None
-    };
-
-    CrawlResult {
-        url: request.url,
-        status,
-        html: Some(html),
-        text: Some(text),
-        extracted,
-        error: None,
-    }
+    request_clients::fetch_with_client(&request.url, &profile, request.extract_rules).await
 }
 
 pub fn extract_from_html(html: &str, rules: &[ExtractRule]) -> Vec<ExtractedField> {
@@ -126,6 +73,7 @@ pub async fn batch_crawl(urls: Vec<String>, rules: Vec<ExtractRule>) -> Vec<Craw
             use_browser: None,
             wait_for_selector: None,
             extract_rules: Some(rules.clone()),
+            client_profile: None,
         })
         .await;
         results.push(result);

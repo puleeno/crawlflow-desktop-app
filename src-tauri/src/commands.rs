@@ -72,6 +72,7 @@ pub fn inner_fetch_rss(url: &str, max_items: usize) -> Result<Vec<serde_json::Va
         use_browser: None,
         wait_for_selector: None,
         extract_rules: None,
+        client_profile: None,
     };
 
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
@@ -579,6 +580,17 @@ pub fn clear_project_logs_cmd(
 ) -> String {
     state.log_manager.clear(&project_id);
     format!("Logs cleared for project {}", project_id)
+}
+
+// ── Request Client commands ───────────────────────────────────────────
+
+#[tauri::command]
+pub async fn fetch_with_client_cmd(
+    url: String,
+    profile: crate::models::ClientProfile,
+    extract_rules: Option<Vec<ExtractRule>>,
+) -> CrawlResult {
+    crate::request_clients::fetch_with_client(&url, &profile, extract_rules).await
 }
 
 // ── System Service commands ────────────────────────────────────────────

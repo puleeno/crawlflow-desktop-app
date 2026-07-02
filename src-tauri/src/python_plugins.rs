@@ -413,6 +413,7 @@ fn create_crawlflow_api<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyModule>> 
     module.add_function(wrap_pyfunction!(py_fetch_rss, py)?)?;
     module.add_function(wrap_pyfunction!(py_export_csv, py)?)?;
     module.add_function(wrap_pyfunction!(py_parse_html_table, py)?)?;
+    module.add_function(wrap_pyfunction!(py_fetch_with_client, py)?)?;
 
     Ok(module.into())
 }
@@ -516,6 +517,45 @@ fn py_export_csv(data: String, delimiter: Option<String>) -> PyResult<String> {
         .map_err(|e| pyo3::exceptions::PyTypeError::new_err(e.to_string()))?;
     let result = crate::commands::inner_export_csv(&data_vec, &delimiter.unwrap_or_else(|| ",".into()));
     Ok(result)
+}
+
+#[pyfunction(signature = (url, client_type="\"reqwest\"", user_agent=None, proxy_url=None, timeout_secs=None, profile_dir=None, chrome_args=None))]
+fn py_fetch_with_client(
+    url: String,
+    client_type: &str,
+    user_agent: Option<String>,
+    proxy_url: Option<String>,
+    timeout_secs: Option<u64>,
+    profile_dir: Option<String>,
+    chrome_args: Option<Vec<String>>,
+) -> PyResult<String> {
+    let profile = crate::models::ClientProfile {
+        client_type: client_type.to_string(),
+        user_agent,
+        proxy_url,
+        headers: None,
+        timeout_secs,
+        profile_dir,
+        chrome_args,
+        wait_for_selector: None,
+        extra_nav_args: None,
+    };
+
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+    rt.block_on(async {
+        let result = crate::request_clients::fetch_with_client(&url, &profile, None).await;
+        let json = serde_json::json!({
+            "status": result.status,
+            "html": result.html,
+            "text": result.text,
+            "url": result.url,
+            "error": result.error,
+        });
+        serde_json::to_string(&json)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    })
 }
 
 #[pyfunction(signature = (html, table_index=None, has_header=None))]

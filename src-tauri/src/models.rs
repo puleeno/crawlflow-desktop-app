@@ -1,6 +1,35 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientProfile {
+    pub client_type: String,
+    pub user_agent: Option<String>,
+    pub proxy_url: Option<String>,
+    pub headers: Option<Vec<(String, String)>>,
+    pub timeout_secs: Option<u64>,
+    pub profile_dir: Option<String>,
+    pub chrome_args: Option<Vec<String>>,
+    pub wait_for_selector: Option<String>,
+    pub extra_nav_args: Option<Vec<String>>,
+}
+
+impl Default for ClientProfile {
+    fn default() -> Self {
+        Self {
+            client_type: "reqwest".into(),
+            user_agent: Some("CrawlFlow/1.0".into()),
+            proxy_url: None,
+            headers: None,
+            timeout_secs: Some(30),
+            profile_dir: None,
+            chrome_args: None,
+            wait_for_selector: None,
+            extra_nav_args: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlRequest {
     pub url: String,
     pub method: Option<String>,
@@ -9,6 +38,7 @@ pub struct CrawlRequest {
     pub use_browser: Option<bool>,
     pub wait_for_selector: Option<String>,
     pub extract_rules: Option<Vec<ExtractRule>>,
+    pub client_profile: Option<ClientProfile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

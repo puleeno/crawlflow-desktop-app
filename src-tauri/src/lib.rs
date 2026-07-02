@@ -6,6 +6,7 @@ mod models;
 mod pipeline;
 mod plugins;
 mod python_plugins;
+mod request_clients;
 mod services;
 mod system_service;
 
@@ -87,6 +88,8 @@ pub fn run() {
             commands::install_marketplace_item,
             commands::list_presets_cmd,
             commands::run_demo_cmd,
+            // Request client
+            commands::fetch_with_client_cmd,
             // Service commands
             commands::start_project_service_cmd,
             commands::stop_project_service_cmd,
