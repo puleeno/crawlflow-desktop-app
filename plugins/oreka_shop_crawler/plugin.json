@@ -1,0 +1,7 @@
+{
+  "id": "oreka-shop-crawler",
+  "name": "Oreka Shop Crawler",
+  "version": "1.0.0",
+  "description": "Crawl to\u00e0n b\u1ed9 s\u1ea3n ph\u1ea9m t\u1eeb m\u1ed9t shop tr\u00ean oreka.vn, parse d\u1eef li\u1ec7u v\u00e0 xu\u1ea5t ra file Excel v\u1edbi c\u01a1 ch\u1ebf append + check tr\u00f9ng",
+  "capabilities": ["dataSource", "processor", "export"]
+}

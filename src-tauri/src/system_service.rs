@@ -51,10 +51,10 @@ impl Platform {
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            Platform::Macos => "macos",
-            Platform::Linux => "linux",
-            Platform::Windows => "windows",
-            Platform::Unknown => "unknown",
+            Platform::Macos => "macOS",
+            Platform::Linux => "Linux",
+            Platform::Windows => "Windows",
+            Platform::Unknown => "Unknown",
         }
     }
 }
@@ -386,7 +386,7 @@ mod tests {
     fn test_platform_detection() {
         let p = Platform::detect();
         let s = p.as_str();
-        assert!(s == "macos" || s == "linux" || s == "windows" || s == "unknown");
+        assert!(s == "macOS" || s == "Linux" || s == "Windows" || s == "Unknown");
     }
 
     #[test]
@@ -424,12 +424,12 @@ mod tests {
             running: false,
             auto_start: false,
             service_path: "/tmp/test.plist".into(),
-            platform: "macos".into(),
+            platform: "macOS".into(),
             executable: "/usr/local/bin/crawlflow".into(),
             log_dir: "/tmp/crawlflow/logs".into(),
         };
         assert!(!info.installed);
         assert!(!info.running);
-        assert_eq!(info.platform, "macos");
+        assert_eq!(info.platform, "macOS");
     }
 }

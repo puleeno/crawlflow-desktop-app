@@ -414,6 +414,7 @@ fn create_crawlflow_api<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyModule>> 
     module.add_function(wrap_pyfunction!(py_export_csv, py)?)?;
     module.add_function(wrap_pyfunction!(py_parse_html_table, py)?)?;
     module.add_function(wrap_pyfunction!(py_fetch_with_client, py)?)?;
+    module.add_function(wrap_pyfunction!(py_update_progress, py)?)?;
 
     Ok(module.into())
 }
@@ -571,4 +572,12 @@ fn py_parse_html_table(
     );
     serde_json::to_string(&result)
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+}
+
+#[pyfunction]
+fn py_update_progress(project_id: String, data: String) -> PyResult<()> {
+    let info: crate::progress::ProgressInfo = serde_json::from_str(&data)
+        .map_err(|e| pyo3::exceptions::PyTypeError::new_err(e.to_string()))?;
+    crate::progress::update_progress(&project_id, info);
+    Ok(())
 }

@@ -5,6 +5,7 @@ mod migrations;
 mod models;
 mod pipeline;
 mod plugins;
+mod progress;
 mod python_plugins;
 mod request_clients;
 mod services;
@@ -88,6 +89,8 @@ pub fn run() {
             commands::install_marketplace_item,
             commands::list_presets_cmd,
             commands::run_demo_cmd,
+            // Progress
+            commands::get_project_progress_cmd,
             // Request client
             commands::fetch_with_client_cmd,
             // Service commands

@@ -171,7 +171,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
                 </div>
                 <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
                   <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Platform</div>
-                  <span className="font-bold text-gray-800 capitalize">{serviceInfo.platform}</span>
+                  <span className="font-bold text-gray-800">{serviceInfo.platform}</span>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
                   <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Auto Start</div>

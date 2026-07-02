@@ -582,6 +582,13 @@ pub fn clear_project_logs_cmd(
     format!("Logs cleared for project {}", project_id)
 }
 
+// ── Progress commands ────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_project_progress_cmd(project_id: String) -> Option<crate::progress::ProgressInfo> {
+    crate::progress::get_progress(&project_id)
+}
+
 // ── Request Client commands ───────────────────────────────────────────
 
 #[tauri::command]
