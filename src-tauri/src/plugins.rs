@@ -390,6 +390,67 @@ impl PluginEngine {
         }));
 
         presets.push(serde_json::json!({
+            "id": "web-page-to-excel",
+            "name": "Web Page to Excel",
+            "description": "Fetch a web page, extract content, and export to Excel (.xlsx).",
+            "icon": "TableCellsIcon",
+            "icon_color": "#059669",
+            "source": "builtin",
+            "plugin_id": null,
+            "project_settings": {
+                "name": "Web to Excel - {url}",
+                "description": "Scrape web pages to Excel spreadsheets.",
+                "crawlDelay": 1000,
+                "userAgent": "CrawlFlow/1.0",
+                "concurrency": 5
+            },
+            "nodes": [
+                {
+                    "id": "ds-1",
+                    "type": "start",
+                    "label": "From URL",
+                    "position": {"x": 50, "y": 200},
+                    "data": {
+                        "sourceType": "url",
+                        "sourceValue": "",
+                        "urlSettings": {
+                            "scope": "current-url",
+                            "excludeExtensions": ["pdf","jpg","png","zip","mp4","svg"],
+                            "excludePatterns": [],
+                            "whitelistPatterns": [],
+                            "domainPolicy": "all",
+                            "domainWhitelist": []
+                        }
+                    }
+                },
+                {
+                    "id": "ext-1",
+                    "type": "htmlExtractor",
+                    "label": "Extract Data",
+                    "position": {"x": 350, "y": 200},
+                    "data": {
+                        "presets": [],
+                        "customRules": []
+                    }
+                },
+                {
+                    "id": "exp-1",
+                    "type": "excelExport",
+                    "label": "Excel Export",
+                    "position": {"x": 650, "y": 200},
+                    "data": {
+                        "sheetName": "Sheet1",
+                        "hasHeader": true
+                    }
+                }
+            ],
+            "edges": [
+                {"id": "e-ds-ext", "source": "ds-1", "target": "ext-1", "sourceHandle": "data-out", "targetHandle": "data-in"},
+                {"id": "e-ext-exp", "source": "ext-1", "target": "exp-1", "sourceHandle": "data-out", "targetHandle": "data-in"}
+            ]
+        }));
+
+        presets.push(serde_json::json!({
             "id": "ecommerce-tracker",
             "name": "E-commerce Tracker",
             "description": "Track product prices and availability from e-commerce sites.",
