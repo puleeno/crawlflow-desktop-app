@@ -2,7 +2,7 @@
 import React, { useState, useRef, ChangeEvent, useEffect, useMemo } from 'react';
 import { Node, Edge } from 'reactflow';
 import { XMarkIcon, Cog6ToothIcon, ArrowUpTrayIcon, ArrowDownTrayIcon, TrashIcon, ChevronDownIcon, ChevronUpIcon, CursorArrowRaysIcon, CloudIcon } from './icons';
-import { NodeData, StartNodeData, ClickNodeData, ExtractionRule, FileInputMethod, MySQLConnection, ProjectSettings, LoopNodeData, WorkerNodeData, HTMLDataExtractorNodeData, ProcessorNodeData, WorkerRule, WorkerRuleType, URLFormatRule, HTMLContainsRule, DOMValueRule, TagAttributeRule, ExtractFrom, URLSourceSettings, APISourceSettings, APIKeyAuth, BearerTokenAuth, BasicAuth, XMLSourceSettings, JSONSourceSettings, PagePagination, OffsetLimitPagination, NextURLPagination, RuleCondition, SaveToDbSettings, SendToApiSettings, GenerateCsvSettings, SendEmailSettings, CSVExtractorNodeData, ColumnMapping, JSONExtractorNodeData, PathMapping, XMLExtractorNodeData, MySQLExtractorNodeData, ShapeNodeData, DataSourceTypeRule } from '../types';
+import { NodeData, StartNodeData, ClickNodeData, ExtractionRule, FileInputMethod, MySQLConnection, ProjectSettings, LoopNodeData, WorkerNodeData, HTMLDataExtractorNodeData, ProcessorNodeData, WorkerRule, WorkerRuleType, URLFormatRule, HTMLContainsRule, DOMValueRule, TagAttributeRule, ExtractFrom, URLSourceSettings, APISourceSettings, APIKeyAuth, BearerTokenAuth, BasicAuth, XMLSourceSettings, JSONSourceSettings, PagePagination, OffsetLimitPagination, NextURLPagination, RuleCondition, SaveToDbSettings, SendToApiSettings, GenerateCsvSettings, GenerateExcelSettings, SendEmailSettings, CSVExtractorNodeData, ColumnMapping, JSONExtractorNodeData, PathMapping, XMLExtractorNodeData, MySQLExtractorNodeData, ShapeNodeData, DataSourceTypeRule } from '../types';
 import { PRESETS, PROCESSORS } from '../presets';
 import ServiceControls from './ServiceControls';
 
@@ -1243,6 +1243,24 @@ const ProcessorNodeSettings: React.FC<{
                              <textarea placeholder="Body Template" value={(data.settings as SendEmailSettings).body} onChange={e => handleSettingsChange('body', e.target.value)} className={`${commonInputClasses} h-24`} />
                              
                              {renderMappingSection('autoMapFields', 'fieldMapping', 'Label in Email')}
+                        </>
+                    )}
+                    {data.processorType === 'generate-excel-file' && (
+                        <>
+                            <input type="text" placeholder="File Name Pattern" value={(data.settings as GenerateExcelSettings).fileName} onChange={e => handleSettingsChange('fileName', e.target.value)} className={commonInputClasses} />
+                            <input type="text" placeholder="Sheet Name" value={(data.settings as GenerateExcelSettings).sheetName} onChange={e => handleSettingsChange('sheetName', e.target.value)} className={commonInputClasses} />
+                             <div className="flex items-center gap-2 mt-2">
+                                <input
+                                    type="checkbox"
+                                    id="includeHeaderExcel"
+                                    checked={(data.settings as GenerateExcelSettings).includeHeader}
+                                    onChange={e => handleSettingsChange('includeHeader', e.target.checked)}
+                                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <label htmlFor="includeHeaderExcel" className="text-sm text-gray-700">Include Header Row</label>
+                            </div>
+                            
+                            {renderMappingSection('autoMapHeaders', 'columnMapping', 'Excel Column')}
                         </>
                     )}
                 </div>

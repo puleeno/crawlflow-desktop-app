@@ -248,12 +248,21 @@ export interface SendEmailSettings {
     fieldMapping: Record<string, string>; // key: extracted field, value: label in email
 }
 
+export interface GenerateExcelSettings {
+    fileName: string;
+    sheetName: string;
+    includeHeader: boolean;
+    autoMapHeaders: boolean;
+    columnMapping: Record<string, string>; // key: extracted field, value: excel column
+}
+
 // Discriminated Union for ProcessorNodeData
 export type ProcessorNodeData = 
     | { processorType: 'save-to-database'; settings: SaveToDbSettings; }
     | { processorType: 'send-to-api'; settings: SendToApiSettings; }
     | { processorType: 'generate-csv-file'; settings: GenerateCsvSettings; }
-    | { processorType: 'send-email-notification'; settings: SendEmailSettings; };
+    | { processorType: 'send-email-notification'; settings: SendEmailSettings; }
+    | { processorType: 'generate-excel-file'; settings: GenerateExcelSettings; };
 
 
 export type WorkerRuleType = 'url-format' | 'html-contains' | 'dom-value' | 'tag-attribute' | 'data-source-type';

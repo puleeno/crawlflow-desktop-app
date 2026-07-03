@@ -7,6 +7,12 @@ fn app_exe_path() -> Option<PathBuf> {
     std::env::current_exe().ok()
 }
 
+fn service_exe_str() -> String {
+    app_exe_path()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default()
+}
+
 fn data_dir() -> PathBuf {
     dirs_next::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -80,6 +86,18 @@ impl SystemServiceManager {
     }
 
     fn generate_plist(exe: &str) -> String {
+        Self::generate_plist_with_args(exe, &["--service"])
+    }
+
+    fn generate_plist_with_args(exe: &str, args: &[&str]) -> String {
+        let args_xml: String = {
+            let mut s = format!("        <string>{}</string>\n", exe);
+            for a in args {
+                s.push_str(&format!("        <string>{}</string>\n", a));
+            }
+            s
+        };
+
         format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -89,8 +107,7 @@ impl SystemServiceManager {
     <string>{identifier}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{exe}</string>
-        <string>--service</string>
+{args}
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -111,13 +128,17 @@ impl SystemServiceManager {
 </plist>
 "#,
             identifier = SERVICE_IDENTIFIER,
-            exe = exe,
+            args = args_xml,
             log = service_log_dir().to_string_lossy(),
             data = data_dir().to_string_lossy(),
         )
     }
 
     fn generate_systemd(exe: &str) -> String {
+        Self::generate_systemd_with_args(exe, " --service")
+    }
+
+    fn generate_systemd_with_args(exe: &str, extra_args: &str) -> String {
         format!(
             r#"[Unit]
 Description=CrawlFlow Background Service
@@ -125,7 +146,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart={exe} --service
+ExecStart={exe}{extra_args}
 Restart=on-failure
 RestartSec=5
 StandardOutput=append:{log}/service-stdout.log
@@ -137,6 +158,7 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 WantedBy=default.target
 "#,
             exe = exe,
+            extra_args = extra_args,
             log = service_log_dir().to_string_lossy(),
             data = data_dir().to_string_lossy(),
         )
@@ -144,9 +166,6 @@ WantedBy=default.target
 
     pub fn get_info() -> ServiceInstallInfo {
         let platform = Platform::detect();
-        let exe = app_exe_path()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
         let installed = Self::is_installed();
         let running = if installed {
             Self::is_running()
@@ -159,6 +178,7 @@ WantedBy=default.target
             Platform::Linux => Self::systemd_path().to_string_lossy().to_string(),
             _ => String::new(),
         };
+        let exe = service_exe_str();
 
         ServiceInstallInfo {
             installed,
@@ -207,9 +227,7 @@ WantedBy=default.target
     }
 
     pub fn install() -> Result<String, String> {
-        let exe = app_exe_path()
-            .ok_or_else(|| "Cannot determine executable path".to_string())?;
-        let exe_str = exe.to_string_lossy().to_string();
+        let exe_str = service_exe_str();
 
         std::fs::create_dir_all(service_log_dir()).map_err(|e| e.to_string())?;
 

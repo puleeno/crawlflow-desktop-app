@@ -1,6 +1,6 @@
 
 
-import { ExtractionRule, SaveToDbSettings, SendToApiSettings, GenerateCsvSettings, SendEmailSettings, ProcessorNodeData, ColumnMapping, PathMapping } from './types';
+import { ExtractionRule, SaveToDbSettings, SendToApiSettings, GenerateCsvSettings, GenerateExcelSettings, SendEmailSettings, ProcessorNodeData, ColumnMapping, PathMapping } from './types';
 
 interface Preset {
   name: string;
@@ -310,5 +310,16 @@ export const PROCESSORS: {
       autoMapFields: true,
       fieldMapping: {},
     } as SendEmailSettings,
+  },
+  {
+    id: 'generate-excel-file',
+    name: 'Generate Excel File',
+    defaultSettings: {
+      fileName: 'crawl_results_{{date}}.xlsx',
+      sheetName: 'Sheet1',
+      includeHeader: true,
+      autoMapHeaders: true,
+      columnMapping: {},
+    } as GenerateExcelSettings,
   },
 ];

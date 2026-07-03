@@ -321,8 +321,53 @@ export const limitPlugin: CrawlFlowPlugin = {
     },
 };
 
+// =====================================================
+// Excel Export Plugin - execution via Rust
+// =====================================================
+export const excelExportPlugin: CrawlFlowPlugin = {
+    id: 'excel-export',
+    name: 'Excel Export',
+    version: '1.0.0',
+    description: 'Export crawled data to Excel (.xlsx) format (Rust backend).',
+    author: 'CrawlFlow',
+    capabilities: ['hook'],
+    hooks: {
+        customExport: async (ctx) => {
+            const result: any = await invoke('export_excel_cmd', {
+                request: {
+                    format: 'xlsx',
+                    data: ctx.crawlData || [],
+                    config: ctx.config,
+                },
+            });
+            // Decode base64 and trigger download
+            const byteChars = atob(result.content);
+            const byteNums = new Uint8Array(byteChars.length);
+            for (let i = 0; i < byteChars.length; i++) {
+                byteNums[i] = byteChars.charCodeAt(i);
+            }
+            const blob = new Blob([byteNums], { type: result.mime_type });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = result.file_name;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            return result;
+        },
+    },
+    configFields: [
+        { key: 'sheetName', label: 'Sheet Name', type: 'string', defaultValue: 'Sheet1' },
+        { key: 'includeHeader', label: 'Include Header Row', type: 'boolean', defaultValue: true },
+    ],
+    defaultConfig: { sheetName: 'Sheet1', includeHeader: true },
+};
+
 export const builtinPlugins: CrawlFlowPlugin[] = [
     csvExportPlugin,
+    excelExportPlugin,
     jsonTransformPlugin,
     apiExportPlugin,
     rssDataSourcePlugin,

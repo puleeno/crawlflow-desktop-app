@@ -824,4 +824,49 @@ pub fn register_builtin_plugins(engine: &mut PluginEngine) {
         capabilities: vec!["processor".to_string()],
         execute: limit_plugin,
     });
+
+    engine.register(RustPlugin {
+        id: "rust-excel-export".to_string(),
+        name: "Excel Export".to_string(),
+        version: "1.0.0".to_string(),
+        description: "Export data to Excel (.xlsx) format".to_string(),
+        capabilities: vec!["processor".to_string(), "export".to_string()],
+        execute: excel_export_plugin,
+    });
+}
+
+pub fn excel_export_plugin(
+    data: Vec<serde_json::Value>,
+    config: serde_json::Value,
+) -> Result<Vec<serde_json::Value>, String> {
+    use crate::commands::inner_export_excel;
+
+    let sheet_name = config
+        .get("sheetName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Sheet1");
+
+    let file_name = config
+        .get("fileName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("export.xlsx");
+
+    let bytes = inner_export_excel(&data, sheet_name)?;
+
+    // Write to a temp file
+    let out_dir = dirs_next::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("crawlflow")
+        .join("exports");
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("Failed to create exports dir: {}", e))?;
+
+    let out_path = out_dir.join(file_name);
+    std::fs::write(&out_path, &bytes).map_err(|e| format!("Failed to write Excel file: {}", e))?;
+
+    Ok(vec![serde_json::json!({
+        "success": true,
+        "file": out_path.to_string_lossy().to_string(),
+        "count": data.len(),
+        "format": "xlsx"
+    })])
 }

@@ -367,6 +367,39 @@ pub fn execute_pipeline(
                 (input, format!("Passed through {} items (extraction stubbed)", input_count))
             }
 
+            "excelExport" => {
+                let count = input.len();
+                let sheet_name = node
+                    .data
+                    .get("sheetName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Sheet1");
+
+                let result = plugins::excel_export_plugin(input.clone(), serde_json::json!({
+                    "sheetName": sheet_name,
+                    "fileName": format!("export_{}.xlsx", node.id),
+                }));
+
+                match result {
+                    Ok(output) => {
+                        log_manager.info(
+                            project_id,
+                            &node_id,
+                            &format!("[{}] Exported {} items to Excel", label_of(node), count),
+                        );
+                        (output, format!("Exported {} items to Excel", count))
+                    }
+                    Err(e) => {
+                        log_manager.error(
+                            project_id,
+                            &node_id,
+                            &format!("[{}] Excel export failed: {}", label_of(node), e),
+                        );
+                        (vec![], format!("Excel export error: {}", e))
+                    }
+                }
+            }
+
             "csvExport" | "databaseExport" => {
                 let count = input.len();
                 log_manager.info(

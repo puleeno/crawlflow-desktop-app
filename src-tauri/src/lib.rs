@@ -43,6 +43,10 @@ fn get_builtin_plugins_dir(app: &tauri::App) -> Option<PathBuf> {
     None
 }
 
+fn is_service_mode() -> bool {
+    std::env::args().any(|a| a == "--service")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let log_manager = Arc::new(LogManager::new());
@@ -77,6 +81,7 @@ pub fn run() {
             commands::execute_batch_processor_cmd,
             commands::fetch_rss_cmd,
             commands::export_csv_cmd,
+            commands::export_excel_cmd,
             commands::parse_html_table_cmd,
             commands::list_python_plugins_cmd,
             commands::execute_python_hook_cmd,
@@ -140,6 +145,20 @@ pub fn run() {
             // Initialize service manager
             state.service_manager.initialize(app_handle, state.log_manager.clone());
 
+            // Create window only in GUI mode (--service flag = headless)
+            if !is_service_mode() {
+                let _window = tauri::WebviewWindowBuilder::new(
+                    app,
+                    "main",
+                    tauri::WebviewUrl::App("index.html".into()),
+                )
+                .title("CrawlFlow Desktop")
+                .inner_size(1280.0, 800.0)
+                .min_inner_size(900.0, 600.0)
+                .resizable(true)
+                .build()?;
+            }
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -151,4 +170,10 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+pub fn run_service() {
+    log::info!("CrawlFlow Service starting in headless mode");
+    run();
+    log::info!("CrawlFlow Service shutting down");
 }

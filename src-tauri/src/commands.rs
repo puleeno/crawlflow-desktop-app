@@ -208,6 +208,75 @@ pub async fn export_csv_cmd(request: ExportRequest) -> ExportResult {
     }
 }
 
+// ── Excel export (Rust-side xlsx generation) ──────────────────────
+
+pub fn inner_export_excel(data: &[serde_json::Value], sheet_name: &str) -> Result<Vec<u8>, String> {
+    use rust_xlsxwriter::*;
+
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name(sheet_name).map_err(|e| e.to_string())?;
+
+    if data.is_empty() {
+        return workbook.save_to_buffer().map_err(|e| e.to_string());
+    }
+
+    let headers: Vec<String> = data
+        .first()
+        .and_then(|v| v.as_object())
+        .map(|obj| obj.keys().cloned().collect())
+        .unwrap_or_default();
+
+    for (col, header) in headers.iter().enumerate() {
+        sheet
+            .write_string(0, col as u16, header)
+            .map_err(|e| e.to_string())?;
+    }
+
+    for (row, item) in data.iter().enumerate() {
+        for (col, header) in headers.iter().enumerate() {
+            let value = item
+                .get(header)
+                .map(|v| match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .unwrap_or_default();
+            sheet
+                .write_string((row + 1) as u32, col as u16, &value)
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    workbook.save_to_buffer().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn export_excel_cmd(request: ExportRequest) -> ExportResult {
+    let sheet_name = request
+        .config
+        .get("sheetName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Sheet1");
+
+    match inner_export_excel(&request.data, sheet_name) {
+        Ok(bytes) => {
+            use base64::Engine;
+            let content = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            ExportResult {
+                file_name: format!("export_{}.xlsx", chrono_now()),
+                mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
+                content,
+            }
+        }
+        Err(e) => ExportResult {
+            file_name: "error.txt".into(),
+            mime_type: "text/plain".into(),
+            content: format!("Excel export failed: {}", e),
+        }
+    }
+}
+
 // ── HTML table parser (shared with Python bindings) ──────────────
 
 pub fn inner_parse_html_table(html: &str, table_index: usize, has_header: bool) -> Vec<serde_json::Value> {
