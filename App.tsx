@@ -1169,7 +1169,8 @@ const App: React.FC = () => {
               fitView
               className="bg-slate-100"
               selectionOnDrag={mouseMode === 'select'}
-              panOnDrag={mouseMode === 'pan'}
+              panOnDrag={mouseMode === 'pan' ? [0, 2] : [2]}
+              panOnScroll={false}
               onNodeContextMenu={onNodeContextMenu}
               onPaneContextMenu={onPaneContextMenu}
               onPaneClick={onPaneClick}
