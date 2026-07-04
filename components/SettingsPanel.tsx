@@ -20,7 +20,7 @@ interface SettingsPanelProps {
   onImport: () => void;
   isOpen: boolean;
   // Inspector-related props
-  onShowInspector: (htmlContent: string) => void;
+  onShowInspector: (htmlContent: string, baseUrl?: string) => void;
   onHideInspector: () => void;
   onStartPicking: (nodeId: string, ruleId: string) => void;
   onStopPicking: () => void;
@@ -556,7 +556,7 @@ const HTMLDataExtractorSettings: React.FC<{
                 throw new Error(result.error || 'No HTML content returned');
             }
             onUpdate({ ...data, inspectorLoading: false, inspectorHtmlContent: htmlContent });
-            props.onShowInspector(htmlContent);
+            props.onShowInspector(htmlContent, data.inspectorUrl);
         } catch (error: any) {
             console.error("Failed to fetch HTML:", error);
             const errorMessage = typeof error === 'string'

@@ -177,7 +177,7 @@ impl ServiceManager {
             settings,
         };
 
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             Self::run_loop(
                 &pid, pcfg, &app, &lm,
                 cancel, pause, status,

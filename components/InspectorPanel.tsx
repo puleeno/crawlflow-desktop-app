@@ -1,22 +1,99 @@
 
-import React, { useRef, useEffect, useState } from 'react';
-import { finder } from '@medv/finder';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { XMarkIcon } from './icons';
+
+function buildCssSelector(element: Element, root: Element): string {
+  const path: string[] = [];
+  let current: Element | null = element;
+
+  while (current && current !== root) {
+    const parent = current.parentElement;
+    const tagName = current.tagName.toLowerCase();
+
+    let segment = tagName;
+
+    const id = current.getAttribute('id');
+    if (id) {
+      segment = `#${CSS.escape(id)}`;
+      path.unshift(segment);
+      break;
+    }
+
+    const classes = Array.from(current.classList).filter(c => c && !/^(css|styled|sc)-[a-zA-Z0-9]{6,}$/.test(c));
+    if (classes.length > 0) {
+      segment += '.' + classes.map(c => CSS.escape(c)).join('.');
+    }
+
+    if (parent) {
+      const siblings = Array.from(parent.children).filter(s => s.tagName === current!.tagName);
+      if (siblings.length > 1) {
+        const index = siblings.indexOf(current) + 1;
+        segment += `:nth-of-type(${index})`;
+      }
+    }
+
+    path.unshift(segment);
+    current = parent;
+  }
+
+  return path.join(' > ');
+}
 
 interface InspectorPanelProps {
   htmlContent: string;
+  baseUrl?: string;
   isPicking: boolean;
   onClose: () => void;
   onSelectorPicked: (selector: string) => void;
   highlightedSelector: string | null;
 }
 
-const InspectorPanel: React.FC<InspectorPanelProps> = ({ htmlContent, isPicking, onClose, onSelectorPicked, highlightedSelector }) => {
+const InspectorPanel: React.FC<InspectorPanelProps> = ({ htmlContent, baseUrl, isPicking, onClose, onSelectorPicked, highlightedSelector }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [iframeBody, setIframeBody] = useState<HTMLBodyElement | null>(null);
   const [toast, setToast] = useState<{ visible: boolean; x: number; y: number; message: string } | null>(null);
   const highlightedElementsRef = useRef<HTMLElement[]>([]);
+  const pickedRef = useRef(false);
 
+  const wrappedHtml = React.useMemo(() => {
+    if (!htmlContent) return '';
+    
+    // If it's already a full HTML document, use as-is
+    if (htmlContent.trim().toLowerCase().startsWith('<!doctype html') || htmlContent.includes('<html')) {
+      // Inject base tag if baseUrl is provided
+      if (baseUrl) {
+        const baseTag = `<base href="${baseUrl}">`;
+        if (htmlContent.includes('<head>')) {
+          return htmlContent.replace('<head>', `<head>${baseTag}`);
+        } else if (htmlContent.includes('<HEAD>')) {
+          return htmlContent.replace('<HEAD>', `<HEAD>${baseTag}`);
+        } else {
+          // No head found, wrap it
+          return `<!DOCTYPE html><html><head>${baseTag}</head><body>${htmlContent}</body></html>`;
+        }
+      }
+      return htmlContent;
+    }
+
+    // Raw HTML fragment - wrap in a full document
+    const baseTag = baseUrl ? `<base href="${baseUrl}">` : '';
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  ${baseTag}
+  <style>
+    /* Ensure inspector can interact with elements */
+    * { cursor: inherit; }
+    img { max-width: 100%; height: auto; }
+  </style>
+</head>
+<body>
+${htmlContent}
+</body>
+</html>`;
+  }, [htmlContent, baseUrl]);
 
   // Effect to manage the iframe's loaded state.
   // When the iframe's srcDoc changes, it reloads. The 'load' event lets us know when it's ready.
@@ -27,9 +104,14 @@ const InspectorPanel: React.FC<InspectorPanelProps> = ({ htmlContent, isPicking,
     const handleLoad = () => {
       if (iframe.contentDocument) {
         // Inject a <base> tag to help the iframe resolve relative asset paths (like images/CSS) correctly.
-        const base = iframe.contentDocument.createElement('base');
-        base.href = document.location.href;
-        iframe.contentDocument.head.appendChild(base);
+        if (baseUrl) {
+          const existingBase = iframe.contentDocument.querySelector('base');
+          if (!existingBase) {
+            const base = iframe.contentDocument.createElement('base');
+            base.href = baseUrl;
+            iframe.contentDocument.head.appendChild(base);
+          }
+        }
         setIframeBody(iframe.contentDocument.body as HTMLBodyElement);
       }
     };
@@ -44,7 +126,7 @@ const InspectorPanel: React.FC<InspectorPanelProps> = ({ htmlContent, isPicking,
     return () => {
       iframe.removeEventListener('load', handleLoad);
     };
-  }, [htmlContent]); // Rerun when htmlContent changes, forcing a reload.
+  }, [wrappedHtml]); // Rerun when wrappedHtml changes, forcing a reload.
 
   // Effect to highlight elements based on the `highlightedSelector` prop.
   useEffect(() => {
@@ -95,32 +177,7 @@ const InspectorPanel: React.FC<InspectorPanelProps> = ({ htmlContent, isPicking,
   useEffect(() => {
     if (!iframeBody) return;
 
-    // Define options for the selector finder library to generate more robust selectors.
-    const finderConfig = {
-      root: iframeBody,
-      className: (name: string): boolean => {
-        // Blacklist of state-based classes to avoid selectors tied to temporary states.
-        const stateBlacklist = ['active', 'selected', 'checked', 'disabled', 'focus', 'hover', 'visited', 'open', 'expanded'];
-        if (stateBlacklist.some(state => name.toLowerCase().includes(state))) {
-          return false;
-        }
-
-        // Blacklist of common JS framework classes for internal state management.
-        const frameworkBlacklist = ['ng-dirty', 'ng-pristine', 'ng-touched', 'ng-valid', 'ng-invalid'];
-        if (frameworkBlacklist.includes(name)) {
-          return false;
-        }
-        
-        // Filter out common generated class names from CSS-in-JS libraries.
-        // This encourages using semantic or structural selectors, often including parent elements for context.
-        if (/^(css|styled|sc)-[a-zA-Z0-9]{6,}$/.test(name)) {
-          return false;
-        }
-
-        return true;
-      },
-    };
-
+    const iframeDoc = iframeBody.ownerDocument;
     let lastHovered: HTMLElement | null = null;
 
     // --- Handler for highlighting elements on mouseover ---
@@ -130,7 +187,7 @@ const InspectorPanel: React.FC<InspectorPanelProps> = ({ htmlContent, isPicking,
         if (lastHovered) {
           lastHovered.style.outline = '';
         }
-        target.style.outline = '2px solid #3b82f6'; // blue-500
+        target.style.outline = '2px solid #3b82f6';
         lastHovered = target;
       }
     };
@@ -149,9 +206,10 @@ const InspectorPanel: React.FC<InspectorPanelProps> = ({ htmlContent, isPicking,
       e.preventDefault();
       e.stopPropagation();
       const target = e.target as HTMLElement;
-      if (target) {
+      if (target && target !== iframeBody && target !== iframeDoc.documentElement) {
         target.style.outline = '';
-        const selector = finder(target, finderConfig);
+        const selector = buildCssSelector(target, iframeBody);
+        pickedRef.current = true;
         onSelectorPicked(selector);
       }
     };
@@ -160,10 +218,9 @@ const InspectorPanel: React.FC<InspectorPanelProps> = ({ htmlContent, isPicking,
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       const target = e.target as HTMLElement;
-      if (target) {
-        const selector = finder(target, finderConfig);
+      if (target && target !== iframeBody && target !== iframeDoc.documentElement) {
+        const selector = buildCssSelector(target, iframeBody);
         navigator.clipboard.writeText(selector).then(() => {
-          // Show a confirmation toast near the cursor
           setToast({
             visible: true,
             x: e.clientX,
@@ -184,24 +241,23 @@ const InspectorPanel: React.FC<InspectorPanelProps> = ({ htmlContent, isPicking,
       }
     };
 
-    // Attach the context menu listener always
-    iframeBody.addEventListener('contextmenu', handleContextMenu);
+    // Attach listeners to the iframe's document (not just body) to catch all clicks
+    iframeDoc.addEventListener('contextmenu', handleContextMenu);
 
-    // Attach picking-related listeners only if `isPicking` is true
     if (isPicking) {
-      iframeBody.addEventListener('mouseover', handleMouseover);
-      iframeBody.addEventListener('mouseout', handleMouseout);
-      iframeBody.addEventListener('click', handleClick, true); // Use capture phase
+      iframeDoc.addEventListener('mouseover', handleMouseover);
+      iframeDoc.addEventListener('mouseout', handleMouseout);
+      iframeDoc.addEventListener('click', handleClick, true);
     }
 
     // Cleanup function to remove listeners
     return () => {
       if (lastHovered) lastHovered.style.outline = '';
-      iframeBody.removeEventListener('contextmenu', handleContextMenu);
+      iframeDoc.removeEventListener('contextmenu', handleContextMenu);
       if (isPicking) {
-        iframeBody.removeEventListener('mouseover', handleMouseover);
-        iframeBody.removeEventListener('mouseout', handleMouseout);
-        iframeBody.removeEventListener('click', handleClick, true);
+        iframeDoc.removeEventListener('mouseover', handleMouseover);
+        iframeDoc.removeEventListener('mouseout', handleMouseout);
+        iframeDoc.removeEventListener('click', handleClick, true);
       }
     };
   }, [iframeBody, isPicking, onSelectorPicked]);
@@ -240,7 +296,7 @@ const InspectorPanel: React.FC<InspectorPanelProps> = ({ htmlContent, isPicking,
       <div className="flex-1 overflow-hidden relative">
         <iframe
           ref={iframeRef}
-          srcDoc={htmlContent}
+          srcDoc={wrappedHtml}
           title="Inspector Preview"
           sandbox="allow-same-origin" // Security: No scripts, but allow content to be treated as same-origin
           className={`w-full h-full border-0 ${isPicking ? 'cursor-crosshair' : 'cursor-default'}`}

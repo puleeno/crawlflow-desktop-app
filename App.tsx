@@ -69,6 +69,7 @@ const EXTRACTOR_NODE_TYPES = ['html-data-extractor', 'csv-extractor', 'json-extr
 
 interface InspectorConfig {
   htmlContent: string;
+  baseUrl?: string;
   pickingState: {
     nodeId: string;
     ruleId: string;
@@ -797,8 +798,8 @@ const App: React.FC = () => {
   }
 
   // Inspector Panel Handlers
-  const showInspector = useCallback((htmlContent: string) => {
-    setInspectorConfig(prev => ({ ...(prev ?? { pickingState: null }), htmlContent }));
+  const showInspector = useCallback((htmlContent: string, baseUrl?: string) => {
+    setInspectorConfig(prev => ({ ...(prev ?? { pickingState: null }), htmlContent, baseUrl }));
   }, []);
 
   const hideInspector = useCallback(() => {
@@ -1234,6 +1235,7 @@ const App: React.FC = () => {
       {inspectorConfig && (
         <InspectorPanel
           htmlContent={inspectorConfig.htmlContent}
+          baseUrl={inspectorConfig.baseUrl}
           isPicking={!!inspectorConfig.pickingState}
           onClose={hideInspector}
           onSelectorPicked={handleSelectorPicked}
