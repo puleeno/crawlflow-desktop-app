@@ -1,0 +1,284 @@
+# CrawlFlow Desktop — LLM Context Document
+
+> **Purpose:** This file documents the pipeline flow rules, node types, connection constraints, and data contracts for the CrawlFlow Desktop application. It is intended to give AI assistants (LLMs) accurate, up-to-date context when modifying code, generating presets, or reasoning about the pipeline architecture.
+
+---
+
+## 1. What is CrawlFlow?
+
+CrawlFlow Desktop is a **visual web crawler pipeline builder** built with:
+- **Frontend:** React + React Flow (TypeScript) — drag-and-drop node canvas
+- **Backend:** Rust + Tauri v2 — Tauri commands bridge JS ↔ Rust
+- **Processing:** Rust built-in processors + Python plugins (via PyO3)
+- **Storage:** SQLite — one master DB (`crawlflow.db`) + one DB per project (`project_<id>.db`)
+
+Users design pipelines visually. Each project is a directed acyclic graph (DAG) of nodes and edges. The graph is saved to SQLite and executed by the Rust backend (or headless `crawlflow-service` binary).
+
+---
+
+## 2. Node Types
+
+All node types are registered in `App.tsx` via `nodeTypes` (React Flow). Each type maps to a React component.
+
+| Node Type             | React Component          | Role                                      |
+|-----------------------|--------------------------|-------------------------------------------|
+| `start`               | `StartNode`              | **Data Source** — entry point of the pipeline. Fetches URLs, RSS, API, file, MySQL. Mandatory. |
+| `repository`          | `RepositoryNode`         | **Raw Data Store** — singleton. Receives data from all `start` nodes. Fixed ID: `repository-node`. |
+| `worker`              | `WorkerNode`             | **Router/Dispatcher** — receives raw data from `repository`, routes to extractors. |
+| `html-data-extractor` | `HTMLDataExtractorNode`  | **Extractor** — parses HTML using CSS selectors/JSON-LD/regex rules. |
+| `csv-extractor`       | `CSVExtractorNode`       | **Extractor** — maps CSV columns to named fields. |
+| `json-extractor`      | `JSONExtractorNode`      | **Extractor** — maps JSONPath expressions to named fields. |
+| `xml-extractor`       | `XMLExtractorNode`       | **Extractor** — maps XPath expressions to named fields. |
+| `mysql-extractor`     | `MySQLExtractorNode`     | **Extractor** — maps MySQL query columns to named fields. |
+| `processor`           | `ProcessorNode`          | **Processor/Exporter** — transforms or exports data (filter, sort, dedup, CSV, Excel, DB, API, email). |
+| `completion`          | `CompletionNode`         | **Terminal** — automatically added/removed by the UI. Marks the end of every pipeline branch. Fixed ID: `completion-node`. |
+| `click`               | `ClickNode`              | **Browser Action** — simulates a CSS-selector-based click in headless browser mode. |
+| `loop`                | `LoopNode`               | **Loop** — iterates over elements matching a CSS selector. |
+| `reception`           | `FilterNode`             | **Conditional Gate** — filters items by rules before routing. |
+| `shape`               | `ShapeNode`              | **Annotation** — visual grouping element (rectangle, circle, ellipse, frame, package). Not part of pipeline execution. |
+
+### Extractor Node Types (constant)
+```typescript
+const EXTRACTOR_NODE_TYPES = [
+  'html-data-extractor',
+  'csv-extractor',
+  'json-extractor',
+  'xml-extractor',
+  'mysql-extractor',
+];
+```
+
+---
+
+## 3. Flow Rules (Connection Rules)
+
+These rules are enforced in `App.tsx` (`onConnect`, `addNode`, and reactive `useEffect` hooks).
+
+### 3.1 Mandatory Structure
+Every valid pipeline **must** follow this layered layout (top → bottom):
+
+```
+[start]  [start]  [start]   ← Layer 0: Data Sources (1 or more)
+         |
+    [repository]             ← Layer 1: Single shared repository (auto-created, singleton)
+         |
+[worker] [worker]            ← Layer 2: Data Routers (1 or more)
+   |           |
+[extractor] [extractor]      ← Layer 3: Extractors (feed INTO worker, not from)
+         |
+[processor] → [processor]    ← Layer 4: Processor chain (linear or branching)
+         |
+   [completion]              ← Layer 5: Terminal (auto-managed by UI)
+```
+
+### 3.2 Specific Connection Constraints
+
+| Source Type       | Allowed Targets       | Rule |
+|-------------------|-----------------------|------|
+| `start`           | `repository` only     | Adding a `start` node auto-creates the `repository` node and an edge `start → repository` if none exists. |
+| `repository`      | `worker` only         | **Hard rule** (enforced in `onConnect`): `repository` → any non-`worker` target is **rejected**. |
+| Extractor types   | `worker` only         | Extractors connect **into** the worker (reverse of intuition). Edge direction: `extractor → worker`. Each `worker` may only have **one** extractor input; a second attempt shows an alert. |
+| `worker`          | `processor` or other  | Workers output to processors. Adding a `processor` from a `worker` appends to the end of the existing processor chain. |
+| `processor`       | `processor`           | Processors chain vertically. The UI finds the last processor in the chain and appends to it. |
+| Any last `processor` | `completion`       | The `completion` node is **auto-managed**: added when any `processor` exists, removed when none exist. Edges are auto-wired. |
+
+### 3.3 Canvas Cleanup Rule
+If the last `start` node is removed and a `repository` node still exists, the **entire canvas is cleared** (all nodes and edges are removed). This is enforced by a `useEffect` hook.
+
+### 3.4 Layout Constants
+```typescript
+const LEVEL_Y_POSITIONS = {
+  start:      50,
+  repository: 300,
+  worker:     550,
+};
+const NODE_H_SPACING = 350; // horizontal spacing between peer nodes
+const NODE_V_SPACING = 250; // vertical spacing parent → child
+const INITIAL_X_OFFSET = 50;
+```
+
+---
+
+## 4. Processor Types (`processorType` values)
+
+The `processor` node uses a `processorType` discriminated union. Valid values:
+
+| `processorType`             | Handler                | Description |
+|-----------------------------|------------------------|-------------|
+| `rust-deduplicate`          | Rust built-in          | Remove duplicate items by field value |
+| `rust-filter`               | Rust built-in          | Filter items by field condition (equals, contains, greater_than, etc.) |
+| `rust-sort`                 | Rust built-in          | Sort items by field (ascending/descending) |
+| `rust-limit`                | Rust built-in          | Limit (and offset) number of items |
+| `rust-excel-export`         | Rust built-in          | Export data to `.xlsx` file saved to disk |
+| `generate-csv-file`         | Frontend/Tauri command | Export data to CSV (calls `export_csv_cmd`) |
+| `generate-excel-file`       | Frontend/Tauri command | Export data to Excel (calls `export_excel_cmd`) |
+| `save-to-database`          | Frontend/Tauri command | Save to MySQL/PostgreSQL database |
+| `send-to-api`               | Frontend               | POST data to external API endpoint |
+| `send-email-notification`   | Frontend               | Send email with extracted data |
+| `py-<plugin_id>`            | Python plugin          | Calls `process_data` hook in matching Python plugin |
+
+> **Note:** `generate-csv-file`, `generate-excel-file`, and `save-to-database` are **frontend-side** processor types. They are **not** natively handled by the Rust `execute_pipeline` function in `pipeline.rs`. When the headless `crawlflow-service` runs, unknown processor types pass data through unchanged and log a warning.
+
+---
+
+## 5. Data Source Types (`sourceType` in `start` node data)
+
+| `sourceType` | Description |
+|--------------|-------------|
+| `url`        | HTTP/HTTPS page crawl |
+| `api`        | REST API with auth and pagination |
+| `xml`        | XML/RSS feed or sitemap |
+| `csv`        | CSV file (paste, upload, or cloud URL) |
+| `json`       | JSON file or API response |
+| `mysql`      | MySQL database query |
+
+Plugin data sources use `pluginSourceType: 'py-<plugin_id>'` alongside `sourceType: 'url'`.
+
+---
+
+## 6. Preset / Template Contract
+
+A **preset** is a pre-built project template. It must satisfy all flow rules above.
+
+### TypeScript type (`types.ts`):
+```typescript
+interface Preset {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;           // Icon component name (e.g. 'GlobeAltIcon')
+  icon_color: string;     // Hex color (e.g. '#22c55e')
+  source: 'builtin' | 'plugin';
+  plugin_id?: string;
+  project_settings: Partial<ProjectSettings>;
+  nodes: PresetNode[];    // Must follow flow rules
+  edges: PresetEdge[];    // Must follow connection rules
+}
+```
+
+### Valid Preset Node Template:
+```typescript
+interface PresetNode {
+  id: string;
+  type: string;           // Must be a valid node type (see §2)
+  label: string;
+  position: { x: number; y: number };
+  data: Record<string, any>;
+}
+```
+
+### Valid Preset Edge Template:
+```typescript
+interface PresetEdge {
+  id: string;
+  source: string;         // Source node id
+  target: string;         // Target node id
+}
+```
+
+### Canonical Preset Edge Pattern:
+```
+start      → repository   (always required)
+repository → worker        (always required)
+extractor  → worker        (optional, depends on data source type)
+worker     → processor     (required if data processing needed)
+processor  → processor     (optional chain)
+```
+
+### Built-in Presets (source: `plugins.rs` + `lib/presets.ts`):
+
+| Preset ID            | Data Source | Extractor          | Processors                    |
+|----------------------|-------------|--------------------|-------------------------------|
+| `demo-project`       | `start` (demo) | none            | filter → sort → limit → CSV  |
+| `web-page-scraper`   | `start` (url)  | `html-data-extractor` | CSV export               |
+| `rss-monitor`        | `start` (url/rss) | none          | filter → save-to-database    |
+| `web-page-to-excel`  | `start` (url)  | `html-data-extractor` | Excel export             |
+| `ecommerce-tracker`  | `start` (url)  | `html-data-extractor` | deduplicate → CSV export |
+
+---
+
+## 7. Pipeline Execution (Rust Backend)
+
+The file `src-tauri/src/pipeline.rs` implements `execute_pipeline()`.  
+The pipeline is topologically sorted (Kahn's algorithm) and nodes execute in dependency order.
+
+### Node Type Handlers in `execute_pipeline`:
+
+| Node type string (Rust) | Behavior |
+|-------------------------|----------|
+| `"start"` / `"dataSource"` / `"rssSource"` | Returns sample data (stub; real fetch is done before pipeline call) |
+| `"repository"` | Passes input data through unchanged |
+| `"processor"` | Runs `processorType` sub-handler (see §4) |
+| `"htmlExtractor"` | Passes data through (stub — real extraction done in frontend) |
+| `"excelExport"` | Exports data via `rust-excel-export` plugin |
+| `"csvExport"` / `"databaseExport"` | Logs and passes data through |
+| `_` (any other) | Logs a debug warning, passes data through |
+
+> ⚠️ **Type mismatch note:** Frontend node types use kebab-case (e.g., `html-data-extractor`), while `pipeline.rs` uses camelCase aliases (e.g., `htmlExtractor`). All unknown types fall through to the passthrough handler without error. The Rust pipeline is designed to be non-blocking — unknown nodes pass data forward.
+
+---
+
+## 8. Fixed / Special Node IDs
+
+| Constant             | Value              | Description |
+|----------------------|--------------------|-------------|
+| `REPOSITORY_NODE_ID` | `"repository-node"` | Singleton raw data repository. Always present when any `start` node exists. `deletable: false`, `draggable: false`. |
+| `COMPLETION_NODE_ID` | `"completion-node"` | Auto-managed terminal node. Appears when any `processor` exists. `deletable: false`, `draggable: false`. |
+
+---
+
+## 9. Project Settings Schema
+
+```typescript
+interface ProjectSettings {
+  name: string;
+  description: string;
+  enabled: boolean;       // true = service runs on schedule; false = paused
+  crawlDelay: number;     // milliseconds between crawl cycles
+  userAgent: string;
+  concurrency: number;    // max parallel HTTP requests
+}
+```
+
+---
+
+## 10. Headless Service Binary
+
+The `crawlflow-service` binary (`src-tauri/src/bin/service.rs`) executes pipelines without the Tauri/GUI runtime.
+
+- **CLI flags:** `--project <id>` or `--all`
+- **Database:** Reads directly from `crawlflow.db` (master) and `project_<id>.db`
+- **Logging:** stdout/stderr (captured by system service manager)
+- **Not available:** Tauri events, frontend invoke, Python plugins (requires GUI app for PyO3)
+
+System service integration:
+- **macOS:** launchd (`~/Library/LaunchAgents/com.crawlflow.service.plist`)
+- **Linux:** systemd (`~/.config/systemd/user/crawlflow.service`)
+- **Windows:** Task Scheduler (`crawlflow-service` task)
+
+---
+
+## 11. File Structure Reference
+
+```
+crawlflow-desktop-app/
+├── App.tsx                    # Main canvas, node types, flow rules, addNode logic
+├── types.ts                   # All TypeScript types (NodeData, Preset, ProcessorNodeData, etc.)
+├── presets.ts                 # HTML extraction presets (CSS selector sets for html-data-extractor)
+├── lib/
+│   ├── presets.ts             # Project template presets (fetched from Rust backend)
+│   ├── db.ts                  # SQLite CRUD (createProject, saveProjectState, createProjectFromPreset)
+│   ├── pluginManager.ts       # Plugin registry singleton
+│   └── marketplace.ts         # Marketplace API client (crawlflow.pages.dev)
+├── components/
+│   ├── nodes/                 # React components for each node type
+│   ├── ProjectManager.tsx     # Project selection and preset application
+│   └── Sidebar.tsx            # Node palette (data sources, processors)
+└── src-tauri/src/
+    ├── pipeline.rs            # DAG execution engine (topological sort)
+    ├── plugins.rs             # Built-in Rust processors + preset definitions
+    ├── commands.rs            # Tauri command handlers
+    ├── services.rs            # In-process background service manager
+    ├── system_service.rs      # OS-level service install/uninstall
+    └── bin/service.rs         # Headless crawlflow-service binary
+```

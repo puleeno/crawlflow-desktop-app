@@ -1,5 +1,5 @@
 use crate::models::*;
-use crate::python_plugins::{PythonPluginEngine, PythonPluginMeta, PipelineStep};
+use crate::python_plugins::{PipelineStep, PythonPluginEngine, PythonPluginMeta};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -9,7 +9,10 @@ pub struct RustPlugin {
     pub version: String,
     pub description: String,
     pub capabilities: Vec<String>,
-    pub execute: fn(data: Vec<serde_json::Value>, config: serde_json::Value) -> Result<Vec<serde_json::Value>, String>,
+    pub execute: fn(
+        data: Vec<serde_json::Value>,
+        config: serde_json::Value,
+    ) -> Result<Vec<serde_json::Value>, String>,
 }
 
 pub struct PluginEngine {
@@ -69,7 +72,10 @@ impl PluginEngine {
         // Try Python plugin (prefixed with "py-")
         if let Some(py_id) = processor_type.strip_prefix("py-") {
             if self.python_engine.get_plugin(py_id).is_some() {
-                return match self.python_engine.call_hook(py_id, "process_data", data, config) {
+                return match self
+                    .python_engine
+                    .call_hook(py_id, "process_data", data, config)
+                {
                     Ok(result_data) => ProcessResult {
                         success: true,
                         data: result_data,
@@ -111,7 +117,11 @@ impl PluginEngine {
 
     pub fn init_python_plugins(&mut self) -> Result<Vec<String>, String> {
         let discovered = self.python_engine.discover()?;
-        log::info!("Discovered {} Python plugin(s): {:?}", discovered.len(), discovered);
+        log::info!(
+            "Discovered {} Python plugin(s): {:?}",
+            discovered.len(),
+            discovered
+        );
         Ok(discovered)
     }
 
@@ -130,7 +140,8 @@ impl PluginEngine {
         data: Vec<serde_json::Value>,
         config: serde_json::Value,
     ) -> Result<Vec<serde_json::Value>, String> {
-        self.python_engine.call_hook(plugin_id, hook_name, data, config)
+        self.python_engine
+            .call_hook(plugin_id, hook_name, data, config)
     }
 
     pub fn call_python_data_source(
@@ -165,11 +176,18 @@ impl PluginEngine {
     }
 
     // ── Presets ───────────────────────────────────────────────────
+    // FLOW RULES (all presets must obey):
+    //  1. start           → repository-node   (singleton; auto-created by UI)
+    //  2. repository-node → worker            (only valid repository target)
+    //  3. extractor       → worker            (feeds INTO worker, not the other way)
+    //  4. worker          → processor         (pipeline output)
+    //  5. processor       → processor         (vertical chain)
+    // The "completion" node is AUTO-MANAGED by the UI — never include it in presets.
+    // Repository node id MUST be "repository-node" (matches REPOSITORY_NODE_ID in App.tsx).
 
     pub fn list_presets(&mut self) -> Vec<serde_json::Value> {
         let mut presets = Vec::new();
 
-        // Built-in presets
         presets.push(serde_json::json!({
             "id": "demo-project",
             "name": "Demo Project",
@@ -208,7 +226,7 @@ impl PluginEngine {
                     }
                 },
                 {
-                    "id": "repo-1",
+                    "id": "repository-node",
                     "type": "repository",
                     "label": "Raw Data (5 sample items)",
                     "position": {"x": 50, "y": 300},
@@ -235,7 +253,7 @@ impl PluginEngine {
                     "id": "proc-2",
                     "type": "processor",
                     "label": "Sort (by views ↓)",
-                    "position": {"x": 400, "y": 800},
+                    "position": {"x": 50, "y": 1050},
                     "data": {
                         "processorType": "rust-sort",
                         "processorConfig": {"field": "views", "descending": true}
@@ -245,17 +263,17 @@ impl PluginEngine {
                     "id": "proc-3",
                     "type": "processor",
                     "label": "Limit (top 3)",
-                    "position": {"x": 750, "y": 800},
+                    "position": {"x": 50, "y": 1300},
                     "data": {
                         "processorType": "rust-limit",
                         "processorConfig": {"count": 3, "offset": 0}
                     }
                 },
                 {
-                    "id": "exp-1",
+                    "id": "proc-4",
                     "type": "processor",
                     "label": "CSV Export",
-                    "position": {"x": 1100, "y": 800},
+                    "position": {"x": 50, "y": 1550},
                     "data": {
                         "processorType": "generate-csv-file",
                         "processorConfig": {"delimiter": ",", "includeHeader": true}
@@ -263,13 +281,12 @@ impl PluginEngine {
                 }
             ],
             "edges": [
-                {"id": "e-ds-repo", "source": "ds-1", "target": "repo-1"},
-                {"id": "e-repo-worker", "source": "repo-1", "target": "worker-1"},
-                {"id": "e-worker-proc1", "source": "worker-1", "target": "proc-1"},
-                {"id": "e-worker-proc2", "source": "worker-1", "target": "proc-2"},
-                {"id": "e-proc1-proc3", "source": "proc-1", "target": "proc-3"},
-                {"id": "e-proc2-proc3", "source": "proc-2", "target": "proc-3"},
-                {"id": "e-proc3-exp", "source": "proc-3", "target": "exp-1"}
+                {"id": "e-ds-repo",      "source": "ds-1",            "target": "repository-node"},
+                {"id": "e-repo-worker",  "source": "repository-node", "target": "worker-1"},
+                {"id": "e-worker-proc1", "source": "worker-1",        "target": "proc-1"},
+                {"id": "e-proc1-proc2",  "source": "proc-1",          "target": "proc-2"},
+                {"id": "e-proc2-proc3",  "source": "proc-2",          "target": "proc-3"},
+                {"id": "e-proc3-proc4",  "source": "proc-3",          "target": "proc-4"}
             ]
         }));
 
@@ -308,7 +325,7 @@ impl PluginEngine {
                     }
                 },
                 {
-                    "id": "repo-1",
+                    "id": "repository-node",
                     "type": "repository",
                     "label": "Raw Data Repository",
                     "position": {"x": 50, "y": 300},
@@ -332,7 +349,7 @@ impl PluginEngine {
                     }
                 },
                 {
-                    "id": "exp-1",
+                    "id": "proc-1",
                     "type": "processor",
                     "label": "CSV Export",
                     "position": {"x": 50, "y": 800},
@@ -343,10 +360,10 @@ impl PluginEngine {
                 }
             ],
             "edges": [
-                {"id": "e-ds-repo", "source": "ds-1", "target": "repo-1"},
-                {"id": "e-repo-worker", "source": "repo-1", "target": "worker-1"},
-                {"id": "e-ext-worker", "source": "ext-1", "target": "worker-1"},
-                {"id": "e-worker-exp", "source": "worker-1", "target": "exp-1"}
+                {"id": "e-ds-repo",     "source": "ds-1",            "target": "repository-node"},
+                {"id": "e-repo-worker", "source": "repository-node", "target": "worker-1"},
+                {"id": "e-ext-worker",  "source": "ext-1",           "target": "worker-1"},
+                {"id": "e-worker-proc", "source": "worker-1",        "target": "proc-1"}
             ]
         }));
 
@@ -379,7 +396,7 @@ impl PluginEngine {
                     }
                 },
                 {
-                    "id": "repo-1",
+                    "id": "repository-node",
                     "type": "repository",
                     "label": "Raw Data Repository",
                     "position": {"x": 50, "y": 300},
@@ -395,7 +412,7 @@ impl PluginEngine {
                 {
                     "id": "proc-1",
                     "type": "processor",
-                    "label": "Filter",
+                    "label": "Filter (non-empty title)",
                     "position": {"x": 50, "y": 800},
                     "data": {
                         "processorType": "rust-filter",
@@ -407,10 +424,10 @@ impl PluginEngine {
                     }
                 },
                 {
-                    "id": "exp-1",
+                    "id": "proc-2",
                     "type": "processor",
                     "label": "Save to DB",
-                    "position": {"x": 400, "y": 800},
+                    "position": {"x": 50, "y": 1050},
                     "data": {
                         "processorType": "save-to-database",
                         "processorConfig": {
@@ -420,10 +437,10 @@ impl PluginEngine {
                 }
             ],
             "edges": [
-                {"id": "e-ds-repo", "source": "ds-1", "target": "repo-1"},
-                {"id": "e-repo-worker", "source": "repo-1", "target": "worker-1"},
-                {"id": "e-worker-proc", "source": "worker-1", "target": "proc-1"},
-                {"id": "e-proc-exp", "source": "proc-1", "target": "exp-1"}
+                {"id": "e-ds-repo",      "source": "ds-1",            "target": "repository-node"},
+                {"id": "e-repo-worker",  "source": "repository-node", "target": "worker-1"},
+                {"id": "e-worker-proc1", "source": "worker-1",        "target": "proc-1"},
+                {"id": "e-proc1-proc2",  "source": "proc-1",          "target": "proc-2"}
             ]
         }));
 
@@ -462,7 +479,7 @@ impl PluginEngine {
                     }
                 },
                 {
-                    "id": "repo-1",
+                    "id": "repository-node",
                     "type": "repository",
                     "label": "Raw Data Repository",
                     "position": {"x": 50, "y": 300},
@@ -486,7 +503,7 @@ impl PluginEngine {
                     }
                 },
                 {
-                    "id": "exp-1",
+                    "id": "proc-1",
                     "type": "processor",
                     "label": "Excel Export",
                     "position": {"x": 50, "y": 800},
@@ -497,10 +514,10 @@ impl PluginEngine {
                 }
             ],
             "edges": [
-                {"id": "e-ds-repo", "source": "ds-1", "target": "repo-1"},
-                {"id": "e-repo-worker", "source": "repo-1", "target": "worker-1"},
-                {"id": "e-ext-worker", "source": "ext-1", "target": "worker-1"},
-                {"id": "e-worker-exp", "source": "worker-1", "target": "exp-1"}
+                {"id": "e-ds-repo",     "source": "ds-1",            "target": "repository-node"},
+                {"id": "e-repo-worker", "source": "repository-node", "target": "worker-1"},
+                {"id": "e-ext-worker",  "source": "ext-1",           "target": "worker-1"},
+                {"id": "e-worker-proc", "source": "worker-1",        "target": "proc-1"}
             ]
         }));
 
@@ -539,7 +556,7 @@ impl PluginEngine {
                     }
                 },
                 {
-                    "id": "repo-1",
+                    "id": "repository-node",
                     "type": "repository",
                     "label": "Raw Data Repository",
                     "position": {"x": 50, "y": 300},
@@ -555,15 +572,15 @@ impl PluginEngine {
                 {
                     "id": "ext-1",
                     "type": "html-data-extractor",
-                    "label": "Extract Product",
+                    "label": "Extract Product Info",
                     "position": {"x": -40, "y": 425},
                     "data": {
                         "presets": ["ecommerce-product"],
                         "customRules": [
-                            {"id": "r1", "name": "Title", "extractFrom": "html-element", "selector": "h1", "extract": "text"},
-                            {"id": "r2", "name": "Price", "extractFrom": "html-element", "selector": ".price", "extract": "text"},
-                            {"id": "r3", "name": "Availability", "extractFrom": "html-element", "selector": ".stock", "extract": "text"},
-                            {"id": "r4", "name": "Image", "extractFrom": "html-element", "selector": ".product-image img", "extract": "attribute", "attribute": "src"}
+                            {"id": "r1", "name": "Title",        "extractFrom": "html-element", "selector": "h1",                  "extract": "text"},
+                            {"id": "r2", "name": "Price",        "extractFrom": "html-element", "selector": ".price",              "extract": "text"},
+                            {"id": "r3", "name": "Availability", "extractFrom": "html-element", "selector": ".stock",              "extract": "text"},
+                            {"id": "r4", "name": "Image",        "extractFrom": "html-element", "selector": ".product-image img", "extract": "attribute", "attribute": "src"}
                         ]
                     }
                 },
@@ -578,10 +595,10 @@ impl PluginEngine {
                     }
                 },
                 {
-                    "id": "exp-1",
+                    "id": "proc-2",
                     "type": "processor",
                     "label": "CSV Export",
-                    "position": {"x": 400, "y": 800},
+                    "position": {"x": 50, "y": 1050},
                     "data": {
                         "processorType": "generate-csv-file",
                         "processorConfig": {"delimiter": ",", "includeHeader": true}
@@ -589,11 +606,11 @@ impl PluginEngine {
                 }
             ],
             "edges": [
-                {"id": "e-ds-repo", "source": "ds-1", "target": "repo-1"},
-                {"id": "e-repo-worker", "source": "repo-1", "target": "worker-1"},
-                {"id": "e-ext-worker", "source": "ext-1", "target": "worker-1"},
-                {"id": "e-worker-proc", "source": "worker-1", "target": "proc-1"},
-                {"id": "e-proc-exp", "source": "proc-1", "target": "exp-1"}
+                {"id": "e-ds-repo",      "source": "ds-1",            "target": "repository-node"},
+                {"id": "e-repo-worker",  "source": "repository-node", "target": "worker-1"},
+                {"id": "e-ext-worker",   "source": "ext-1",           "target": "worker-1"},
+                {"id": "e-worker-proc1", "source": "worker-1",        "target": "proc-1"},
+                {"id": "e-proc1-proc2",  "source": "proc-1",          "target": "proc-2"}
             ]
         }));
 
@@ -619,10 +636,7 @@ pub fn deduplicate_plugin(
     let mut result = Vec::new();
 
     for item in data {
-        let key = item
-            .get(field)
-            .map(|v| v.to_string())
-            .unwrap_or_default();
+        let key = item.get(field).map(|v| v.to_string()).unwrap_or_default();
         if seen.insert(key) {
             result.push(item);
         }
@@ -728,14 +742,8 @@ pub fn limit_plugin(
     data: Vec<serde_json::Value>,
     config: serde_json::Value,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let count = config
-        .get("count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(100) as usize;
-    let offset = config
-        .get("offset")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    let count = config.get("count").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+    let offset = config.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
     Ok(data.into_iter().skip(offset).take(count).collect())
 }
@@ -824,7 +832,8 @@ mod tests {
             serde_json::json!({"title": "Goodbye World"}),
             serde_json::json!({"title": "Foo Bar"}),
         ];
-        let config = serde_json::json!({"field": "title", "operator": "contains", "value": "World"});
+        let config =
+            serde_json::json!({"field": "title", "operator": "contains", "value": "World"});
         let result = filter_plugin(data, config).unwrap();
         assert_eq!(result.len(), 2);
     }
@@ -989,7 +998,8 @@ pub fn excel_export_plugin(
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("crawlflow")
         .join("exports");
-    std::fs::create_dir_all(&out_dir).map_err(|e| format!("Failed to create exports dir: {}", e))?;
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("Failed to create exports dir: {}", e))?;
 
     let out_path = out_dir.join(file_name);
     std::fs::write(&out_path, &bytes).map_err(|e| format!("Failed to write Excel file: {}", e))?;
