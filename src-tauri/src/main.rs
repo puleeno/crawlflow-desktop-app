@@ -2,9 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    if std::env::args().any(|a| a == "--service") {
-        crawlflow_lib::run_service();
-    } else {
-        crawlflow_lib::run();
-    }
+    crawlflow_lib::run();
 }

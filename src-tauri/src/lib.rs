@@ -1,9 +1,9 @@
 mod commands;
 mod crawler;
-mod logs;
+pub mod logs;
 mod migrations;
 mod models;
-mod pipeline;
+pub mod pipeline;
 mod plugins;
 mod progress;
 mod python_plugins;
@@ -143,7 +143,9 @@ pub fn run() {
             state.log_manager.set_app_handle(app_handle.clone());
 
             // Initialize service manager
-            state.service_manager.initialize(app_handle, state.log_manager.clone());
+            state
+                .service_manager
+                .initialize(app_handle, state.log_manager.clone());
 
             // Create window only in GUI mode (--service flag = headless)
             if !is_service_mode() {
@@ -170,10 +172,4 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-pub fn run_service() {
-    log::info!("CrawlFlow Service starting in headless mode");
-    run();
-    log::info!("CrawlFlow Service shutting down");
 }

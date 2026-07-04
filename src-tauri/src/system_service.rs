@@ -8,9 +8,18 @@ fn app_exe_path() -> Option<PathBuf> {
 }
 
 fn service_exe_str() -> String {
-    app_exe_path()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default()
+    if let Some(mut p) = app_exe_path() {
+        let is_windows = cfg!(target_os = "windows");
+        let name = if is_windows {
+            "crawlflow-service.exe"
+        } else {
+            "crawlflow-service"
+        };
+        p.set_file_name(name);
+        p.to_string_lossy().to_string()
+    } else {
+        String::new()
+    }
 }
 
 fn data_dir() -> PathBuf {
@@ -86,7 +95,7 @@ impl SystemServiceManager {
     }
 
     fn generate_plist(exe: &str) -> String {
-        Self::generate_plist_with_args(exe, &["--service"])
+        Self::generate_plist_with_args(exe, &["--all"])
     }
 
     fn generate_plist_with_args(exe: &str, args: &[&str]) -> String {
@@ -135,7 +144,7 @@ impl SystemServiceManager {
     }
 
     fn generate_systemd(exe: &str) -> String {
-        Self::generate_systemd_with_args(exe, " --service")
+        Self::generate_systemd_with_args(exe, " --all")
     }
 
     fn generate_systemd_with_args(exe: &str, extra_args: &str) -> String {
@@ -167,11 +176,7 @@ WantedBy=default.target
     pub fn get_info() -> ServiceInstallInfo {
         let platform = Platform::detect();
         let installed = Self::is_installed();
-        let running = if installed {
-            Self::is_running()
-        } else {
-            false
-        };
+        let running = if installed { Self::is_running() } else { false };
 
         let service_path = match platform {
             Platform::Macos => Self::plist_path().to_string_lossy().to_string(),
@@ -284,7 +289,7 @@ WantedBy=default.target
                         "/TN",
                         "CrawlFlowService",
                         "/TR",
-                        &exe_str,
+                        &format!("{} --all", exe_str),
                         "/F",
                     ])
                     .output();
@@ -361,7 +366,9 @@ WantedBy=default.target
                     Err(String::from_utf8_lossy(&output.stderr).to_string())
                 }
             }
-            Platform::Windows => Ok("Service start not supported on Windows via schtasks".to_string()),
+            Platform::Windows => {
+                Ok("Service start not supported on Windows via schtasks".to_string())
+            }
             Platform::Unknown => Err("Unsupported platform".to_string()),
         }
     }
@@ -390,7 +397,9 @@ WantedBy=default.target
                     Err(String::from_utf8_lossy(&output.stderr).to_string())
                 }
             }
-            Platform::Windows => Ok("Service stop not supported on Windows via schtasks".to_string()),
+            Platform::Windows => {
+                Ok("Service stop not supported on Windows via schtasks".to_string())
+            }
             Platform::Unknown => Err("Unsupported platform".to_string()),
         }
     }
@@ -420,9 +429,11 @@ mod tests {
 
     #[test]
     fn test_plist_generation() {
-        let plist = SystemServiceManager::generate_plist("/Applications/CrawlFlow.app/Contents/MacOS/crawlflow");
+        let plist = SystemServiceManager::generate_plist(
+            "/Applications/CrawlFlow.app/Contents/MacOS/crawlflow",
+        );
         assert!(plist.contains("com.crawlflow.desktop-service"));
-        assert!(plist.contains("--service"));
+        assert!(plist.contains("--all"));
         assert!(plist.contains("RunAtLoad"));
         assert!(plist.contains("KeepAlive"));
     }
@@ -431,7 +442,7 @@ mod tests {
     fn test_systemd_generation() {
         let unit = SystemServiceManager::generate_systemd("/usr/bin/crawlflow");
         assert!(unit.contains("CrawlFlow Background Service"));
-        assert!(unit.contains("--service"));
+        assert!(unit.contains("--all"));
         assert!(unit.contains("Restart=on-failure"));
     }
 

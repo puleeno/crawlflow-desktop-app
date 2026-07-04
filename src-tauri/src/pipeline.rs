@@ -1,7 +1,7 @@
-use std::collections::{HashMap, VecDeque};
-use serde::{Deserialize, Serialize};
-use crate::plugins;
 use crate::logs::LogManager;
+use crate::plugins;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineNode {
@@ -58,10 +58,7 @@ fn demo_sample_data() -> Vec<serde_json::Value> {
     ]
 }
 
-fn topological_sort(
-    nodes: &[PipelineNode],
-    edges: &[PipelineEdge],
-) -> Result<Vec<String>, String> {
+fn topological_sort(nodes: &[PipelineNode], edges: &[PipelineEdge]) -> Result<Vec<String>, String> {
     let mut in_degree: HashMap<String, usize> = HashMap::new();
     let mut adjacency: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -158,7 +155,11 @@ mod tests {
 
     #[test]
     fn test_topological_sort_simple() {
-        let nodes = vec![make_node("a", "start"), make_node("b", "processor"), make_node("c", "export")];
+        let nodes = vec![
+            make_node("a", "start"),
+            make_node("b", "processor"),
+            make_node("c", "export"),
+        ];
         let edges = vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")];
         let order = topological_sort(&nodes, &edges).unwrap();
         assert_eq!(order, vec!["a", "b", "c"]);
@@ -166,7 +167,11 @@ mod tests {
 
     #[test]
     fn test_topological_sort_disconnected() {
-        let nodes = vec![make_node("a", "start"), make_node("b", "processor"), make_node("c", "export")];
+        let nodes = vec![
+            make_node("a", "start"),
+            make_node("b", "processor"),
+            make_node("c", "export"),
+        ];
         let edges = vec![];
         let order = topological_sort(&nodes, &edges).unwrap();
         assert_eq!(order.len(), 3);
@@ -210,9 +215,8 @@ mod tests {
 
     #[test]
     fn test_node_inputs_single_edge() {
-        let node_outputs: HashMap<String, Vec<serde_json::Value>> = [
-            ("a".to_string(), vec![serde_json::json!({"val": 1})]),
-        ].into();
+        let node_outputs: HashMap<String, Vec<serde_json::Value>> =
+            [("a".to_string(), vec![serde_json::json!({"val": 1})])].into();
         let edges = vec![make_edge("e1", "a", "b")];
         let inputs = node_inputs("b", &edges, &node_outputs);
         assert_eq!(inputs.len(), 1);
@@ -224,7 +228,8 @@ mod tests {
         let node_outputs: HashMap<String, Vec<serde_json::Value>> = [
             ("a".to_string(), vec![serde_json::json!({"val": 1})]),
             ("b".to_string(), vec![serde_json::json!({"val": 2})]),
-        ].into();
+        ]
+        .into();
         let edges = vec![make_edge("e1", "a", "c"), make_edge("e2", "b", "c")];
         let inputs = node_inputs("c", &edges, &node_outputs);
         assert_eq!(inputs.len(), 2);
@@ -259,7 +264,11 @@ pub fn execute_pipeline(
         }
     };
 
-    log_manager.info(project_id, "pipeline", &format!("Pipeline execution order: {} nodes", order.len()));
+    log_manager.info(
+        project_id,
+        "pipeline",
+        &format!("Pipeline execution order: {} nodes", order.len()),
+    );
 
     for node_id in &order {
         let node = match config.nodes.iter().find(|n| &n.id == node_id) {
@@ -345,7 +354,10 @@ pub fn execute_pipeline(
                                 out_count
                             ),
                         );
-                        (output, format!("{}: {} → {} items", processor_type, input_count, out_count))
+                        (
+                            output,
+                            format!("{}: {} → {} items", processor_type, input_count, out_count),
+                        )
                     }
                     Err(e) => {
                         log_manager.error(
@@ -362,9 +374,16 @@ pub fn execute_pipeline(
                 log_manager.info(
                     project_id,
                     &node_id,
-                    &format!("[{}] Passed through {} items (extraction not yet implemented in service)", label_of(node), input_count),
+                    &format!(
+                        "[{}] Passed through {} items (extraction not yet implemented in service)",
+                        label_of(node),
+                        input_count
+                    ),
                 );
-                (input, format!("Passed through {} items (extraction stubbed)", input_count))
+                (
+                    input,
+                    format!("Passed through {} items (extraction stubbed)", input_count),
+                )
             }
 
             "excelExport" => {
@@ -375,10 +394,13 @@ pub fn execute_pipeline(
                     .and_then(|v| v.as_str())
                     .unwrap_or("Sheet1");
 
-                let result = plugins::excel_export_plugin(input.clone(), serde_json::json!({
-                    "sheetName": sheet_name,
-                    "fileName": format!("export_{}.xlsx", node.id),
-                }));
+                let result = plugins::excel_export_plugin(
+                    input.clone(),
+                    serde_json::json!({
+                        "sheetName": sheet_name,
+                        "fileName": format!("export_{}.xlsx", node.id),
+                    }),
+                );
 
                 match result {
                     Ok(output) => {
@@ -414,9 +436,17 @@ pub fn execute_pipeline(
                 log_manager.debug(
                     project_id,
                     &node_id,
-                    &format!("[{}] Unknown type '{}', passing through {} items", label_of(node), node.node_type, input_count),
+                    &format!(
+                        "[{}] Unknown type '{}', passing through {} items",
+                        label_of(node),
+                        node.node_type,
+                        input_count
+                    ),
                 );
-                (input, format!("Passed through {} items (unknown type)", input_count))
+                (
+                    input,
+                    format!("Passed through {} items (unknown type)", input_count),
+                )
             }
         };
 

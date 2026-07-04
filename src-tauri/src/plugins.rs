@@ -211,14 +211,21 @@ impl PluginEngine {
                     "id": "repo-1",
                     "type": "repository",
                     "label": "Raw Data (5 sample items)",
-                    "position": {"x": 250, "y": 250},
+                    "position": {"x": 50, "y": 300},
+                    "data": {}
+                },
+                {
+                    "id": "worker-1",
+                    "type": "worker",
+                    "label": "Pipeline Worker",
+                    "position": {"x": 50, "y": 550},
                     "data": {}
                 },
                 {
                     "id": "proc-1",
                     "type": "processor",
                     "label": "Filter (views > 500)",
-                    "position": {"x": 450, "y": 180},
+                    "position": {"x": 50, "y": 800},
                     "data": {
                         "processorType": "rust-filter",
                         "processorConfig": {"field": "views", "operator": "greater_than", "value": "500"}
@@ -228,7 +235,7 @@ impl PluginEngine {
                     "id": "proc-2",
                     "type": "processor",
                     "label": "Sort (by views ↓)",
-                    "position": {"x": 450, "y": 320},
+                    "position": {"x": 400, "y": 800},
                     "data": {
                         "processorType": "rust-sort",
                         "processorConfig": {"field": "views", "descending": true}
@@ -238,7 +245,7 @@ impl PluginEngine {
                     "id": "proc-3",
                     "type": "processor",
                     "label": "Limit (top 3)",
-                    "position": {"x": 650, "y": 250},
+                    "position": {"x": 750, "y": 800},
                     "data": {
                         "processorType": "rust-limit",
                         "processorConfig": {"count": 3, "offset": 0}
@@ -246,23 +253,23 @@ impl PluginEngine {
                 },
                 {
                     "id": "exp-1",
-                    "type": "csvExport",
+                    "type": "processor",
                     "label": "CSV Export",
-                    "position": {"x": 850, "y": 250},
+                    "position": {"x": 1100, "y": 800},
                     "data": {
-                        "presets": [],
-                        "mappings": [],
-                        "hasHeader": true
+                        "processorType": "generate-csv-file",
+                        "processorConfig": {"delimiter": ",", "includeHeader": true}
                     }
                 }
             ],
             "edges": [
-                {"id": "e-ds-repo", "source": "ds-1", "target": "repo-1", "sourceHandle": "data-out", "targetHandle": "data-in"},
-                {"id": "e-repo-filter", "source": "repo-1", "target": "proc-1", "sourceHandle": "data-out", "targetHandle": "data-in"},
-                {"id": "e-repo-sort", "source": "repo-1", "target": "proc-2", "sourceHandle": "data-out", "targetHandle": "data-in"},
-                {"id": "e-filter-limit", "source": "proc-1", "target": "proc-3", "sourceHandle": "data-out", "targetHandle": "data-in"},
-                {"id": "e-sort-limit", "source": "proc-2", "target": "proc-3", "sourceHandle": "data-out", "targetHandle": "data-in"},
-                {"id": "e-limit-csv", "source": "proc-3", "target": "exp-1", "sourceHandle": "data-out", "targetHandle": "data-in"}
+                {"id": "e-ds-repo", "source": "ds-1", "target": "repo-1"},
+                {"id": "e-repo-worker", "source": "repo-1", "target": "worker-1"},
+                {"id": "e-worker-proc1", "source": "worker-1", "target": "proc-1"},
+                {"id": "e-worker-proc2", "source": "worker-1", "target": "proc-2"},
+                {"id": "e-proc1-proc3", "source": "proc-1", "target": "proc-3"},
+                {"id": "e-proc2-proc3", "source": "proc-2", "target": "proc-3"},
+                {"id": "e-proc3-exp", "source": "proc-3", "target": "exp-1"}
             ]
         }));
 
@@ -286,7 +293,7 @@ impl PluginEngine {
                     "id": "ds-1",
                     "type": "start",
                     "label": "From URL",
-                    "position": {"x": 50, "y": 200},
+                    "position": {"x": 50, "y": 50},
                     "data": {
                         "sourceType": "url",
                         "sourceValue": "",
@@ -301,10 +308,24 @@ impl PluginEngine {
                     }
                 },
                 {
+                    "id": "repo-1",
+                    "type": "repository",
+                    "label": "Raw Data Repository",
+                    "position": {"x": 50, "y": 300},
+                    "data": {}
+                },
+                {
+                    "id": "worker-1",
+                    "type": "worker",
+                    "label": "Data Router",
+                    "position": {"x": 50, "y": 550},
+                    "data": {}
+                },
+                {
                     "id": "ext-1",
-                    "type": "htmlExtractor",
+                    "type": "html-data-extractor",
                     "label": "Extract Data",
-                    "position": {"x": 350, "y": 200},
+                    "position": {"x": -40, "y": 425},
                     "data": {
                         "presets": [],
                         "customRules": []
@@ -312,19 +333,20 @@ impl PluginEngine {
                 },
                 {
                     "id": "exp-1",
-                    "type": "csvExport",
+                    "type": "processor",
                     "label": "CSV Export",
-                    "position": {"x": 650, "y": 200},
+                    "position": {"x": 50, "y": 800},
                     "data": {
-                        "presets": [],
-                        "mappings": [],
-                        "hasHeader": true
+                        "processorType": "generate-csv-file",
+                        "processorConfig": {"delimiter": ",", "includeHeader": true}
                     }
                 }
             ],
             "edges": [
-                {"id": "e-ds-ext", "source": "ds-1", "target": "ext-1", "sourceHandle": "data-out", "targetHandle": "data-in"},
-                {"id": "e-ext-exp", "source": "ext-1", "target": "exp-1", "sourceHandle": "data-out", "targetHandle": "data-in"}
+                {"id": "e-ds-repo", "source": "ds-1", "target": "repo-1"},
+                {"id": "e-repo-worker", "source": "repo-1", "target": "worker-1"},
+                {"id": "e-ext-worker", "source": "ext-1", "target": "worker-1"},
+                {"id": "e-worker-exp", "source": "worker-1", "target": "exp-1"}
             ]
         }));
 
@@ -346,9 +368,9 @@ impl PluginEngine {
             "nodes": [
                 {
                     "id": "ds-1",
-                    "type": "rssSource",
+                    "type": "start",
                     "label": "RSS Feed",
-                    "position": {"x": 50, "y": 200},
+                    "position": {"x": 50, "y": 50},
                     "data": {
                         "sourceType": "url",
                         "sourceValue": "",
@@ -357,10 +379,24 @@ impl PluginEngine {
                     }
                 },
                 {
+                    "id": "repo-1",
+                    "type": "repository",
+                    "label": "Raw Data Repository",
+                    "position": {"x": 50, "y": 300},
+                    "data": {}
+                },
+                {
+                    "id": "worker-1",
+                    "type": "worker",
+                    "label": "Data Router",
+                    "position": {"x": 50, "y": 550},
+                    "data": {}
+                },
+                {
                     "id": "proc-1",
                     "type": "processor",
                     "label": "Filter",
-                    "position": {"x": 350, "y": 200},
+                    "position": {"x": 50, "y": 800},
                     "data": {
                         "processorType": "rust-filter",
                         "processorConfig": {
@@ -372,9 +408,9 @@ impl PluginEngine {
                 },
                 {
                     "id": "exp-1",
-                    "type": "databaseExport",
+                    "type": "processor",
                     "label": "Save to DB",
-                    "position": {"x": 650, "y": 200},
+                    "position": {"x": 400, "y": 800},
                     "data": {
                         "processorType": "save-to-database",
                         "processorConfig": {
@@ -384,8 +420,10 @@ impl PluginEngine {
                 }
             ],
             "edges": [
-                {"id": "e-ds-proc", "source": "ds-1", "target": "proc-1", "sourceHandle": "data-out", "targetHandle": "data-in"},
-                {"id": "e-proc-exp", "source": "proc-1", "target": "exp-1", "sourceHandle": "data-out", "targetHandle": "data-in"}
+                {"id": "e-ds-repo", "source": "ds-1", "target": "repo-1"},
+                {"id": "e-repo-worker", "source": "repo-1", "target": "worker-1"},
+                {"id": "e-worker-proc", "source": "worker-1", "target": "proc-1"},
+                {"id": "e-proc-exp", "source": "proc-1", "target": "exp-1"}
             ]
         }));
 
@@ -409,7 +447,7 @@ impl PluginEngine {
                     "id": "ds-1",
                     "type": "start",
                     "label": "From URL",
-                    "position": {"x": 50, "y": 200},
+                    "position": {"x": 50, "y": 50},
                     "data": {
                         "sourceType": "url",
                         "sourceValue": "",
@@ -424,10 +462,24 @@ impl PluginEngine {
                     }
                 },
                 {
+                    "id": "repo-1",
+                    "type": "repository",
+                    "label": "Raw Data Repository",
+                    "position": {"x": 50, "y": 300},
+                    "data": {}
+                },
+                {
+                    "id": "worker-1",
+                    "type": "worker",
+                    "label": "Data Router",
+                    "position": {"x": 50, "y": 550},
+                    "data": {}
+                },
+                {
                     "id": "ext-1",
-                    "type": "htmlExtractor",
+                    "type": "html-data-extractor",
                     "label": "Extract Data",
-                    "position": {"x": 350, "y": 200},
+                    "position": {"x": -40, "y": 425},
                     "data": {
                         "presets": [],
                         "customRules": []
@@ -435,18 +487,20 @@ impl PluginEngine {
                 },
                 {
                     "id": "exp-1",
-                    "type": "excelExport",
+                    "type": "processor",
                     "label": "Excel Export",
-                    "position": {"x": 650, "y": 200},
+                    "position": {"x": 50, "y": 800},
                     "data": {
-                        "sheetName": "Sheet1",
-                        "hasHeader": true
+                        "processorType": "generate-excel-file",
+                        "processorConfig": {"sheetName": "Sheet1", "includeHeader": true}
                     }
                 }
             ],
             "edges": [
-                {"id": "e-ds-ext", "source": "ds-1", "target": "ext-1", "sourceHandle": "data-out", "targetHandle": "data-in"},
-                {"id": "e-ext-exp", "source": "ext-1", "target": "exp-1", "sourceHandle": "data-out", "targetHandle": "data-in"}
+                {"id": "e-ds-repo", "source": "ds-1", "target": "repo-1"},
+                {"id": "e-repo-worker", "source": "repo-1", "target": "worker-1"},
+                {"id": "e-ext-worker", "source": "ext-1", "target": "worker-1"},
+                {"id": "e-worker-exp", "source": "worker-1", "target": "exp-1"}
             ]
         }));
 
@@ -470,7 +524,7 @@ impl PluginEngine {
                     "id": "ds-1",
                     "type": "start",
                     "label": "Product URL",
-                    "position": {"x": 50, "y": 200},
+                    "position": {"x": 50, "y": 50},
                     "data": {
                         "sourceType": "url",
                         "sourceValue": "",
@@ -485,10 +539,24 @@ impl PluginEngine {
                     }
                 },
                 {
+                    "id": "repo-1",
+                    "type": "repository",
+                    "label": "Raw Data Repository",
+                    "position": {"x": 50, "y": 300},
+                    "data": {}
+                },
+                {
+                    "id": "worker-1",
+                    "type": "worker",
+                    "label": "Data Router",
+                    "position": {"x": 50, "y": 550},
+                    "data": {}
+                },
+                {
                     "id": "ext-1",
-                    "type": "htmlExtractor",
+                    "type": "html-data-extractor",
                     "label": "Extract Product",
-                    "position": {"x": 350, "y": 150},
+                    "position": {"x": -40, "y": 425},
                     "data": {
                         "presets": ["ecommerce-product"],
                         "customRules": [
@@ -503,7 +571,7 @@ impl PluginEngine {
                     "id": "proc-1",
                     "type": "processor",
                     "label": "Deduplicate",
-                    "position": {"x": 350, "y": 350},
+                    "position": {"x": 50, "y": 800},
                     "data": {
                         "processorType": "rust-deduplicate",
                         "processorConfig": {"field": "Title"}
@@ -511,20 +579,21 @@ impl PluginEngine {
                 },
                 {
                     "id": "exp-1",
-                    "type": "csvExport",
+                    "type": "processor",
                     "label": "CSV Export",
-                    "position": {"x": 650, "y": 200},
+                    "position": {"x": 400, "y": 800},
                     "data": {
-                        "presets": [],
-                        "mappings": [],
-                        "hasHeader": true
+                        "processorType": "generate-csv-file",
+                        "processorConfig": {"delimiter": ",", "includeHeader": true}
                     }
                 }
             ],
             "edges": [
-                {"id": "e-ds-ext", "source": "ds-1", "target": "ext-1", "sourceHandle": "data-out", "targetHandle": "data-in"},
-                {"id": "e-ext-proc", "source": "ext-1", "target": "proc-1", "sourceHandle": "data-out", "targetHandle": "data-in"},
-                {"id": "e-ext-exp", "source": "proc-1", "target": "exp-1", "sourceHandle": "data-out", "targetHandle": "data-in"}
+                {"id": "e-ds-repo", "source": "ds-1", "target": "repo-1"},
+                {"id": "e-repo-worker", "source": "repo-1", "target": "worker-1"},
+                {"id": "e-ext-worker", "source": "ext-1", "target": "worker-1"},
+                {"id": "e-worker-proc", "source": "worker-1", "target": "proc-1"},
+                {"id": "e-proc-exp", "source": "proc-1", "target": "exp-1"}
             ]
         }));
 
@@ -840,12 +909,13 @@ mod tests {
         let mut engine = PluginEngine::new(None, PathBuf::from("/tmp"));
         register_builtin_plugins(&mut engine);
         let plugins = engine.list_plugins();
-        assert!(plugins.len() >= 4);
+        assert!(plugins.len() >= 5);
         let ids: Vec<_> = plugins.iter().map(|p| p.id.as_str()).collect();
         assert!(ids.contains(&"rust-deduplicate"));
         assert!(ids.contains(&"rust-filter"));
         assert!(ids.contains(&"rust-sort"));
         assert!(ids.contains(&"rust-limit"));
+        assert!(ids.contains(&"rust-excel-export"));
     }
 }
 

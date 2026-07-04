@@ -13,6 +13,16 @@ rust-version = "1.77.2"
 name = "crawlflow_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# GUI desktop app (default)
+[[bin]]
+name = "crawlflow"
+path = "src/main.rs"
+
+# Headless background service — NO Tauri, NO window, NO dock icon
+[[bin]]
+name = "crawlflow-service"
+path = "src/bin/service.rs"
+
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
 pyo3-build-config = { version = "0.23", features = ["resolve-config"] }
@@ -34,3 +44,6 @@ dirs-next = "2.0"
 zip = "2.2"
 rust_xlsxwriter = "0.82"
 base64 = "0.22.1"
+# Used by the headless service binary only
+rusqlite = { version = "0.31", features = ["bundled"] }
+ctrlc = { version = "3", features = ["termination"] }
