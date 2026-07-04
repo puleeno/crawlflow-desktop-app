@@ -1,6 +1,7 @@
 
 import React, { useState, useRef, ChangeEvent, useEffect, useMemo } from 'react';
 import { Node, Edge } from 'reactflow';
+import { invoke } from '@tauri-apps/api/core';
 import { XMarkIcon, Cog6ToothIcon, ArrowUpTrayIcon, ArrowDownTrayIcon, TrashIcon, ChevronDownIcon, ChevronUpIcon, CursorArrowRaysIcon, CloudIcon } from './icons';
 import { NodeData, StartNodeData, ClickNodeData, ExtractionRule, FileInputMethod, MySQLConnection, ProjectSettings, LoopNodeData, WorkerNodeData, HTMLDataExtractorNodeData, ProcessorNodeData, WorkerRule, WorkerRuleType, URLFormatRule, HTMLContainsRule, DOMValueRule, TagAttributeRule, ExtractFrom, URLSourceSettings, APISourceSettings, APIKeyAuth, BearerTokenAuth, BasicAuth, XMLSourceSettings, JSONSourceSettings, PagePagination, OffsetLimitPagination, NextURLPagination, RuleCondition, SaveToDbSettings, SendToApiSettings, GenerateCsvSettings, GenerateExcelSettings, SendEmailSettings, CSVExtractorNodeData, ColumnMapping, JSONExtractorNodeData, PathMapping, XMLExtractorNodeData, MySQLExtractorNodeData, ShapeNodeData, DataSourceTypeRule } from '../types';
 import { PRESETS, PROCESSORS } from '../presets';
@@ -544,21 +545,23 @@ const HTMLDataExtractorSettings: React.FC<{
         }
         onUpdate({ ...data, inspectorLoading: true, inspectorError: undefined, inspectorHtmlContent: undefined });
         try {
-            // Use a CORS proxy to bypass browser security restrictions for development.
-            // In a production environment, this request should be routed through a dedicated backend.
-            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(data.inspectorUrl)}`;
-            const response = await fetch(proxyUrl);
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+            const result: any = await invoke('fetch_url_cmd', {
+                request: {
+                    url: data.inspectorUrl,
+                    method: 'GET',
+                },
+            });
+            const htmlContent = result.html;
+            if (!htmlContent) {
+                throw new Error(result.error || 'No HTML content returned');
             }
-            const htmlContent = await response.text();
-            
             onUpdate({ ...data, inspectorLoading: false, inspectorHtmlContent: htmlContent });
             props.onShowInspector(htmlContent);
-
-        } catch (error) {
+        } catch (error: any) {
             console.error("Failed to fetch HTML:", error);
-            const errorMessage = 'Failed to fetch HTML. The URL may be invalid, the site may be down, or it might be blocking requests. Please try the "Paste HTML" option instead.';
+            const errorMessage = typeof error === 'string'
+                ? error
+                : 'Failed to fetch HTML. The URL may be invalid, the site may be down, or it might be blocking requests. Please try the "Paste HTML" option instead.';
             onUpdate({ ...data, inspectorLoading: false, inspectorError: errorMessage });
         }
     };
