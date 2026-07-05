@@ -726,6 +726,8 @@ def _update_progress(project_id, data):
         crawlflow.log(f"[OrekaShop] Loi update progress: {e}", "error")
 
 
+
+
 def register_presets():
     return json.dumps([
         {
@@ -747,24 +749,33 @@ def register_presets():
                     "id": "ds-oreka",
                     "type": "start",
                     "label": "Oreka Shop",
-                    "position": {"x": 50, "y": 200},
+                    "position": {"x": 50, "y": 50},
                     "data": {
-                        "sourceType": "plugin",
-                        "pluginId": "oreka-shop-crawler",
+                        "sourceType": "url",
                         "sourceValue": "",
-                        "apiSettings": {
-                            "authType": "none",
-                            "authDetails": {},
-                            "paginationType": "auto",
-                            "paginationDetails": {}
-                        }
+                        "pluginSourceType": "py-oreka-shop-crawler",
+                        "pluginConfig": {}
                     }
+                },
+                {
+                    "id": "repository-node",
+                    "type": "repository",
+                    "label": "Raw Data Repository",
+                    "position": {"x": 50, "y": 300},
+                    "data": {}
+                },
+                {
+                    "id": "worker-1",
+                    "type": "worker",
+                    "label": "Data Router",
+                    "position": {"x": 50, "y": 550},
+                    "data": {}
                 },
                 {
                     "id": "proc-oreka",
                     "type": "processor",
                     "label": "Chuan hoa du lieu",
-                    "position": {"x": 350, "y": 200},
+                    "position": {"x": 50, "y": 800},
                     "data": {
                         "processorType": "py-oreka-shop-crawler",
                         "processorConfig": {}
@@ -772,19 +783,23 @@ def register_presets():
                 },
                 {
                     "id": "exp-oreka",
-                    "type": "csvExport",
+                    "type": "processor",
                     "label": "Xuat Excel",
-                    "position": {"x": 650, "y": 200},
+                    "position": {"x": 50, "y": 1050},
                     "data": {
-                        "format": "xlsx",
-                        "outputField": "file",
-                        "hasHeader": True,
+                        "processorType": "generate-excel-file",
+                        "processorConfig": {
+                            "sheetName": "Sheet1",
+                            "includeHeader": True
+                        }
                     }
                 }
             ],
             "edges": [
-                {"id": "e-ds-proc", "source": "ds-oreka", "target": "proc-oreka", "sourceHandle": "data-out", "targetHandle": "data-in"},
-                {"id": "e-proc-exp", "source": "proc-oreka", "target": "exp-oreka", "sourceHandle": "data-out", "targetHandle": "data-in"},
+                {"id": "e-ds-repo", "source": "ds-oreka", "target": "repository-node"},
+                {"id": "e-repo-worker", "source": "repository-node", "target": "worker-1"},
+                {"id": "e-worker-proc", "source": "worker-1", "target": "proc-oreka"},
+                {"id": "e-proc-exp", "source": "proc-oreka", "target": "exp-oreka"},
             ]
         }
     ])
