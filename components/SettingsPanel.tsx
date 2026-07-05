@@ -1515,34 +1515,34 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 />
             )}
 
-                <div className="flex items-center justify-between mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                    <div className="flex flex-col">
-                        <span className="text-sm font-bold text-gray-700">Enable Project</span>
-                        <span className="text-xs text-gray-500">{projectSettings.enabled ? 'Project is active' : 'Project is disabled'}</span>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => onUpdateProjectSettings({ enabled: !projectSettings.enabled })}
-                        disabled={isRunning}
-                        className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${projectSettings.enabled ? 'bg-green-500' : 'bg-gray-300'}`}
-                        role="switch"
-                        aria-checked={projectSettings.enabled}
-                    >
-                        <span
-                            aria-hidden="true"
-                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${projectSettings.enabled ? 'translate-x-5' : 'translate-x-0'}`}
-                        />
-                    </button>
+            <div className="flex items-center justify-between mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <div className="flex flex-col">
+                    <span className="text-sm font-bold text-gray-700">Enable Project</span>
+                    <span className="text-xs text-gray-500">{projectSettings.enabled ? 'Project is active' : 'Project is disabled'}</span>
                 </div>
+                <button
+                    type="button"
+                    onClick={() => onUpdateProjectSettings({ enabled: !projectSettings.enabled })}
+                    disabled={isRunning}
+                    className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${projectSettings.enabled ? 'bg-green-500' : 'bg-gray-300'}`}
+                    role="switch"
+                    aria-checked={projectSettings.enabled}
+                >
+                    <span
+                        aria-hidden="true"
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${projectSettings.enabled ? 'translate-x-5' : 'translate-x-0'}`}
+                    />
+                </button>
+            </div>
 
-                <div>
-                    <label className={commonLabelClasses}>Project Name</label>
-                    <input type="text" value={projectSettings.name} onChange={e => onUpdateProjectSettings({ name: e.target.value })} className={commonInputClasses} disabled={isRunning} />
-                </div>
-                <div>
-                    <label className={commonLabelClasses}>Description</label>
-                    <textarea value={projectSettings.description} onChange={e => onUpdateProjectSettings({ description: e.target.value })} className={`${commonInputClasses} h-24`} disabled={isRunning} />
-                </div>
+            <div>
+                <label className={commonLabelClasses}>Project Name</label>
+                <input type="text" value={projectSettings.name} onChange={e => onUpdateProjectSettings({ name: e.target.value })} className={commonInputClasses} disabled={isRunning} />
+            </div>
+            <div>
+                <label className={commonLabelClasses}>Description</label>
+                <textarea value={projectSettings.description} onChange={e => onUpdateProjectSettings({ description: e.target.value })} className={`${commonInputClasses} h-24`} disabled={isRunning} />
+            </div>
             <div className="grid grid-cols-2 gap-4">
                 <div>
                     <label className={commonLabelClasses}>Crawl Delay (ms)</label>
@@ -1579,10 +1579,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                         : `Nodes at the same level run concurrently (max ${projectSettings.concurrency}).`}
                 </p>
             </div>
-                <div>
-                    <label className={commonLabelClasses}>User Agent</label>
-                    <input type="text" value={projectSettings.userAgent} onChange={e => onUpdateProjectSettings({ userAgent: e.target.value })} className={commonInputClasses} disabled={isRunning} />
-                </div>
+            <div>
+                <label className={commonLabelClasses}>User Agent</label>
+                <input type="text" value={projectSettings.userAgent} onChange={e => onUpdateProjectSettings({ userAgent: e.target.value })} className={commonInputClasses} disabled={isRunning} />
+            </div>
 
             <div className="pt-6 border-t mt-6">
                 <h4 className="font-semibold text-gray-700 mb-3">Actions</h4>
@@ -1594,41 +1594,48 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                         <ArrowUpTrayIcon /> Import JSON
                     </button>
                 </div>
-                <button
-                    onClick={onSave}
-                    className="w-full mt-3 p-3 rounded-md font-bold text-white bg-green-600 hover:bg-green-700 transition-colors flex items-center justify-center gap-2 shadow-md"
-                >
-                    <CloudIcon /> Save Project
-                </button>
             </div>
         </div>
     );
 
     return (
-        <aside className={`fixed top-0 right-0 h-full w-80 bg-white p-6 border-l border-gray-200 shadow-xl z-40 overflow-y-auto transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}>
-            <div className="flex justify-between items-center mb-6">
+        <aside className={`fixed top-0 right-0 h-full w-80 bg-white border-l border-gray-200 shadow-xl z-40 flex flex-col transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+            <div className="flex justify-between items-center p-6 border-b border-gray-100 flex-shrink-0">
                 <h2 className="text-2xl font-bold text-gray-800">{node ? 'Node Settings' : 'Project Config'}</h2>
                 <button onClick={onClose} className="p-1 text-gray-500 hover:text-gray-800">
                     <XMarkIcon />
                 </button>
             </div>
 
-            {node ? (
-                <>
-                    {renderNodeSettings()}
-                    {node.deletable !== false && (
-                        <div className="mt-8 pt-6 border-t">
-                            <button
-                                onClick={() => onDeleteNode(node.id)}
-                                disabled={isRunning}
-                                className="w-full p-2 bg-red-100 text-red-700 rounded-md font-semibold hover:bg-red-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-                            >
-                                <TrashIcon /> Delete Node
-                            </button>
-                        </div>
-                    )}
-                </>
-            ) : renderProjectSettings()}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                {node ? (
+                    <>
+                        {renderNodeSettings()}
+                        {node.deletable !== false && (
+                            <div className="mt-8 pt-6 border-t">
+                                <button
+                                    onClick={() => onDeleteNode(node.id)}
+                                    disabled={isRunning}
+                                    className="w-full p-2 bg-red-100 text-red-700 rounded-md font-semibold hover:bg-red-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                                >
+                                    <TrashIcon /> Delete Node
+                                </button>
+                            </div>
+                        )}
+                    </>
+                ) : renderProjectSettings()}
+            </div>
+
+            {!node && (
+                <div className="p-6 border-t border-gray-100 bg-slate-50 flex-shrink-0">
+                    <button
+                        onClick={onSave}
+                        className="w-full p-3 rounded-md font-bold text-white bg-green-600 hover:bg-green-700 transition-colors flex items-center justify-center gap-2 shadow-md"
+                    >
+                        <CloudIcon /> Save Project
+                    </button>
+                </div>
+            )}
         </aside>
     );
 };
