@@ -141,6 +141,7 @@ const App: React.FC = () => {
     crawlDelay: 1000,
     userAgent: 'Crawler/1.0',
     concurrency: 5,
+    executionMode: 'queue',
   });
 
   // State for UI panels
@@ -170,6 +171,7 @@ const App: React.FC = () => {
   const [isLogPanelOpen, setLogPanelOpen] = useState(false);
   const [serviceStatus, setServiceStatus] = useState<string>('stopped');
   const [serviceCycleCount, setServiceCycleCount] = useState(0);
+  const isRunning = serviceStatus === 'running';
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   // Auto-save project metadata (name, status) to master DB with debounce
@@ -357,6 +359,7 @@ const App: React.FC = () => {
   }, []);
 
   const onConnect = useCallback((params: Edge | Connection) => {
+    if (isRunning) return;
     const sourceNode = nodes.find(n => n.id === params.source);
     const targetNode = nodes.find(n => n.id === params.target);
 
@@ -378,6 +381,7 @@ const App: React.FC = () => {
   }, []);
 
   const onNodesChangeHandler = useCallback((changes: NodeChange[]) => {
+    if (isRunning) return;
     setNodes((nds) => {
       const changedNodes = applyNodeChanges(changes, nds);
 
@@ -415,7 +419,7 @@ const App: React.FC = () => {
         return node;
       });
     });
-  }, [setNodes]);
+  }, [setNodes, isRunning]);
 
 
   const addNode = (type: string, data: NodeData, sourceNode: Node | null = null) => {
@@ -1210,6 +1214,9 @@ const App: React.FC = () => {
               onPaneContextMenu={onPaneContextMenu}
               onPaneClick={onPaneClick}
               onMoveStart={onMoveStart}
+              nodesDraggable={!isRunning}
+              nodesConnectable={!isRunning}
+              elementsSelectable={!isRunning}
             >
               <Controls />
               <MiniMap nodeStrokeWidth={3} zoomable pannable />
@@ -1263,6 +1270,7 @@ const App: React.FC = () => {
             edges={edges}
             projectId={currentProjectId}
             onOpenLogs={() => setLogPanelOpen(true)}
+            isRunning={isRunning}
           />
         </ReactFlowProvider>
       </div>

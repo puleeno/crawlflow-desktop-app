@@ -31,6 +31,7 @@ interface SettingsPanelProps {
     edges?: Edge[];
     projectId?: string | null;
     onOpenLogs?: () => void;
+    isRunning?: boolean;
 }
 
 const commonInputClasses = "w-full p-2 bg-white text-gray-900 border border-slate-300 rounded-md shadow-sm placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-slate-100 disabled:text-gray-500";
@@ -1462,7 +1463,7 @@ const ShapeNodeSettings: React.FC<{ node: Node<ShapeNodeData>; onUpdate: (data: 
 
 // --- Main Settings Panel Component ---
 const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
-    const { node, onUpdateNode, onDeleteNode, onClose, projectSettings, onUpdateProjectSettings, onExport, onSave, onImport, isOpen, nodes = [], edges = [] } = props;
+    const { node, onUpdateNode, onDeleteNode, onClose, projectSettings, onUpdateProjectSettings, onExport, onSave, onImport, isOpen, nodes = [], edges = [], isRunning } = props;
 
     const renderNodeSettings = () => {
         if (!node) return null;
@@ -1514,47 +1515,74 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 />
             )}
 
-            <div className="flex items-center justify-between mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-700">Enable Project</span>
-                    <span className="text-xs text-gray-500">{projectSettings.enabled ? 'Project is active' : 'Project is disabled'}</span>
+                <div className="flex items-center justify-between mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                    <div className="flex flex-col">
+                        <span className="text-sm font-bold text-gray-700">Enable Project</span>
+                        <span className="text-xs text-gray-500">{projectSettings.enabled ? 'Project is active' : 'Project is disabled'}</span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => onUpdateProjectSettings({ enabled: !projectSettings.enabled })}
+                        disabled={isRunning}
+                        className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${projectSettings.enabled ? 'bg-green-500' : 'bg-gray-300'}`}
+                        role="switch"
+                        aria-checked={projectSettings.enabled}
+                    >
+                        <span
+                            aria-hidden="true"
+                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${projectSettings.enabled ? 'translate-x-5' : 'translate-x-0'}`}
+                        />
+                    </button>
                 </div>
-                <button
-                    type="button"
-                    onClick={() => onUpdateProjectSettings({ enabled: !projectSettings.enabled })}
-                    className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${projectSettings.enabled ? 'bg-green-500' : 'bg-gray-300'}`}
-                    role="switch"
-                    aria-checked={projectSettings.enabled}
-                >
-                    <span
-                        aria-hidden="true"
-                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${projectSettings.enabled ? 'translate-x-5' : 'translate-x-0'}`}
-                    />
-                </button>
-            </div>
 
-            <div>
-                <label className={commonLabelClasses}>Project Name</label>
-                <input type="text" value={projectSettings.name} onChange={e => onUpdateProjectSettings({ name: e.target.value })} className={commonInputClasses} />
-            </div>
-            <div>
-                <label className={commonLabelClasses}>Description</label>
-                <textarea value={projectSettings.description} onChange={e => onUpdateProjectSettings({ description: e.target.value })} className={`${commonInputClasses} h-24`} />
-            </div>
+                <div>
+                    <label className={commonLabelClasses}>Project Name</label>
+                    <input type="text" value={projectSettings.name} onChange={e => onUpdateProjectSettings({ name: e.target.value })} className={commonInputClasses} disabled={isRunning} />
+                </div>
+                <div>
+                    <label className={commonLabelClasses}>Description</label>
+                    <textarea value={projectSettings.description} onChange={e => onUpdateProjectSettings({ description: e.target.value })} className={`${commonInputClasses} h-24`} disabled={isRunning} />
+                </div>
             <div className="grid grid-cols-2 gap-4">
                 <div>
                     <label className={commonLabelClasses}>Crawl Delay (ms)</label>
-                    <input type="number" value={projectSettings.crawlDelay} onChange={e => onUpdateProjectSettings({ crawlDelay: parseInt(e.target.value) })} className={commonInputClasses} />
+                    <input type="number" value={projectSettings.crawlDelay} onChange={e => onUpdateProjectSettings({ crawlDelay: parseInt(e.target.value) })} className={commonInputClasses} disabled={isRunning} />
                 </div>
                 <div>
                     <label className={commonLabelClasses}>Concurrency</label>
-                    <input type="number" value={projectSettings.concurrency} onChange={e => onUpdateProjectSettings({ concurrency: parseInt(e.target.value) })} className={commonInputClasses} />
+                    <input type="number" value={projectSettings.concurrency} onChange={e => onUpdateProjectSettings({ concurrency: parseInt(e.target.value) })} className={commonInputClasses} disabled={isRunning} />
                 </div>
             </div>
             <div>
-                <label className={commonLabelClasses}>User Agent</label>
-                <input type="text" value={projectSettings.userAgent} onChange={e => onUpdateProjectSettings({ userAgent: e.target.value })} className={commonInputClasses} />
+                <label className={commonLabelClasses}>Execution Mode</label>
+                <div className="flex gap-2">
+                    <button
+                        type="button"
+                        onClick={() => onUpdateProjectSettings({ executionMode: 'queue' })}
+                        disabled={isRunning}
+                        className={`flex-1 p-2 rounded-md text-sm font-semibold border transition-colors ${projectSettings.executionMode === 'queue' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'} disabled:opacity-50`}
+                    >
+                        Queue
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => onUpdateProjectSettings({ executionMode: 'parallel' })}
+                        disabled={isRunning}
+                        className={`flex-1 p-2 rounded-md text-sm font-semibold border transition-colors ${projectSettings.executionMode === 'parallel' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'} disabled:opacity-50`}
+                    >
+                        Parallel
+                    </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                    {projectSettings.executionMode === 'queue'
+                        ? 'Nodes run one at a time in order.'
+                        : `Nodes at the same level run concurrently (max ${projectSettings.concurrency}).`}
+                </p>
             </div>
+                <div>
+                    <label className={commonLabelClasses}>User Agent</label>
+                    <input type="text" value={projectSettings.userAgent} onChange={e => onUpdateProjectSettings({ userAgent: e.target.value })} className={commonInputClasses} disabled={isRunning} />
+                </div>
 
             <div className="pt-6 border-t mt-6">
                 <h4 className="font-semibold text-gray-700 mb-3">Actions</h4>
@@ -1592,7 +1620,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                         <div className="mt-8 pt-6 border-t">
                             <button
                                 onClick={() => onDeleteNode(node.id)}
-                                className="w-full p-2 bg-red-100 text-red-700 rounded-md font-semibold hover:bg-red-200 transition-colors flex items-center justify-center gap-2"
+                                disabled={isRunning}
+                                className="w-full p-2 bg-red-100 text-red-700 rounded-md font-semibold hover:bg-red-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
                             >
                                 <TrashIcon /> Delete Node
                             </button>

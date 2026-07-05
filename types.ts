@@ -21,6 +21,7 @@ export interface ProjectSettings {
   crawlDelay: number;
   userAgent: string;
   concurrency: number;
+  executionMode: 'parallel' | 'queue';
 }
 
 

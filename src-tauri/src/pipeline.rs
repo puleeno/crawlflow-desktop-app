@@ -2,6 +2,20 @@ use crate::logs::LogManager;
 use crate::plugins;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, RwLock};
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionMode {
+    Queue,
+    Parallel,
+}
+
+impl Default for ExecutionMode {
+    fn default() -> Self {
+        ExecutionMode::Queue
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineNode {
@@ -107,6 +121,31 @@ fn topological_sort(nodes: &[PipelineNode], edges: &[PipelineEdge]) -> Result<Ve
     }
 
     Ok(order)
+}
+
+/// Group topologically-sorted nodes by depth level.
+/// Nodes at the same level have no dependencies on each other and can run in parallel.
+fn topological_levels(order: &[String], edges: &[PipelineEdge]) -> Vec<Vec<String>> {
+    let mut depth: HashMap<String, usize> = HashMap::new();
+    for node_id in order {
+        let mut max_depth = 0usize;
+        for edge in edges {
+            if edge.target == *node_id {
+                if let Some(d) = depth.get(&edge.source) {
+                    max_depth = max_depth.max(d + 1);
+                }
+            }
+        }
+        depth.insert(node_id.clone(), max_depth);
+    }
+
+    let max_level = depth.values().copied().max().unwrap_or(0);
+    let mut levels: Vec<Vec<String>> = vec![vec![]; max_level + 1];
+    for node_id in order {
+        let d = depth.get(node_id).copied().unwrap_or(0);
+        levels[d].push(node_id.clone());
+    }
+    levels
 }
 
 fn node_inputs(
@@ -242,15 +281,58 @@ mod tests {
         let inputs = node_inputs("a", &edges, &node_outputs);
         assert_eq!(inputs.len(), 0);
     }
+
+    #[test]
+    fn test_topological_levels_linear() {
+        let nodes = vec!["a", "b", "c"];
+        let edges = vec![
+            make_edge("e1", "a", "b"),
+            make_edge("e2", "b", "c"),
+        ];
+        let order = vec!["a".into(), "b".into(), "c".into()];
+        let levels = topological_levels(&order, &edges);
+        assert_eq!(levels.len(), 3);
+        assert_eq!(levels[0], vec!["a"]);
+        assert_eq!(levels[1], vec!["b"]);
+        assert_eq!(levels[2], vec!["c"]);
+    }
+
+    #[test]
+    fn test_topological_levels_diamond() {
+        let edges = vec![
+            make_edge("e1", "a", "b"),
+            make_edge("e2", "a", "c"),
+            make_edge("e3", "b", "d"),
+            make_edge("e4", "c", "d"),
+        ];
+        let order = vec!["a".into(), "b".into(), "c".into(), "d".into()];
+        let levels = topological_levels(&order, &edges);
+        assert_eq!(levels.len(), 3);
+        assert_eq!(levels[0], vec!["a"]);
+        assert_eq!(levels[1].len(), 2); // b and c at same level
+        assert!(levels[1].contains(&"b".to_string()));
+        assert!(levels[1].contains(&"c".to_string()));
+        assert_eq!(levels[2], vec!["d"]);
+    }
 }
 
 pub fn execute_pipeline(
     config: &PipelineConfig,
-    log_manager: &LogManager,
+    log_manager: &Arc<LogManager>,
+    project_id: &str,
+) -> ExecutionResult {
+    execute_pipeline_with_mode(config, ExecutionMode::Queue, log_manager, project_id)
+}
+
+pub fn execute_pipeline_with_mode(
+    config: &PipelineConfig,
+    mode: ExecutionMode,
+    log_manager: &Arc<LogManager>,
     project_id: &str,
 ) -> ExecutionResult {
     let mut steps = Vec::new();
-    let mut node_outputs: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+    let node_outputs: Arc<RwLock<HashMap<String, Vec<serde_json::Value>>>> =
+        Arc::new(RwLock::new(HashMap::new()));
 
     let order = match topological_sort(&config.nodes, &config.edges) {
         Ok(o) => o,
@@ -267,205 +349,56 @@ pub fn execute_pipeline(
     log_manager.info(
         project_id,
         "pipeline",
-        &format!("Pipeline execution order: {} nodes", order.len()),
+        &format!(
+            "Pipeline execution order: {} nodes (mode: {:?})",
+            order.len(),
+            mode
+        ),
     );
 
-    for node_id in &order {
-        let node = match config.nodes.iter().find(|n| &n.id == node_id) {
-            Some(n) => n,
-            None => continue,
-        };
+    let levels = topological_levels(&order, &config.edges);
 
-        let input = node_inputs(node_id, &config.edges, &node_outputs);
-        let input_count = input.len();
-
-        let (output, detail) = match node.node_type.as_str() {
-            "start" | "dataSource" | "rssSource" => {
-                let items = demo_sample_data();
-                let count = items.len();
-                log_manager.info(
-                    project_id,
-                    &node_id,
-                    &format!("[{}] Generated {} sample data items", label_of(node), count),
-                );
-                (items, format!("Generated {} sample items", count))
+    for level_nodes in &levels {
+        match mode {
+            ExecutionMode::Queue => {
+                for node_id in level_nodes {
+                    process_node(
+                        node_id, config, &node_outputs, log_manager, project_id, &mut steps,
+                    );
+                }
             }
+            ExecutionMode::Parallel => {
+                let mut handles = Vec::new();
+                for node_id in level_nodes {
+                    let config = config.clone();
+                    let outputs = node_outputs.clone();
+                    let lm = log_manager.clone();
+                    let pid = project_id.to_string();
+                    let nid = node_id.clone();
 
-            "repository" => {
-                let count = input.len();
-                log_manager.info(
-                    project_id,
-                    &node_id,
-                    &format!("[{}] Stored {} items in repository", label_of(node), count),
-                );
-                (input, format!("Stored {} items", count))
-            }
+                    handles.push(std::thread::spawn(move || {
+                        let mut local_steps = Vec::new();
+                        process_node(&nid, &config, &outputs, &lm, &pid, &mut local_steps);
+                        local_steps
+                    }));
+                }
 
-            "processor" => {
-                let processor_type = node
-                    .data
-                    .get("processorType")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let processor_config = node
-                    .data
-                    .get("processorConfig")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-
-                let result = match processor_type {
-                    "rust-deduplicate" => {
-                        let cfg = processor_config;
-                        plugins::deduplicate_plugin(input, cfg)
-                    }
-                    "rust-filter" => {
-                        let cfg = processor_config;
-                        plugins::filter_plugin(input, cfg)
-                    }
-                    "rust-sort" => {
-                        let cfg = processor_config;
-                        plugins::sort_plugin(input, cfg)
-                    }
-                    "rust-limit" => {
-                        let cfg = processor_config;
-                        plugins::limit_plugin(input, cfg)
-                    }
-                    _ => {
-                        log_manager.warn(
-                            project_id,
-                            &node_id,
-                            &format!("Unknown processor type: {}", processor_type),
-                        );
-                        Ok(input)
-                    }
-                };
-
-                match result {
-                    Ok(output) => {
-                        let out_count = output.len();
-                        log_manager.info(
-                            project_id,
-                            &node_id,
-                            &format!(
-                                "[{}] {}: {} → {} items",
-                                label_of(node),
-                                processor_type,
-                                input_count,
-                                out_count
-                            ),
-                        );
-                        (
-                            output,
-                            format!("{}: {} → {} items", processor_type, input_count, out_count),
-                        )
-                    }
-                    Err(e) => {
-                        log_manager.error(
-                            project_id,
-                            &node_id,
-                            &format!("[{}] Processor failed: {}", label_of(node), e),
-                        );
-                        (vec![], format!("Error: {}", e))
+                for handle in handles {
+                    if let Ok(mut s) = handle.join() {
+                        steps.append(&mut s);
                     }
                 }
             }
-
-            "htmlExtractor" => {
-                log_manager.info(
-                    project_id,
-                    &node_id,
-                    &format!(
-                        "[{}] Passed through {} items (extraction not yet implemented in service)",
-                        label_of(node),
-                        input_count
-                    ),
-                );
-                (
-                    input,
-                    format!("Passed through {} items (extraction stubbed)", input_count),
-                )
-            }
-
-            "excelExport" => {
-                let count = input.len();
-                let sheet_name = node
-                    .data
-                    .get("sheetName")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Sheet1");
-
-                let result = plugins::excel_export_plugin(
-                    input.clone(),
-                    serde_json::json!({
-                        "sheetName": sheet_name,
-                        "fileName": format!("export_{}.xlsx", node.id),
-                    }),
-                );
-
-                match result {
-                    Ok(output) => {
-                        log_manager.info(
-                            project_id,
-                            &node_id,
-                            &format!("[{}] Exported {} items to Excel", label_of(node), count),
-                        );
-                        (output, format!("Exported {} items to Excel", count))
-                    }
-                    Err(e) => {
-                        log_manager.error(
-                            project_id,
-                            &node_id,
-                            &format!("[{}] Excel export failed: {}", label_of(node), e),
-                        );
-                        (vec![], format!("Excel export error: {}", e))
-                    }
-                }
-            }
-
-            "csvExport" | "databaseExport" => {
-                let count = input.len();
-                log_manager.info(
-                    project_id,
-                    &node_id,
-                    &format!("[{}] Exporting {} items", label_of(node), count),
-                );
-                (input.clone(), format!("Exported {} items", count))
-            }
-
-            _ => {
-                log_manager.debug(
-                    project_id,
-                    &node_id,
-                    &format!(
-                        "[{}] Unknown type '{}', passing through {} items",
-                        label_of(node),
-                        node.node_type,
-                        input_count
-                    ),
-                );
-                (
-                    input,
-                    format!("Passed through {} items (unknown type)", input_count),
-                )
-            }
-        };
-
-        let output_count = output.len();
-        node_outputs.insert(node_id.clone(), output.clone());
-
-        steps.push(ExecutionStep {
-            node_id: node_id.clone(),
-            node_label: label_of(node).to_string(),
-            node_type: node.node_type.clone(),
-            input_count,
-            output_count,
-            detail,
-            output: output.clone(),
-        });
+        }
     }
 
     let final_output = if let Some(last) = order.last() {
-        node_outputs.get(last).cloned().unwrap_or_default()
+        node_outputs
+            .read()
+            .unwrap()
+            .get(last)
+            .cloned()
+            .unwrap_or_default()
     } else {
         vec![]
     };
@@ -486,4 +419,225 @@ pub fn execute_pipeline(
         final_output,
         error: None,
     }
+}
+
+fn process_node(
+    node_id: &str,
+    config: &PipelineConfig,
+    node_outputs: &Arc<RwLock<HashMap<String, Vec<serde_json::Value>>>>,
+    log_manager: &Arc<LogManager>,
+    project_id: &str,
+    steps: &mut Vec<ExecutionStep>,
+) {
+    let node = match config.nodes.iter().find(|n| n.id == node_id) {
+        Some(n) => n,
+        None => return,
+    };
+
+    let input = node_inputs_read(node_id, &config.edges, node_outputs);
+    let input_count = input.len();
+
+    let (output, detail) = match node.node_type.as_str() {
+        "start" | "dataSource" | "rssSource" => {
+            let items = demo_sample_data();
+            let count = items.len();
+            log_manager.info(
+                project_id,
+                node_id,
+                &format!("[{}] Generated {} sample data items", label_of(node), count),
+            );
+            (items, format!("Generated {} sample items", count))
+        }
+
+        "repository" => {
+            let count = input.len();
+            log_manager.info(
+                project_id,
+                node_id,
+                &format!("[{}] Stored {} items in repository", label_of(node), count),
+            );
+            (input, format!("Stored {} items", count))
+        }
+
+        "processor" => {
+            let processor_type = node
+                .data
+                .get("processorType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let processor_config = node
+                .data
+                .get("processorConfig")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+
+            let result = match processor_type {
+                "rust-deduplicate" => {
+                    let cfg = processor_config;
+                    plugins::deduplicate_plugin(input, cfg)
+                }
+                "rust-filter" => {
+                    let cfg = processor_config;
+                    plugins::filter_plugin(input, cfg)
+                }
+                "rust-sort" => {
+                    let cfg = processor_config;
+                    plugins::sort_plugin(input, cfg)
+                }
+                "rust-limit" => {
+                    let cfg = processor_config;
+                    plugins::limit_plugin(input, cfg)
+                }
+                _ => {
+                    log_manager.warn(
+                        project_id,
+                        node_id,
+                        &format!("Unknown processor type: {}", processor_type),
+                    );
+                    Ok(input)
+                }
+            };
+
+            match result {
+                Ok(output) => {
+                    let out_count = output.len();
+                    log_manager.info(
+                        project_id,
+                        node_id,
+                        &format!(
+                            "[{}] {}: {} → {} items",
+                            label_of(node),
+                            processor_type,
+                            input_count,
+                            out_count
+                        ),
+                    );
+                    (
+                        output,
+                        format!("{}: {} → {} items", processor_type, input_count, out_count),
+                    )
+                }
+                Err(e) => {
+                    log_manager.error(
+                        project_id,
+                        node_id,
+                        &format!("[{}] Processor failed: {}", label_of(node), e),
+                    );
+                    (vec![], format!("Error: {}", e))
+                }
+            }
+        }
+
+        "htmlExtractor" => {
+            log_manager.info(
+                project_id,
+                node_id,
+                &format!(
+                    "[{}] Passed through {} items (extraction not yet implemented in service)",
+                    label_of(node),
+                    input_count
+                ),
+            );
+            (
+                input,
+                format!("Passed through {} items (extraction stubbed)", input_count),
+            )
+        }
+
+        "excelExport" => {
+            let count = input.len();
+            let sheet_name = node
+                .data
+                .get("sheetName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Sheet1");
+
+            let result = plugins::excel_export_plugin(
+                input.clone(),
+                serde_json::json!({
+                    "sheetName": sheet_name,
+                    "fileName": format!("export_{}.xlsx", node.id),
+                }),
+            );
+
+            match result {
+                Ok(output) => {
+                    log_manager.info(
+                        project_id,
+                        node_id,
+                        &format!("[{}] Exported {} items to Excel", label_of(node), count),
+                    );
+                    (output, format!("Exported {} items to Excel", count))
+                }
+                Err(e) => {
+                    log_manager.error(
+                        project_id,
+                        node_id,
+                        &format!("[{}] Excel export failed: {}", label_of(node), e),
+                    );
+                    (vec![], format!("Excel export error: {}", e))
+                }
+            }
+        }
+
+        "csvExport" | "databaseExport" => {
+            let count = input.len();
+            log_manager.info(
+                project_id,
+                node_id,
+                &format!("[{}] Exporting {} items", label_of(node), count),
+            );
+            (input.clone(), format!("Exported {} items", count))
+        }
+
+        _ => {
+            log_manager.debug(
+                project_id,
+                node_id,
+                &format!(
+                    "[{}] Unknown type '{}', passing through {} items",
+                    label_of(node),
+                    node.node_type,
+                    input_count
+                ),
+            );
+            (
+                input,
+                format!("Passed through {} items (unknown type)", input_count),
+            )
+        }
+    };
+
+    let output_count = output.len();
+    node_outputs
+        .write()
+        .unwrap()
+        .insert(node_id.to_string(), output.clone());
+
+    steps.push(ExecutionStep {
+        node_id: node_id.to_string(),
+        node_label: label_of(node).to_string(),
+        node_type: node.node_type.clone(),
+        input_count,
+        output_count,
+        detail,
+        output: output.clone(),
+    });
+}
+
+fn node_inputs_read(
+    node_id: &str,
+    edges: &[PipelineEdge],
+    node_outputs: &Arc<RwLock<HashMap<String, Vec<serde_json::Value>>>>,
+) -> Vec<serde_json::Value> {
+    let map = node_outputs.read().unwrap();
+    let mut combined = Vec::new();
+    for edge in edges {
+        if edge.target == node_id {
+            if let Some(output) = map.get(&edge.source) {
+                combined.extend(output.iter().cloned());
+            }
+        }
+    }
+    combined
 }

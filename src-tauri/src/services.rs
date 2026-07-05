@@ -235,7 +235,16 @@ impl ServiceManager {
             Self::emit_st(app, project_id, "running", cc,
                 &started_at.read().unwrap(), &last_run_at.read().unwrap(), &last_error.read().unwrap());
 
-            let result = execute_pipeline(&config, lm, project_id);
+            let result = {
+                let mode = config.settings.get("executionMode")
+                    .and_then(|v| v.as_str())
+                    .map(|s| match s {
+                        "parallel" => crate::pipeline::ExecutionMode::Parallel,
+                        _ => crate::pipeline::ExecutionMode::Queue,
+                    })
+                    .unwrap_or_default();
+                crate::pipeline::execute_pipeline_with_mode(&config, mode, lm, project_id)
+            };
 
             if result.success {
                 lm.info(project_id, "system",

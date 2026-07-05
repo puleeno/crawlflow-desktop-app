@@ -49,6 +49,7 @@ function getDefaultPresets(): Preset[] {
                 crawlDelay: 1000,
                 userAgent: 'CrawlFlow/1.0',
                 concurrency: 5,
+                executionMode: 'queue',
             },
             nodes: [
                 {
@@ -126,6 +127,7 @@ function getDefaultPresets(): Preset[] {
                 crawlDelay: 3600000,
                 userAgent: 'CrawlFlow/1.0',
                 concurrency: 2,
+                executionMode: 'queue',
             },
             nodes: [
                 {
@@ -197,6 +199,7 @@ function getDefaultPresets(): Preset[] {
                 crawlDelay: 1000,
                 userAgent: 'CrawlFlow/1.0',
                 concurrency: 5,
+                executionMode: 'queue',
             },
             nodes: [
                 {
@@ -271,6 +274,7 @@ function getDefaultPresets(): Preset[] {
                 crawlDelay: 86400000,
                 userAgent: 'CrawlFlow/1.0',
                 concurrency: 3,
+                executionMode: 'queue',
             },
             nodes: [
                 {
