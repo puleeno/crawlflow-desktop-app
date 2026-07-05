@@ -415,6 +415,8 @@ fn create_crawlflow_api<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyModule>> 
     module.add_function(wrap_pyfunction!(py_parse_html_table, py)?)?;
     module.add_function(wrap_pyfunction!(py_fetch_with_client, py)?)?;
     module.add_function(wrap_pyfunction!(py_update_progress, py)?)?;
+    module.add_function(wrap_pyfunction!(py_spreadsheet_read, py)?)?;
+    module.add_function(wrap_pyfunction!(py_spreadsheet_write, py)?)?;
 
     Ok(module.into())
 }
@@ -580,4 +582,23 @@ fn py_update_progress(project_id: String, data: String) -> PyResult<()> {
         .map_err(|e| pyo3::exceptions::PyTypeError::new_err(e.to_string()))?;
     crate::progress::update_progress(&project_id, info);
     Ok(())
+}
+
+// ── Spreadsheet API ──────────────────────────────────────────────
+
+#[pyfunction]
+fn py_spreadsheet_read(path: String) -> PyResult<String> {
+    let workbook = crate::spreadsheet::read(&path)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(e))?;
+    serde_json::to_string(&workbook)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+}
+
+#[pyfunction]
+fn py_spreadsheet_write(data: String, path: String) -> PyResult<bool> {
+    let workbook: crate::spreadsheet::Workbook = serde_json::from_str(&data)
+        .map_err(|e| pyo3::exceptions::PyTypeError::new_err(e.to_string()))?;
+    crate::spreadsheet::write(&workbook, &path)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(e))?;
+    Ok(true)
 }

@@ -211,44 +211,8 @@ pub async fn export_csv_cmd(request: ExportRequest) -> ExportResult {
 // ── Excel export (Rust-side xlsx generation) ──────────────────────
 
 pub fn inner_export_excel(data: &[serde_json::Value], sheet_name: &str) -> Result<Vec<u8>, String> {
-    use rust_xlsxwriter::*;
-
-    let mut workbook = Workbook::new();
-    let sheet = workbook.add_worksheet();
-    sheet.set_name(sheet_name).map_err(|e| e.to_string())?;
-
-    if data.is_empty() {
-        return workbook.save_to_buffer().map_err(|e| e.to_string());
-    }
-
-    let headers: Vec<String> = data
-        .first()
-        .and_then(|v| v.as_object())
-        .map(|obj| obj.keys().cloned().collect())
-        .unwrap_or_default();
-
-    for (col, header) in headers.iter().enumerate() {
-        sheet
-            .write_string(0, col as u16, header)
-            .map_err(|e| e.to_string())?;
-    }
-
-    for (row, item) in data.iter().enumerate() {
-        for (col, header) in headers.iter().enumerate() {
-            let value = item
-                .get(header)
-                .map(|v| match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                })
-                .unwrap_or_default();
-            sheet
-                .write_string((row + 1) as u32, col as u16, &value)
-                .map_err(|e| e.to_string())?;
-        }
-    }
-
-    workbook.save_to_buffer().map_err(|e| e.to_string())
+    let wb = crate::spreadsheet::Workbook::from_json_rows(data, sheet_name);
+    crate::spreadsheet::to_xlsx_bytes(&wb)
 }
 
 #[tauri::command]
@@ -277,7 +241,97 @@ pub async fn export_excel_cmd(request: ExportRequest) -> ExportResult {
     }
 }
 
-// ── HTML table parser (shared with Python bindings) ──────────────
+// ── Spreadsheet commands (multi-format) ──────────────────────────
+
+#[derive(Debug, serde::Serialize)]
+pub struct SpreadsheetResult {
+    pub file_name: String,
+    pub mime_type: String,
+    pub content: String,
+}
+
+#[tauri::command]
+pub async fn spreadsheet_read_cmd(path: String) -> Result<String, String> {
+    let wb = crate::spreadsheet::read(&path)?;
+    serde_json::to_string(&wb).map_err(|e| format!("Serialization error: {}", e))
+}
+
+#[tauri::command]
+pub async fn spreadsheet_write_cmd(
+    data: String,
+    path: String,
+) -> Result<(), String> {
+    let wb: crate::spreadsheet::Workbook = serde_json::from_str(&data)
+        .map_err(|e| format!("Invalid workbook JSON: {}", e))?;
+    crate::spreadsheet::write(&wb, &path)
+}
+
+#[tauri::command]
+pub async fn spreadsheet_export_cmd(
+    data: Vec<serde_json::Value>,
+    config: serde_json::Value,
+) -> SpreadsheetResult {
+    let format = config
+        .get("format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("xlsx")
+        .to_lowercase();
+    let sheet_name = config
+        .get("sheetName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Sheet1");
+
+    let content: (String, String, String) = match format.as_str() {
+        "csv" => {
+            let wb = crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name);
+            match crate::spreadsheet::to_csv_string(&wb) {
+                Ok(csv) => (csv, "text/csv".into(), "csv".into()),
+                Err(e) => return SpreadsheetResult {
+                    file_name: "error.txt".into(),
+                    mime_type: "text/plain".into(),
+                    content: format!("CSV export failed: {}", e),
+                },
+            }
+        }
+        "ods" => {
+            let wb = crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name);
+            match crate::spreadsheet::to_ods_bytes(&wb) {
+                Ok(bytes) => {
+                    use base64::Engine;
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    (encoded, "application/vnd.oasis.opendocument.spreadsheet".into(), "ods".into())
+                }
+                Err(e) => return SpreadsheetResult {
+                    file_name: "error.txt".into(),
+                    mime_type: "text/plain".into(),
+                    content: format!("ODS export failed: {}", e),
+                },
+            }
+        }
+        _ => {
+            // Default: xlsx
+            let wb = crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name);
+            match crate::spreadsheet::to_xlsx_bytes(&wb) {
+                Ok(bytes) => {
+                    use base64::Engine;
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    (encoded, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(), "xlsx".into())
+                }
+                Err(e) => return SpreadsheetResult {
+                    file_name: "error.txt".into(),
+                    mime_type: "text/plain".into(),
+                    content: format!("XLSX export failed: {}", e),
+                },
+            }
+        }
+    };
+
+    SpreadsheetResult {
+        file_name: format!("export_{}.{}", chrono_now(), content.2),
+        mime_type: content.1,
+        content: content.0,
+    }
+}
 
 pub fn inner_parse_html_table(html: &str, table_index: usize, has_header: bool) -> Vec<serde_json::Value> {
     let document = scraper::Html::parse_document(html);

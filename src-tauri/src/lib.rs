@@ -9,6 +9,7 @@ mod progress;
 mod python_plugins;
 mod request_clients;
 mod services;
+pub mod spreadsheet;
 mod system_service;
 
 use commands::AppState;
@@ -82,6 +83,9 @@ pub fn run() {
             commands::fetch_rss_cmd,
             commands::export_csv_cmd,
             commands::export_excel_cmd,
+            commands::spreadsheet_read_cmd,
+            commands::spreadsheet_write_cmd,
+            commands::spreadsheet_export_cmd,
             commands::parse_html_table_cmd,
             commands::list_python_plugins_cmd,
             commands::execute_python_hook_cmd,
