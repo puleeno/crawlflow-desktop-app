@@ -1515,7 +1515,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 />
             )}
 
-            <div className="flex items-center justify-between mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
+            <CollapsibleSection title="General" defaultOpen>
+                <div className="flex items-center justify-between mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
                 <div className="flex flex-col">
                     <span className="text-sm font-bold text-gray-700">Enable Project</span>
                     <span className="text-xs text-gray-500">{projectSettings.enabled ? 'Project is active' : 'Project is disabled'}</span>
@@ -1584,8 +1585,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 <input type="text" value={projectSettings.userAgent} onChange={e => onUpdateProjectSettings({ userAgent: e.target.value })} className={commonInputClasses} disabled={isRunning} />
             </div>
 
-            <div className="pt-6 border-t mt-6">
-                <h4 className="font-semibold text-gray-700 mb-3">Actions</h4>
+            </CollapsibleSection>
+
+            <CollapsibleSection title="Actions">
                 <div className="flex gap-2">
                     <button onClick={onExport} className={`${commonButtonClasses} bg-indigo-600 hover:bg-indigo-700 flex items-center justify-center gap-2`}>
                         <ArrowDownTrayIcon /> Export JSON
@@ -1594,7 +1596,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                         <ArrowUpTrayIcon /> Import JSON
                     </button>
                 </div>
-            </div>
+                <button
+                    onClick={onSave}
+                    className="w-full mt-3 p-3 rounded-md font-bold text-white bg-green-600 hover:bg-green-700 transition-colors flex items-center justify-center gap-2 shadow-md"
+                >
+                    <CloudIcon /> Save Project
+                </button>
+            </CollapsibleSection>
         </div>
     );
 
