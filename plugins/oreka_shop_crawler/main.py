@@ -29,8 +29,14 @@ KET QUA TRA VE (fetch_data tra ve JSON array, moi phan tu la 1 san pham):
     "specs": { "Thuong hieu": "...", "Chat lieu": "..." },
     "category": "Danh muc",
     "availability": "Con hang",
+    "stock": "1",
     "crawled_at": "2026-07-02T12:00:00"
   }
+
+XUAT EXCEL/CSV:
+  Cot: STT, Gia bia, Gia ban, Ton kho, Don vi,
+       Khoi luong (g), Kich thuoc, Tinh trang, Nam XB,
+       Thuong hieu, Ten sach, Danh muc
 """
 
 import json
@@ -115,6 +121,15 @@ def _get_text(html, selector):
     """Don gian: lay text content tu HTML."""
     p = HTMLContentParser()
     return p.extract_text(html)
+
+
+def _spec_value(specs, *keys):
+    """Lay gia tri tu specs bang nhieu key co the co."""
+    for key in keys:
+        val = specs.get(key)
+        if val:
+            return str(val).strip()
+    return ""
 
 
 def _safe_float(val, default=0):
@@ -272,6 +287,16 @@ def _parse_product_from_html(html, url):
     if avail_match:
         availability = avail_match.group(0)
 
+    # Ton kho
+    stock = ""
+    stock_match = re.search(r'(?:Số lượng|Tồn kho|Kho hàng|Còn lại)\s*[:;]?\s*(\d+)', html, re.IGNORECASE)
+    if stock_match:
+        stock = stock_match.group(1)
+    if not stock:
+        stock_match = re.search(r'(?:Còn|còn)\s*(\d+)\s*(?:sản phẩm|sp|hàng)', html, re.IGNORECASE)
+        if stock_match:
+            stock = stock_match.group(1)
+
     # Danh muc
     breadcrumb = re.search(r'<ul[^>]*class\s*=\s*["\'][^"\']*breadcrumb[^"\']*["\']>(.*?)</ul>', html, re.DOTALL)
     if breadcrumb:
@@ -301,6 +326,7 @@ def _parse_product_from_html(html, url):
         "description": description[:500] if description else "",
         "specs": specs,
         "category": category,
+        "stock": stock,
         "availability": availability or "Còn hàng",
         "crawled_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
     }
@@ -500,7 +526,11 @@ def process_data(data_json, config_json):
 
 
 def export_data(data_json, config_json):
-    """Xuat du lieu ra Excel voi co che append + check trung.
+    """Xuat du lieu ra Excel/CSV voi co che append + check trung.
+
+    Dinh dang cot: STT, Gia bia, Gia ban, Ton kho, Don vi,
+                   Khoi luong (g), Kich thuoc, Tinh trang, Nam XB,
+                   Thuong hieu, Ten sach, Danh muc
 
     Ghi log vao file dedup de tranh trung lap.
     Luon append vao file Excel (doc file cu, them rows moi, ghi de).
@@ -622,17 +652,15 @@ def _export_xlsx(products, filepath, seen_ids):
         wb = Workbook()
         ws = wb.active
         ws.title = "San pham"
-        # Header row
         headers = [
-            "STT", "URL", "Ten san pham", "Gia (VND)", "Gia cu (VND)",
-            "Hinh anh", "SKU", "Mo ta", "Danh muc", "Tinh trang",
-            "Thong so", "Thoi gian crawl"
+            "STT", "Giá bìa", "Giá bán", "Tồn kho", "Đơn vị",
+            "Khối lượng (g)", "Kích thước", "Tình trạng", "Năm XB",
+            "Thương hiệu", "Tên sách", "Danh mục"
         ]
         ws.append(headers)
         crawlflow.log(f"[OrekaShop] Tao file Excel moi: {filepath}", "info")
 
     count = 0
-    spec_limit = 5  # Chi ghi 5 thong so dau tien de tranh qua rong
 
     for item in products:
         dedup_key = item.get("url", "") or item.get("sku", "")
@@ -640,23 +668,20 @@ def _export_xlsx(products, filepath, seen_ids):
             continue
 
         specs = item.get("specs", {})
-        specs_str = "; ".join([f"{k}: {v}" for k, v in list(specs.items())[:spec_limit]])
-        if len(specs) > spec_limit:
-            specs_str += f" (va {len(specs) - spec_limit} thong so khac)"
 
         row = [
             ws.max_row,
-            item.get("url", ""),
-            item.get("name", ""),
-            item.get("price", 0),
             item.get("old_price", 0),
-            item.get("image", ""),
-            item.get("sku", ""),
-            item.get("description", ""),
-            item.get("category", ""),
+            item.get("price", 0),
+            item.get("stock", ""),
+            _spec_value(specs, "Đơn vị", "Đơn vị tính"),
+            _spec_value(specs, "Trọng lượng", "Khối lượng", "Khối lượng (g)"),
+            _spec_value(specs, "Kích thước", "Kích thước sản phẩm"),
             item.get("availability", ""),
-            specs_str[:500] if specs_str else "",
-            item.get("crawled_at", ""),
+            _spec_value(specs, "Năm xuất bản", "Năm XB"),
+            _spec_value(specs, "Thương hiệu", "Nhà xuất bản", "NXB", "Tác giả"),
+            item.get("name", ""),
+            item.get("category", ""),
         ]
         ws.append(row)
         count += 1
@@ -678,28 +703,28 @@ def _export_csv(products, filepath):
         writer = csv.writer(f)
         if has_header:
             writer.writerow([
-                "URL", "Ten san pham", "Gia (VND)", "Gia cu (VND)",
-                "Hinh anh", "SKU", "Mo ta", "Danh muc", "Tinh trang",
-                "Thong so", "Thoi gian crawl"
+                "STT", "Giá bìa", "Giá bán", "Tồn kho", "Đơn vị",
+                "Khối lượng (g)", "Kích thước", "Tình trạng", "Năm XB",
+                "Thương hiệu", "Tên sách", "Danh mục"
             ])
 
         count = 0
         for item in products:
             specs = item.get("specs", {})
-            specs_str = "; ".join([f"{k}: {v}" for k, v in list(specs.items())[:5]])
 
             writer.writerow([
-                item.get("url", ""),
-                item.get("name", ""),
-                item.get("price", 0),
+                count + 1,
                 item.get("old_price", 0),
-                item.get("image", ""),
-                item.get("sku", ""),
-                item.get("description", ""),
-                item.get("category", ""),
+                item.get("price", 0),
+                item.get("stock", ""),
+                _spec_value(specs, "Đơn vị", "Đơn vị tính"),
+                _spec_value(specs, "Trọng lượng", "Khối lượng", "Khối lượng (g)"),
+                _spec_value(specs, "Kích thước", "Kích thước sản phẩm"),
                 item.get("availability", ""),
-                specs_str[:500],
-                item.get("crawled_at", ""),
+                _spec_value(specs, "Năm xuất bản", "Năm XB"),
+                _spec_value(specs, "Thương hiệu", "Nhà xuất bản", "NXB", "Tác giả"),
+                item.get("name", ""),
+                item.get("category", ""),
             ])
             count += 1
 
