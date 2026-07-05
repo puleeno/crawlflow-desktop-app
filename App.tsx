@@ -612,9 +612,15 @@ const App: React.FC = () => {
   };
 
   const updateNodeData = (nodeId: string, data: NodeData) => {
+    let updatedUrl: string | null = null;
+
     setNodes((nds) =>
       nds.map((node) => {
         if (node.id === nodeId) {
+          // Capture URL for name replacement below
+          if ((node.type === 'start' || node.type === 'dataSource') && typeof (data as any).sourceValue === 'string') {
+            updatedUrl = (data as any).sourceValue;
+          }
           return { ...node, data };
         }
         return node;
@@ -623,6 +629,18 @@ const App: React.FC = () => {
 
     if (selectedNode?.id === nodeId) {
       setSelectedNode((prev) => (prev ? { ...prev, data } : null));
+    }
+
+    // Replace {url} in project name when user sets a data source URL
+    if (updatedUrl) {
+      setProjectSettings(prev => {
+        if (prev.name && prev.name.includes('{url}')) {
+          let label = updatedUrl!;
+          try { label = new URL(updatedUrl!).hostname.replace('www.', ''); } catch {}
+          return { ...prev, name: prev.name.replace(/\{url\}/g, label) };
+        }
+        return prev;
+      });
     }
   };
 
@@ -1026,9 +1044,24 @@ const App: React.FC = () => {
         setEdges(state.edges);
       }
       if (state.settings.name) {
+        const settingsName = state.settings.name;
+        // Replace {url} in name if a data source URL exists
+        let resolvedName = settingsName;
+        if (settingsName.includes('{url}')) {
+          const dsNode = state.nodes.find(n =>
+            (n.type === 'start' || n.type === 'dataSource') &&
+            typeof n.data?.sourceValue === 'string' &&
+            n.data.sourceValue
+          );
+          if (dsNode) {
+            let label = dsNode.data.sourceValue;
+            try { label = new URL(label).hostname.replace('www.', ''); } catch {}
+            resolvedName = settingsName.replace(/\{url\}/g, label);
+          }
+        }
         setProjectSettings(prev => ({
           ...prev,
-          name: state.settings.name,
+          name: resolvedName,
           description: state.settings.description || prev.description,
           crawlDelay: Number(state.settings.crawlDelay) || prev.crawlDelay,
           userAgent: state.settings.userAgent || prev.userAgent,
