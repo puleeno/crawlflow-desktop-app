@@ -659,7 +659,7 @@ const App: React.FC = () => {
         const filePath = await save({ defaultPath: fileName, filters: [{ name: 'JSON', extensions: ['json'] }] });
         if (filePath) await writeTextFile(filePath, json);
         return;
-      } catch {}
+      } catch { }
     }
 
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(json);
@@ -740,7 +740,9 @@ const App: React.FC = () => {
 
 
   const onNodeDragStop: NodeDragHandler = useCallback((event, node) => {
+    if (!node || !node.position) return;
     const parentNode = nodes.find(n =>
+      n?.position &&
       node.position.x >= n.position.x &&
       node.position.y >= n.position.y &&
       node.position.x <= n.position.x + (n.width ?? 0) &&
@@ -1109,12 +1111,11 @@ const App: React.FC = () => {
             onClick={() => setLogPanelOpen(!isLogPanelOpen)}
             className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
           >
-            <span className={`inline-block w-2.5 h-2.5 rounded-full ${
-              serviceStatus === 'running' ? 'bg-green-500 animate-pulse' :
-              serviceStatus === 'paused' ? 'bg-amber-500' :
-              serviceStatus?.startsWith('error') ? 'bg-red-500' :
-              'bg-gray-400'
-            }`} />
+            <span className={`inline-block w-2.5 h-2.5 rounded-full ${serviceStatus === 'running' ? 'bg-green-500 animate-pulse' :
+                serviceStatus === 'paused' ? 'bg-amber-500' :
+                  serviceStatus?.startsWith('error') ? 'bg-red-500' :
+                    'bg-gray-400'
+              }`} />
             Service
             {serviceCycleCount > 0 && (
               <span className="text-xs text-gray-400">#{serviceCycleCount}</span>
