@@ -240,10 +240,20 @@ impl PluginEngine {
                     "data": {}
                 },
                 {
+                    "id": "proc-0",
+                    "type": "processor",
+                    "label": "Deduplicate",
+                    "position": {"x": 50, "y": 800},
+                    "data": {
+                        "processorType": "rust-deduplicate",
+                        "processorConfig": {"field": "id"}
+                    }
+                },
+                {
                     "id": "proc-1",
                     "type": "processor",
                     "label": "Filter (views > 500)",
-                    "position": {"x": 50, "y": 800},
+                    "position": {"x": 50, "y": 1050},
                     "data": {
                         "processorType": "rust-filter",
                         "processorConfig": {"field": "views", "operator": "greater_than", "value": "500"}
@@ -253,7 +263,7 @@ impl PluginEngine {
                     "id": "proc-2",
                     "type": "processor",
                     "label": "Sort (by views ↓)",
-                    "position": {"x": 50, "y": 1050},
+                    "position": {"x": 50, "y": 1300},
                     "data": {
                         "processorType": "rust-sort",
                         "processorConfig": {"field": "views", "descending": true}
@@ -263,7 +273,7 @@ impl PluginEngine {
                     "id": "proc-3",
                     "type": "processor",
                     "label": "Limit (top 3)",
-                    "position": {"x": 50, "y": 1300},
+                    "position": {"x": 50, "y": 1550},
                     "data": {
                         "processorType": "rust-limit",
                         "processorConfig": {"count": 3, "offset": 0}
@@ -273,7 +283,7 @@ impl PluginEngine {
                     "id": "proc-4",
                     "type": "processor",
                     "label": "CSV Export",
-                    "position": {"x": 50, "y": 1550},
+                    "position": {"x": 50, "y": 1800},
                     "data": {
                         "processorType": "generate-csv-file",
                         "processorConfig": {"delimiter": ",", "includeHeader": true}
@@ -283,7 +293,8 @@ impl PluginEngine {
             "edges": [
                 {"id": "e-ds-repo",      "source": "ds-1",            "target": "repository-node"},
                 {"id": "e-repo-worker",  "source": "repository-node", "target": "worker-1"},
-                {"id": "e-worker-proc1", "source": "worker-1",        "target": "proc-1"},
+                {"id": "e-worker-proc0", "source": "worker-1",        "target": "proc-0"},
+                {"id": "e-proc0-proc1",  "source": "proc-0",          "target": "proc-1"},
                 {"id": "e-proc1-proc2",  "source": "proc-1",          "target": "proc-2"},
                 {"id": "e-proc2-proc3",  "source": "proc-2",          "target": "proc-3"},
                 {"id": "e-proc3-proc4",  "source": "proc-3",          "target": "proc-4"}
