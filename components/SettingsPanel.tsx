@@ -9,28 +9,28 @@ import ServiceControls from './ServiceControls';
 
 
 interface SettingsPanelProps {
-  node: Node | null;
-  onUpdateNode: (nodeId: string, data: NodeData) => void;
-  onDeleteNode: (nodeId: string) => void;
-  onClose: () => void;
-  projectSettings: ProjectSettings;
-  onUpdateProjectSettings: (update: Partial<ProjectSettings>) => void;
-  onExport: () => void;
-  onSave: () => void;
-  onImport: () => void;
-  isOpen: boolean;
-  // Inspector-related props
-  onShowInspector: (htmlContent: string, baseUrl?: string) => void;
-  onHideInspector: () => void;
-  onStartPicking: (nodeId: string, ruleId: string) => void;
-  onStopPicking: () => void;
-  pickingRuleId: string | null;
-  onInspectSelector: (selector: string | null) => void;
-  highlightedSelector: string | null;
-  nodes?: Node[];
-  edges?: Edge[];
-  projectId?: string | null;
-  onOpenLogs?: () => void;
+    node: Node | null;
+    onUpdateNode: (nodeId: string, data: NodeData) => void;
+    onDeleteNode: (nodeId: string) => void;
+    onClose: () => void;
+    projectSettings: ProjectSettings;
+    onUpdateProjectSettings: (update: Partial<ProjectSettings>) => void;
+    onExport: () => void;
+    onSave: () => void;
+    onImport: () => void;
+    isOpen: boolean;
+    // Inspector-related props
+    onShowInspector: (htmlContent: string, baseUrl?: string) => void;
+    onHideInspector: () => void;
+    onStartPicking: (nodeId: string, ruleId: string) => void;
+    onStopPicking: () => void;
+    pickingRuleId: string | null;
+    onInspectSelector: (selector: string | null) => void;
+    highlightedSelector: string | null;
+    nodes?: Node[];
+    edges?: Edge[];
+    projectId?: string | null;
+    onOpenLogs?: () => void;
 }
 
 const commonInputClasses = "w-full p-2 bg-white text-gray-900 border border-slate-300 rounded-md shadow-sm placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-slate-100 disabled:text-gray-500";
@@ -108,7 +108,7 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
     const handleUpdate = <K extends keyof StartNodeData>(key: K, value: StartNodeData[K]) => {
         onUpdate({ ...data, [key]: value });
     };
-    
+
     const handleNestedUpdate = (settingsKey: 'urlSettings' | 'apiSettings' | 'xmlSettings' | 'jsonSettings', update: any) => {
         onUpdate({
             ...data,
@@ -191,8 +191,8 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
                             <button onClick={() => handleNestedUpdate('urlSettings', { scope: 'entire-website' })} className={`flex-1 p-2 text-sm font-semibold rounded-md transition-colors ${settings.scope === 'entire-website' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:bg-white/60'}`}>Entire Website</button>
                         </div>
                     </div>
-                    
-                    <TagInput 
+
+                    <TagInput
                         label="Exclude Extensions"
                         tags={settings.excludeExtensions || []}
                         onChange={(tags) => handleNestedUpdate('urlSettings', { excludeExtensions: tags })}
@@ -219,7 +219,7 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
             </CollapsibleSection>
         );
     };
-    
+
     const renderAPISettings = () => {
         const settings = data.apiSettings || {} as APISourceSettings;
         const authDetails = settings.authDetails || {};
@@ -228,8 +228,8 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
             <>
                 <CollapsibleSection title="Authentication" defaultOpen>
                     <div className="space-y-3">
-                         <label className={commonLabelClasses}>Auth Type</label>
-                         <select value={settings.authType} onChange={(e) => handleNestedUpdate('apiSettings', { authType: e.target.value as any, authDetails: {} })} className={commonInputClasses}>
+                        <label className={commonLabelClasses}>Auth Type</label>
+                        <select value={settings.authType} onChange={(e) => handleNestedUpdate('apiSettings', { authType: e.target.value as any, authDetails: {} })} className={commonInputClasses}>
                             <option value="none">None</option>
                             <option value="api-key">API Key</option>
                             <option value="bearer">Bearer Token</option>
@@ -243,31 +243,31 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
                                     <option value="query">Query Parameter</option>
                                 </select>
                                 <label className={commonLabelClasses}>Key Name</label>
-                                <input type="text" value={(authDetails as APIKeyAuth).keyName || ''} onChange={e => handleNestedUpdate('apiSettings', { authDetails: { ...(authDetails as APIKeyAuth), keyName: e.target.value }})} placeholder="X-API-KEY" className={commonInputClasses} />
+                                <input type="text" value={(authDetails as APIKeyAuth).keyName || ''} onChange={e => handleNestedUpdate('apiSettings', { authDetails: { ...(authDetails as APIKeyAuth), keyName: e.target.value } })} placeholder="X-API-KEY" className={commonInputClasses} />
                                 <label className={commonLabelClasses}>Key Value</label>
-                                <input type="password" value={(authDetails as APIKeyAuth).keyValue || ''} onChange={e => handleNestedUpdate('apiSettings', { authDetails: { ...(authDetails as APIKeyAuth), keyValue: e.target.value }})} placeholder="your-api-key" className={commonInputClasses} />
+                                <input type="password" value={(authDetails as APIKeyAuth).keyValue || ''} onChange={e => handleNestedUpdate('apiSettings', { authDetails: { ...(authDetails as APIKeyAuth), keyValue: e.target.value } })} placeholder="your-api-key" className={commonInputClasses} />
                             </div>
                         )}
                         {settings.authType === 'bearer' && (
-                             <div className="p-3 bg-slate-100 rounded-md space-y-3">
+                            <div className="p-3 bg-slate-100 rounded-md space-y-3">
                                 <label className={commonLabelClasses}>Bearer Token</label>
-                                <input type="password" value={(authDetails as BearerTokenAuth).token || ''} onChange={e => handleNestedUpdate('apiSettings', { authDetails: { ...(authDetails as BearerTokenAuth), token: e.target.value }})} placeholder="your-bearer-token" className={commonInputClasses} />
+                                <input type="password" value={(authDetails as BearerTokenAuth).token || ''} onChange={e => handleNestedUpdate('apiSettings', { authDetails: { ...(authDetails as BearerTokenAuth), token: e.target.value } })} placeholder="your-bearer-token" className={commonInputClasses} />
                             </div>
                         )}
                         {settings.authType === 'basic' && (
-                             <div className="p-3 bg-slate-100 rounded-md space-y-3">
+                            <div className="p-3 bg-slate-100 rounded-md space-y-3">
                                 <label className={commonLabelClasses}>Username</label>
-                                <input type="text" value={(authDetails as BasicAuth).username || ''} onChange={e => handleNestedUpdate('apiSettings', { authDetails: { ...(authDetails as BasicAuth), username: e.target.value }})} placeholder="username" className={commonInputClasses} />
+                                <input type="text" value={(authDetails as BasicAuth).username || ''} onChange={e => handleNestedUpdate('apiSettings', { authDetails: { ...(authDetails as BasicAuth), username: e.target.value } })} placeholder="username" className={commonInputClasses} />
                                 <label className={commonLabelClasses}>Password</label>
-                                <input type="password" value={(authDetails as BasicAuth).password || ''} onChange={e => handleNestedUpdate('apiSettings', { authDetails: { ...(authDetails as BasicAuth), password: e.target.value }})} placeholder="password" className={commonInputClasses} />
+                                <input type="password" value={(authDetails as BasicAuth).password || ''} onChange={e => handleNestedUpdate('apiSettings', { authDetails: { ...(authDetails as BasicAuth), password: e.target.value } })} placeholder="password" className={commonInputClasses} />
                             </div>
                         )}
                     </div>
                 </CollapsibleSection>
                 <CollapsibleSection title="Pagination">
-                     <div className="space-y-3">
-                         <label className={commonLabelClasses}>Pagination Type</label>
-                         <select value={settings.paginationType} onChange={(e) => handleNestedUpdate('apiSettings', { paginationType: e.target.value as any, paginationDetails: {} })} className={commonInputClasses}>
+                    <div className="space-y-3">
+                        <label className={commonLabelClasses}>Pagination Type</label>
+                        <select value={settings.paginationType} onChange={(e) => handleNestedUpdate('apiSettings', { paginationType: e.target.value as any, paginationDetails: {} })} className={commonInputClasses}>
                             <option value="none">None</option>
                             <option value="page">Page Number</option>
                             <option value="offset-limit">Offset/Limit</option>
@@ -277,31 +277,31 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
                             <div className="p-3 bg-slate-100 rounded-md space-y-3">
                                 <p className="text-xs text-gray-600">Use {'`{{page}}`'} tag in the API URL.</p>
                                 <label className={commonLabelClasses}>Parameter Name</label>
-                                <input type="text" value={(settings.paginationDetails as PagePagination).paramName || 'page'} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as PagePagination), paramName: e.target.value }})} className={commonInputClasses} />
+                                <input type="text" value={(settings.paginationDetails as PagePagination).paramName || 'page'} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as PagePagination), paramName: e.target.value } })} className={commonInputClasses} />
                                 <label className={commonLabelClasses}>Starts At</label>
-                                <input type="number" value={(settings.paginationDetails as PagePagination).startsAt || 1} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as PagePagination), startsAt: parseInt(e.target.value) }})} className={commonInputClasses} />
+                                <input type="number" value={(settings.paginationDetails as PagePagination).startsAt || 1} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as PagePagination), startsAt: parseInt(e.target.value) } })} className={commonInputClasses} />
                             </div>
                         )}
-                         {settings.paginationType === 'offset-limit' && (
+                        {settings.paginationType === 'offset-limit' && (
                             <div className="p-3 bg-slate-100 rounded-md space-y-3">
                                 <p className="text-xs text-gray-600">Use {'`{{offset}}`'} and {'`{{limit}}`'} tags in the API URL.</p>
                                 <label className={commonLabelClasses}>Offset Param Name</label>
-                                <input type="text" value={(settings.paginationDetails as OffsetLimitPagination).offsetParam || 'offset'} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as OffsetLimitPagination), offsetParam: e.target.value }})} className={commonInputClasses} />
-                                 <label className={commonLabelClasses}>Limit Param Name</label>
-                                <input type="text" value={(settings.paginationDetails as OffsetLimitPagination).limitParam || 'limit'} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as OffsetLimitPagination), limitParam: e.target.value }})} className={commonInputClasses} />
+                                <input type="text" value={(settings.paginationDetails as OffsetLimitPagination).offsetParam || 'offset'} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as OffsetLimitPagination), offsetParam: e.target.value } })} className={commonInputClasses} />
+                                <label className={commonLabelClasses}>Limit Param Name</label>
+                                <input type="text" value={(settings.paginationDetails as OffsetLimitPagination).limitParam || 'limit'} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as OffsetLimitPagination), limitParam: e.target.value } })} className={commonInputClasses} />
                                 <label className={commonLabelClasses}>Limit Value</label>
-                                <input type="number" value={(settings.paginationDetails as OffsetLimitPagination).limitValue || 100} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as OffsetLimitPagination), limitValue: parseInt(e.target.value) }})} className={commonInputClasses} />
+                                <input type="number" value={(settings.paginationDetails as OffsetLimitPagination).limitValue || 100} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as OffsetLimitPagination), limitValue: parseInt(e.target.value) } })} className={commonInputClasses} />
                                 <label className={commonLabelClasses}>Starts At</label>
-                                <input type="number" value={(settings.paginationDetails as OffsetLimitPagination).startsAt || 0} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as OffsetLimitPagination), startsAt: parseInt(e.target.value) }})} className={commonInputClasses} />
+                                <input type="number" value={(settings.paginationDetails as OffsetLimitPagination).startsAt || 0} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as OffsetLimitPagination), startsAt: parseInt(e.target.value) } })} className={commonInputClasses} />
                             </div>
                         )}
-                         {settings.paginationType === 'next-url' && (
+                        {settings.paginationType === 'next-url' && (
                             <div className="p-3 bg-slate-100 rounded-md space-y-3">
                                 <label className={commonLabelClasses}>JSON Path to Next URL</label>
-                                <input type="text" value={(settings.paginationDetails as NextURLPagination).jsonPath || ''} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as NextURLPagination), jsonPath: e.target.value }})} placeholder="e.g., meta.pagination.next_url" className={commonInputClasses} />
+                                <input type="text" value={(settings.paginationDetails as NextURLPagination).jsonPath || ''} onChange={e => handleNestedUpdate('apiSettings', { paginationDetails: { ...(settings.paginationDetails as NextURLPagination), jsonPath: e.target.value } })} placeholder="e.g., meta.pagination.next_url" className={commonInputClasses} />
                             </div>
                         )}
-                     </div>
+                    </div>
                 </CollapsibleSection>
             </>
         );
@@ -330,7 +330,7 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
                             <button onClick={() => handleNestedUpdate('xmlSettings', { domainPolicy: 'whitelist-only' })} className={`flex-1 p-2 text-sm font-semibold rounded-md transition-colors ${settings.domainPolicy === 'whitelist-only' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:bg-white/60'}`}>Whitelist Only</button>
                         </div>
                     </div>
-                    
+
                     {settings.domainPolicy === 'whitelist-only' && (
                         <TagInput
                             label="Domain Whitelist"
@@ -343,7 +343,7 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
             </CollapsibleSection>
         )
     };
-    
+
     const renderJSONSettings = () => {
         const settings = data.jsonSettings || {} as JSONSourceSettings;
         return (
@@ -358,7 +358,7 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
                     </div>
                     {settings.dataHandling === 'scan-urls' && (
                         <div className="p-3 bg-slate-100 rounded-md space-y-4">
-                             <div>
+                            <div>
                                 <label className={commonLabelClasses}>URL Source</label>
                                 <div className="flex bg-slate-100 rounded-lg p-1">
                                     <button onClick={() => handleNestedUpdate('jsonSettings', { urlSource: 'all-values' })} className={`flex-1 p-2 text-sm font-semibold rounded-md transition-colors ${settings.urlSource === 'all-values' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:bg-white/60'}`}>Scan All Values</button>
@@ -379,7 +379,7 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
                                     <button onClick={() => handleNestedUpdate('jsonSettings', { domainPolicy: 'whitelist-only' })} className={`flex-1 p-2 text-sm font-semibold rounded-md transition-colors ${settings.domainPolicy === 'whitelist-only' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:bg-white/60'}`}>Whitelist Only</button>
                                 </div>
                             </div>
-                            
+
                             {settings.domainPolicy === 'whitelist-only' && (
                                 <TagInput
                                     label="Domain Whitelist"
@@ -430,7 +430,7 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
                     />
                 </div>
             )}
-            
+
             {data.sourceType === 'url' && renderURLSettings()}
             {data.sourceType === 'api' && renderAPISettings()}
             {data.sourceType === 'xml' && renderXMLSettings()}
@@ -443,8 +443,8 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
 const ClickNodeSettings: React.FC<{ node: Node<ClickNodeData>; onUpdate: (data: ClickNodeData) => void }> = ({ node, onUpdate }) => {
     return (
         <div className="space-y-4">
-             <h3 className="text-lg font-bold text-gray-800 border-b pb-2">Click Node Settings</h3>
-             <div>
+            <h3 className="text-lg font-bold text-gray-800 border-b pb-2">Click Node Settings</h3>
+            <div>
                 <label htmlFor="selector" className={commonLabelClasses}>CSS Selector</label>
                 <input
                     id="selector"
@@ -460,10 +460,10 @@ const ClickNodeSettings: React.FC<{ node: Node<ClickNodeData>; onUpdate: (data: 
 };
 
 const LoopNodeSettings: React.FC<{ node: Node<LoopNodeData>; onUpdate: (data: LoopNodeData) => void }> = ({ node, onUpdate }) => {
-     return (
+    return (
         <div className="space-y-4">
-             <h3 className="text-lg font-bold text-gray-800 border-b pb-2">Loop Node Settings</h3>
-             <div>
+            <h3 className="text-lg font-bold text-gray-800 border-b pb-2">Loop Node Settings</h3>
+            <div>
                 <label htmlFor="iteratorSelector" className={commonLabelClasses}>Iterator CSS Selector</label>
                 <input
                     id="iteratorSelector"
@@ -508,7 +508,7 @@ const HTMLDataExtractorSettings: React.FC<{
         if (!preset) return;
 
         const isCurrentlySelected = currentPresets.includes(presetKey as any);
-        
+
         let newRules = [...(data.customRules || [])];
 
         if (isCurrentlySelected) {
@@ -537,7 +537,7 @@ const HTMLDataExtractorSettings: React.FC<{
         });
         return ids;
     }, [data.presets]);
-    
+
     const handleFetchHtml = async () => {
         if (!data.inspectorUrl) {
             onUpdate({ ...data, inspectorError: 'Please enter a URL to inspect.' });
@@ -574,7 +574,7 @@ const HTMLDataExtractorSettings: React.FC<{
         onUpdate({ ...data, inspectorLoading: false, inspectorHtmlContent: pastedHtml, inspectorError: undefined });
         props.onShowInspector(pastedHtml);
     };
-    
+
     useEffect(() => {
         // If panel is closed while inspector is open, hide it
         return () => {
@@ -589,7 +589,7 @@ const HTMLDataExtractorSettings: React.FC<{
     return (
         <div className="space-y-4">
             <h3 className="text-lg font-bold text-gray-800 border-b pb-2">HTML Data Extractor Settings</h3>
-            
+
             <CollapsibleSection title="Inspector Tool" defaultOpen>
                 <div className="space-y-2">
                     <p className="text-xs text-gray-600 mb-2">
@@ -636,7 +636,7 @@ const HTMLDataExtractorSettings: React.FC<{
                             </button>
                         </div>
                     )}
-                     {data.inspectorError && <p className="text-sm text-red-600 mt-2">{data.inspectorError}</p>}
+                    {data.inspectorError && <p className="text-sm text-red-600 mt-2">{data.inspectorError}</p>}
                 </div>
             </CollapsibleSection>
 
@@ -658,7 +658,7 @@ const HTMLDataExtractorSettings: React.FC<{
             </CollapsibleSection>
 
             <CollapsibleSection title="Custom Extraction Rules" defaultOpen>
-                 <div className="space-y-3">
+                <div className="space-y-3">
                     {data.customRules.map((rule) => {
                         const isPresetRule = presetRuleIds.has(rule.id);
                         return (
@@ -747,7 +747,7 @@ const CSVExtractorSettings: React.FC<{ node: Node<CSVExtractorNodeData>; onUpdat
     const removeMapping = (id: string) => {
         onUpdate({ ...data, mappings: data.mappings.filter(m => m.id !== id) });
     };
-    
+
     const togglePreset = (presetKey: string) => {
         const currentPresets = data.presets || [];
         const preset = PRESETS[presetKey]?.csv;
@@ -769,7 +769,7 @@ const CSVExtractorSettings: React.FC<{ node: Node<CSVExtractorNodeData>; onUpdat
             onUpdate({ ...data, presets: newPresets, mappings: newMappings });
         }
     };
-    
+
     const presetMappingIds = useMemo(() => {
         const ids = new Set<string>();
         (data.presets || []).forEach(presetKey => {
@@ -797,7 +797,7 @@ const CSVExtractorSettings: React.FC<{ node: Node<CSVExtractorNodeData>; onUpdat
                 />
                 <label htmlFor="hasHeader" className="text-sm text-gray-700">First row is header</label>
             </div>
-            
+
             <CollapsibleSection title="Extraction Presets">
                 <div className="grid grid-cols-2 gap-2">
                     {availablePresets.map(([key, preset]) => (
@@ -824,7 +824,7 @@ const CSVExtractorSettings: React.FC<{ node: Node<CSVExtractorNodeData>; onUpdat
                                 {isPresetMapping && <span className="absolute top-1 right-2 text-xs font-semibold text-blue-700 bg-blue-200 px-2 py-0.5 rounded-full">Preset</span>}
                                 <input type={data.hasHeader ? 'text' : 'number'} placeholder={data.hasHeader ? "Header Name" : "Column Index"} value={m.source} onChange={e => handleMappingChange(m.id, 'source', e.target.value)} className={`${smallInputClasses} disabled:bg-slate-200 disabled:text-gray-600 disabled:cursor-not-allowed`} disabled={isPresetMapping} />
                                 <span>-&gt;</span>
-                                <input type="text" placeholder="Field Name" value={m.fieldName} onChange={e => handleMappingChange(m.id, 'fieldName', e.target.value)} className={`${smallInputClasses} disabled:bg-slate-200 disabled:text-gray-600 disabled:cursor-not-allowed`} disabled={isPresetMapping}/>
+                                <input type="text" placeholder="Field Name" value={m.fieldName} onChange={e => handleMappingChange(m.id, 'fieldName', e.target.value)} className={`${smallInputClasses} disabled:bg-slate-200 disabled:text-gray-600 disabled:cursor-not-allowed`} disabled={isPresetMapping} />
                                 {!isPresetMapping && <button onClick={() => removeMapping(m.id)} className="text-gray-400 hover:text-red-500"><TrashIcon /></button>}
                             </div>
                         );
@@ -844,7 +844,7 @@ const PathBasedExtractorSettings: React.FC<{
     presetKey: 'json' | 'xml';
 }> = ({ node, onUpdate, title, pathPlaceholder, presetKey }) => {
     const { data } = node;
-    
+
     const handleMappingChange = (id: string, key: keyof PathMapping, value: any) => {
         const newMappings = data.mappings.map(m => m.id === id ? { ...m, [key]: value } : m);
         onUpdate({ ...data, mappings: newMappings });
@@ -878,7 +878,7 @@ const PathBasedExtractorSettings: React.FC<{
             onUpdate({ ...data, presets: newPresets, mappings: newMappings });
         }
     };
-    
+
     const presetMappingIds = useMemo(() => {
         const ids = new Set<string>();
         (data.presets || []).forEach(key => {
@@ -892,7 +892,7 @@ const PathBasedExtractorSettings: React.FC<{
     const availablePresets = useMemo(() => {
         return Object.entries(PRESETS).filter(([_, preset]) => !!preset[presetKey]);
     }, [presetKey]);
-    
+
     return (
         <div className="space-y-4">
             <h3 className="text-lg font-bold text-gray-800 border-b pb-2">{title}</h3>
@@ -917,8 +917,8 @@ const PathBasedExtractorSettings: React.FC<{
             <CollapsibleSection title="Path Mappings" defaultOpen>
                 <div className="space-y-2">
                     {data.mappings.map(m => {
-                         const isPresetMapping = presetMappingIds.has(m.id);
-                         return (
+                        const isPresetMapping = presetMappingIds.has(m.id);
+                        return (
                             <div key={m.id} className={`flex items-center gap-2 p-2 border rounded-md relative ${isPresetMapping ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200'}`}>
                                 {isPresetMapping && <span className="absolute top-1 right-2 text-xs font-semibold text-blue-700 bg-blue-200 px-2 py-0.5 rounded-full">Preset</span>}
                                 <input type="text" placeholder={pathPlaceholder} value={m.path} onChange={e => handleMappingChange(m.id, 'path', e.target.value)} className={`${smallInputClasses} disabled:bg-slate-200 disabled:text-gray-600 disabled:cursor-not-allowed`} disabled={isPresetMapping} />
@@ -926,7 +926,7 @@ const PathBasedExtractorSettings: React.FC<{
                                 <input type="text" placeholder="Field Name" value={m.fieldName} onChange={e => handleMappingChange(m.id, 'fieldName', e.target.value)} className={`${smallInputClasses} disabled:bg-slate-200 disabled:text-gray-600 disabled:cursor-not-allowed`} disabled={isPresetMapping} />
                                 {!isPresetMapping && <button onClick={() => removeMapping(m.id)} className="text-gray-400 hover:text-red-500"><TrashIcon /></button>}
                             </div>
-                         );
+                        );
                     })}
                 </div>
                 <button onClick={addMapping} className={`${commonButtonClasses} bg-teal-600 hover:bg-teal-700 mt-3`}>Add Mapping</button>
@@ -971,7 +971,7 @@ const MySQLExtractorSettings: React.FC<{ node: Node<MySQLExtractorNodeData>; onU
             onUpdate({ ...data, presets: newPresets, mappings: newMappings });
         }
     };
-    
+
     const presetMappingIds = useMemo(() => {
         const ids = new Set<string>();
         (data.presets || []).forEach(presetKey => {
@@ -1030,11 +1030,11 @@ const MySQLExtractorSettings: React.FC<{ node: Node<MySQLExtractorNodeData>; onU
 
 
 // --- Processor Node Settings ---
-const ProcessorNodeSettings: React.FC<{ 
-    node: Node<ProcessorNodeData>; 
+const ProcessorNodeSettings: React.FC<{
+    node: Node<ProcessorNodeData>;
     onUpdate: (data: ProcessorNodeData) => void;
     nodes: Node[];
-    edges: Edge[]; 
+    edges: Edge[];
 }> = ({ node, onUpdate, nodes, edges }) => {
     const { data } = node;
 
@@ -1042,18 +1042,17 @@ const ProcessorNodeSettings: React.FC<{
         const processor = PROCESSORS.find(p => p.id === type);
         if (processor) {
             // Fix: Cast strictly to avoid union mismatch issues
-            onUpdate({ 
-                processorType: type, 
-                settings: processor.defaultSettings 
+            onUpdate({
+                processorType: type,
+                settings: processor.defaultSettings
             } as unknown as ProcessorNodeData);
         }
     };
 
     const handleSettingsChange = (key: string, value: any) => {
-        // FIX: Cast to ProcessorNodeData to resolve discriminated union type mismatch
-        onUpdate({ ...data, settings: { ...data.settings, [key]: value } } as ProcessorNodeData);
+        const currentSettings = (data as any).settings ?? (data as any).processorConfig ?? {};
+        onUpdate({ ...data, settings: { ...currentSettings, [key]: value } } as ProcessorNodeData);
     };
-
     const getAvailableFields = (startNodeId: string): string[] => {
         const fields = new Set<string>();
         const visited = new Set<string>();
@@ -1070,39 +1069,39 @@ const ProcessorNodeSettings: React.FC<{
 
             if (extractorTypes.includes(currentNode.type || '')) {
                 if (currentNode.type === 'html-data-extractor') {
-                     const d = currentNode.data as HTMLDataExtractorNodeData;
-                     d.customRules.forEach(r => fields.add(r.name));
-                     // Add preset fields
-                     (d.presets || []).forEach(presetKey => {
-                         PRESETS[presetKey as string]?.html?.rules.forEach(r => fields.add(r.name));
-                     });
+                    const d = currentNode.data as HTMLDataExtractorNodeData;
+                    d.customRules.forEach(r => fields.add(r.name));
+                    // Add preset fields
+                    (d.presets || []).forEach(presetKey => {
+                        PRESETS[presetKey as string]?.html?.rules.forEach(r => fields.add(r.name));
+                    });
                 } else if (currentNode.type === 'csv-extractor') {
                     const d = currentNode.data as CSVExtractorNodeData;
                     d.mappings.forEach(m => fields.add(m.fieldName));
-                     (d.presets || []).forEach(presetKey => {
-                         PRESETS[presetKey as string]?.csv?.mappings.forEach(m => fields.add(m.fieldName));
-                     });
+                    (d.presets || []).forEach(presetKey => {
+                        PRESETS[presetKey as string]?.csv?.mappings.forEach(m => fields.add(m.fieldName));
+                    });
                 } else if (currentNode.type === 'json-extractor') {
                     const d = currentNode.data as JSONExtractorNodeData;
                     d.mappings.forEach(m => fields.add(m.fieldName));
-                     (d.presets || []).forEach(presetKey => {
-                         PRESETS[presetKey as string]?.json?.mappings.forEach(m => fields.add(m.fieldName));
-                     });
+                    (d.presets || []).forEach(presetKey => {
+                        PRESETS[presetKey as string]?.json?.mappings.forEach(m => fields.add(m.fieldName));
+                    });
                 } else if (currentNode.type === 'xml-extractor') {
                     const d = currentNode.data as XMLExtractorNodeData;
                     d.mappings.forEach(m => fields.add(m.fieldName));
-                     (d.presets || []).forEach(presetKey => {
-                         PRESETS[presetKey as string]?.xml?.mappings.forEach(m => fields.add(m.fieldName));
-                     });
+                    (d.presets || []).forEach(presetKey => {
+                        PRESETS[presetKey as string]?.xml?.mappings.forEach(m => fields.add(m.fieldName));
+                    });
                 } else if (currentNode.type === 'mysql-extractor') {
                     const d = currentNode.data as MySQLExtractorNodeData;
                     d.mappings.forEach(m => fields.add(m.fieldName));
-                     (d.presets || []).forEach(presetKey => {
-                         PRESETS[presetKey as string]?.mysql?.mappings.forEach(m => fields.add(m.fieldName));
-                     });
+                    (d.presets || []).forEach(presetKey => {
+                        PRESETS[presetKey as string]?.mysql?.mappings.forEach(m => fields.add(m.fieldName));
+                    });
                 }
                 // Once we hit an extractor, we usually stop this branch, as this is the source of truth for fields
-                continue; 
+                continue;
             }
 
             // Find incoming edges to traverse upstream
@@ -1140,7 +1139,7 @@ const ProcessorNodeSettings: React.FC<{
                     />
                     <span className="text-sm font-semibold text-gray-700">{autoMapLabel}</span>
                 </label>
-                
+
                 <div className="space-y-2 bg-slate-50 p-2 rounded border border-slate-200">
                     <div className="text-xs font-bold text-gray-500 uppercase flex justify-between px-1">
                         <span>Extracted Field</span>
@@ -1155,9 +1154,9 @@ const ProcessorNodeSettings: React.FC<{
                                     {field}
                                 </div>
                                 <span className="text-gray-400">→</span>
-                                <input 
-                                    type="text" 
-                                    placeholder={field} 
+                                <input
+                                    type="text"
+                                    placeholder={field}
                                     value={isAutoMap ? field : ((settings[mappingKey] || {})[field] || '')}
                                     onChange={e => updateMapping(field, e.target.value, mappingKey)}
                                     disabled={isAutoMap}
@@ -1185,87 +1184,95 @@ const ProcessorNodeSettings: React.FC<{
 
             <CollapsibleSection title="Configuration" defaultOpen>
                 <div className="space-y-3">
-                    {data.processorType === 'save-to-database' && (
-                        <>
-                            <select value={(data.settings as SaveToDbSettings).connectionType} onChange={e => handleSettingsChange('connectionType', e.target.value)} className={commonInputClasses}>
-                                <option value="mysql">MySQL</option>
-                                <option value="postgresql">PostgreSQL</option>
-                            </select>
-                            <input type="text" placeholder="Host" value={(data.settings as SaveToDbSettings).host || ''} onChange={e => handleSettingsChange('host', e.target.value)} className={commonInputClasses} />
-                            <input type="text" placeholder="User" value={(data.settings as SaveToDbSettings).user || ''} onChange={e => handleSettingsChange('user', e.target.value)} className={commonInputClasses} />
-                            <input type="password" placeholder="Password" value={(data.settings as SaveToDbSettings).password || ''} onChange={e => handleSettingsChange('password', e.target.value)} className={commonInputClasses} />
-                            <input type="text" placeholder="Database" value={(data.settings as SaveToDbSettings).database || ''} onChange={e => handleSettingsChange('database', e.target.value)} className={commonInputClasses} />
-                            <input type="text" placeholder="Table Name" value={(data.settings as SaveToDbSettings).tableName || ''} onChange={e => handleSettingsChange('tableName', e.target.value)} className={commonInputClasses} />
-                            <select value={(data.settings as SaveToDbSettings).conflictStrategy} onChange={e => handleSettingsChange('conflictStrategy', e.target.value)} className={commonInputClasses}>
-                                <option value="insert">Insert (Fail on Duplicate)</option>
-                                <option value="upsert">Upsert (Update on Duplicate)</option>
-                                <option value="skip">Skip on Duplicate</option>
-                            </select>
-                            
-                            {renderMappingSection('autoMapColumns', 'columnMapping', 'DB Column')}
-                        </>
-                    )}
-                    {data.processorType === 'send-to-api' && (
-                        <>
-                            <input type="url" placeholder="Endpoint URL" value={(data.settings as SendToApiSettings).endpointUrl} onChange={e => handleSettingsChange('endpointUrl', e.target.value)} className={commonInputClasses} />
-                            <select value={(data.settings as SendToApiSettings).method} onChange={e => handleSettingsChange('method', e.target.value)} className={commonInputClasses}>
-                                <option value="POST">POST</option>
-                                <option value="PUT">PUT</option>
-                                <option value="PATCH">PATCH</option>
-                            </select>
-                            
-                            {renderMappingSection('autoMapFields', 'fieldMapping', 'JSON Key')}
-                        </>
-                    )}
-                    {data.processorType === 'generate-csv-file' && (
-                        <>
-                            <input type="text" placeholder="File Name Pattern" value={(data.settings as GenerateCsvSettings).fileName} onChange={e => handleSettingsChange('fileName', e.target.value)} className={commonInputClasses} />
-                            <select value={(data.settings as GenerateCsvSettings).delimiter} onChange={e => handleSettingsChange('delimiter', e.target.value)} className={commonInputClasses}>
-                                <option value=",">Comma (,)</option>
-                                <option value=";">Semicolon (;)</option>
-                                <option value="\t">Tab (\t)</option>
-                            </select>
-                             <div className="flex items-center gap-2 mt-2">
-                                <input
-                                    type="checkbox"
-                                    id="includeHeader"
-                                    checked={(data.settings as GenerateCsvSettings).includeHeader}
-                                    onChange={e => handleSettingsChange('includeHeader', e.target.checked)}
-                                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                                />
-                                <label htmlFor="includeHeader" className="text-sm text-gray-700">Include Header Row</label>
-                            </div>
-                            
-                            {renderMappingSection('autoMapHeaders', 'columnMapping', 'CSV Header')}
-                        </>
-                    )}
-                     {data.processorType === 'send-email-notification' && (
-                        <>
-                             <input type="text" placeholder="Recipients (comma separated)" value={(data.settings as SendEmailSettings).recipients} onChange={e => handleSettingsChange('recipients', e.target.value)} className={commonInputClasses} />
-                             <input type="text" placeholder="Subject" value={(data.settings as SendEmailSettings).subject} onChange={e => handleSettingsChange('subject', e.target.value)} className={commonInputClasses} />
-                             <textarea placeholder="Body Template" value={(data.settings as SendEmailSettings).body} onChange={e => handleSettingsChange('body', e.target.value)} className={`${commonInputClasses} h-24`} />
-                             
-                             {renderMappingSection('autoMapFields', 'fieldMapping', 'Label in Email')}
-                        </>
-                    )}
-                    {data.processorType === 'generate-excel-file' && (
-                        <>
-                            <input type="text" placeholder="File Name Pattern" value={(data.settings as GenerateExcelSettings).fileName} onChange={e => handleSettingsChange('fileName', e.target.value)} className={commonInputClasses} />
-                            <input type="text" placeholder="Sheet Name" value={(data.settings as GenerateExcelSettings).sheetName} onChange={e => handleSettingsChange('sheetName', e.target.value)} className={commonInputClasses} />
-                             <div className="flex items-center gap-2 mt-2">
-                                <input
-                                    type="checkbox"
-                                    id="includeHeaderExcel"
-                                    checked={(data.settings as GenerateExcelSettings).includeHeader}
-                                    onChange={e => handleSettingsChange('includeHeader', e.target.checked)}
-                                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                                />
-                                <label htmlFor="includeHeaderExcel" className="text-sm text-gray-700">Include Header Row</label>
-                            </div>
-                            
-                            {renderMappingSection('autoMapHeaders', 'columnMapping', 'Excel Column')}
-                        </>
-                    )}
+                    {(() => {
+                        const s: any = data.settings ?? (data as any).processorConfig ?? {};
+
+                        return (
+                            <>
+                                {data.processorType === 'save-to-database' && (
+                                    <>
+                                        <select value={s.connectionType || 'mysql'} onChange={e => handleSettingsChange('connectionType', e.target.value)} className={commonInputClasses}>
+                                            <option value="mysql">MySQL</option>
+                                            <option value="postgresql">PostgreSQL</option>
+                                        </select>
+                                        <input type="text" placeholder="Host" value={s.host || ''} onChange={e => handleSettingsChange('host', e.target.value)} className={commonInputClasses} />
+                                        <input type="text" placeholder="User" value={s.user || ''} onChange={e => handleSettingsChange('user', e.target.value)} className={commonInputClasses} />
+                                        <input type="password" placeholder="Password" value={s.password || ''} onChange={e => handleSettingsChange('password', e.target.value)} className={commonInputClasses} />
+                                        <input type="text" placeholder="Database" value={s.database || ''} onChange={e => handleSettingsChange('database', e.target.value)} className={commonInputClasses} />
+                                        <input type="text" placeholder="Table Name" value={s.tableName || ''} onChange={e => handleSettingsChange('tableName', e.target.value)} className={commonInputClasses} />
+                                        <select value={s.conflictStrategy || 'insert'} onChange={e => handleSettingsChange('conflictStrategy', e.target.value)} className={commonInputClasses}>
+                                            <option value="insert">Insert (Fail on Duplicate)</option>
+                                            <option value="upsert">Upsert (Update on Duplicate)</option>
+                                            <option value="skip">Skip on Duplicate</option>
+                                        </select>
+
+                                        {renderMappingSection('autoMapColumns', 'columnMapping', 'DB Column')}
+                                    </>
+                                )}
+                                {data.processorType === 'send-to-api' && (
+                                    <>
+                                        <input type="url" placeholder="Endpoint URL" value={s.endpointUrl || ''} onChange={e => handleSettingsChange('endpointUrl', e.target.value)} className={commonInputClasses} />
+                                        <select value={s.method || 'POST'} onChange={e => handleSettingsChange('method', e.target.value)} className={commonInputClasses}>
+                                            <option value="POST">POST</option>
+                                            <option value="PUT">PUT</option>
+                                            <option value="PATCH">PATCH</option>
+                                        </select>
+
+                                        {renderMappingSection('autoMapFields', 'fieldMapping', 'JSON Key')}
+                                    </>
+                                )}
+                                {data.processorType === 'generate-csv-file' && (
+                                    <>
+                                        <input type="text" placeholder="File Name Pattern" value={s.fileName || ''} onChange={e => handleSettingsChange('fileName', e.target.value)} className={commonInputClasses} />
+                                        <select value={s.delimiter || ','} onChange={e => handleSettingsChange('delimiter', e.target.value)} className={commonInputClasses}>
+                                            <option value=",">Comma (,)</option>
+                                            <option value=";">Semicolon (;)</option>
+                                            <option value="\t">Tab (\t)</option>
+                                        </select>
+                                        <div className="flex items-center gap-2 mt-2">
+                                            <input
+                                                type="checkbox"
+                                                id="includeHeader"
+                                                checked={!!s.includeHeader}
+                                                onChange={e => handleSettingsChange('includeHeader', e.target.checked)}
+                                                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                            />
+                                            <label htmlFor="includeHeader" className="text-sm text-gray-700">Include Header Row</label>
+                                        </div>
+
+                                        {renderMappingSection('autoMapHeaders', 'columnMapping', 'CSV Header')}
+                                    </>
+                                )}
+                                {data.processorType === 'send-email-notification' && (
+                                    <>
+                                        <input type="text" placeholder="Recipients (comma separated)" value={s.recipients || ''} onChange={e => handleSettingsChange('recipients', e.target.value)} className={commonInputClasses} />
+                                        <input type="text" placeholder="Subject" value={s.subject || ''} onChange={e => handleSettingsChange('subject', e.target.value)} className={commonInputClasses} />
+                                        <textarea placeholder="Body Template" value={s.body || ''} onChange={e => handleSettingsChange('body', e.target.value)} className={`${commonInputClasses} h-24`} />
+
+                                        {renderMappingSection('autoMapFields', 'fieldMapping', 'Label in Email')}
+                                    </>
+                                )}
+                                {data.processorType === 'generate-excel-file' && (
+                                    <>
+                                        <input type="text" placeholder="File Name Pattern" value={s.fileName || ''} onChange={e => handleSettingsChange('fileName', e.target.value)} className={commonInputClasses} />
+                                        <input type="text" placeholder="Sheet Name" value={s.sheetName || ''} onChange={e => handleSettingsChange('sheetName', e.target.value)} className={commonInputClasses} />
+                                        <div className="flex items-center gap-2 mt-2">
+                                            <input
+                                                type="checkbox"
+                                                id="includeHeaderExcel"
+                                                checked={!!s.includeHeader}
+                                                onChange={e => handleSettingsChange('includeHeader', e.target.checked)}
+                                                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                            />
+                                            <label htmlFor="includeHeaderExcel" className="text-sm text-gray-700">Include Header Row</label>
+                                        </div>
+
+                                        {renderMappingSection('autoMapHeaders', 'columnMapping', 'Excel Column')}
+                                    </>
+                                )}
+                            </>
+                        );
+                    })()}
                 </div>
             </CollapsibleSection>
         </div>
@@ -1291,15 +1298,15 @@ const WorkerNodeSettings: React.FC<{ node: Node<WorkerNodeData>; onUpdate: (data
 
     return (
         <div className="space-y-4">
-             <h3 className="text-lg font-bold text-gray-800 border-b pb-2">Worker Settings</h3>
-             <div className="flex justify-between items-center">
-                 <label className={commonLabelClasses}>Priority</label>
-                 <input type="number" value={data.priority} onChange={e => onUpdate({ ...data, priority: parseInt(e.target.value) })} className={`${commonInputClasses} w-24`} />
-             </div>
+            <h3 className="text-lg font-bold text-gray-800 border-b pb-2">Worker Settings</h3>
+            <div className="flex justify-between items-center">
+                <label className={commonLabelClasses}>Priority</label>
+                <input type="number" value={data.priority} onChange={e => onUpdate({ ...data, priority: parseInt(e.target.value) })} className={`${commonInputClasses} w-24`} />
+            </div>
 
-             <CollapsibleSection title="Detection Rules" defaultOpen>
+            <CollapsibleSection title="Detection Rules" defaultOpen>
                 <div className="space-y-4">
-                     <div className="flex items-center gap-2 mb-2 p-3 bg-slate-50 rounded border border-slate-200">
+                    <div className="flex items-center gap-2 mb-2 p-3 bg-slate-50 rounded border border-slate-200">
                         <span className="text-sm text-gray-700 font-medium">Match:</span>
                         <select value={data.detectionLogic} onChange={e => onUpdate({ ...data, detectionLogic: e.target.value as 'and' | 'or' })} className={`${commonInputClasses} w-32 border-gray-300`}>
                             <option value="and">ALL</option>
@@ -1310,11 +1317,11 @@ const WorkerNodeSettings: React.FC<{ node: Node<WorkerNodeData>; onUpdate: (data
 
                     {data.detectionRules.map((rule, index) => (
                         <div key={rule.id} className="p-4 border border-slate-200 bg-white rounded-lg shadow-sm space-y-4 relative group transition-all hover:border-blue-300">
-                            
+
                             <div className="flex justify-between items-center border-b border-slate-100 pb-2 mb-2">
                                 <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Rule {index + 1}</span>
-                                <button 
-                                    onClick={() => removeRule(rule.id)} 
+                                <button
+                                    onClick={() => removeRule(rule.id)}
                                     className="text-gray-400 hover:text-red-500 p-1.5 hover:bg-red-50 rounded transition-colors"
                                     title="Remove Rule"
                                 >
@@ -1341,20 +1348,20 @@ const WorkerNodeSettings: React.FC<{ node: Node<WorkerNodeData>; onUpdate: (data
                                     </div>
                                 )}
                                 {rule.type === 'html-contains' && (
-                                     <div>
+                                    <div>
                                         <label className={commonLabelClasses}>Text Content</label>
                                         <input type="text" placeholder="Text to match" value={(rule as HTMLContainsRule).text} onChange={e => updateRule(rule.id, { text: e.target.value })} className={commonInputClasses} />
                                     </div>
                                 )}
                                 {rule.type === 'dom-value' && (
                                     <>
-                                         <div>
+                                        <div>
                                             <label className={commonLabelClasses}>CSS Selector</label>
                                             <input type="text" placeholder="e.g., .price" value={(rule as DOMValueRule).selector} onChange={e => updateRule(rule.id, { selector: e.target.value })} className={commonInputClasses} />
                                         </div>
                                         <div className="grid grid-cols-2 gap-3">
                                             <div>
-                                                 <label className={commonLabelClasses}>Condition</label>
+                                                <label className={commonLabelClasses}>Condition</label>
                                                 <select value={(rule as DOMValueRule).condition} onChange={e => updateRule(rule.id, { condition: e.target.value as RuleCondition })} className={commonInputClasses}>
                                                     <option value="exists">Exists</option>
                                                     <option value="not-exists">Not Exists</option>
@@ -1384,7 +1391,7 @@ const WorkerNodeSettings: React.FC<{ node: Node<WorkerNodeData>; onUpdate: (data
                                         </div>
                                         <div className="grid grid-cols-2 gap-3">
                                             <div>
-                                                 <label className={commonLabelClasses}>Condition</label>
+                                                <label className={commonLabelClasses}>Condition</label>
                                                 <select value={(rule as TagAttributeRule).condition} onChange={e => updateRule(rule.id, { condition: e.target.value as RuleCondition })} className={commonInputClasses}>
                                                     <option value="exists">Exists</option>
                                                     <option value="not-exists">Not Exists</option>
@@ -1420,7 +1427,7 @@ const WorkerNodeSettings: React.FC<{ node: Node<WorkerNodeData>; onUpdate: (data
                     ))}
                     <button onClick={addRule} className={`${commonButtonClasses} bg-purple-600 hover:bg-purple-700 mt-4 py-3 shadow-sm`}>+ Add Detection Rule</button>
                 </div>
-             </CollapsibleSection>
+            </CollapsibleSection>
         </div>
     )
 };
@@ -1430,8 +1437,8 @@ const ShapeNodeSettings: React.FC<{ node: Node<ShapeNodeData>; onUpdate: (data: 
 
     return (
         <div className="space-y-4">
-             <h3 className="text-lg font-bold text-gray-800 border-b pb-2">Shape Settings</h3>
-             <div>
+            <h3 className="text-lg font-bold text-gray-800 border-b pb-2">Shape Settings</h3>
+            <div>
                 <label className={commonLabelClasses}>Label</label>
                 <input type="text" value={data.label} onChange={e => onUpdate({ ...data, label: e.target.value })} className={commonInputClasses} />
             </div>
@@ -1440,11 +1447,11 @@ const ShapeNodeSettings: React.FC<{ node: Node<ShapeNodeData>; onUpdate: (data: 
                     <label className={commonLabelClasses}>Background Color</label>
                     <input type="color" value={data.backgroundColor} onChange={e => onUpdate({ ...data, backgroundColor: e.target.value })} className="w-full h-10 p-1 rounded-md cursor-pointer border border-gray-300" />
                 </div>
-                 <div>
+                <div>
                     <label className={commonLabelClasses}>Border Color</label>
                     <input type="color" value={data.borderColor} onChange={e => onUpdate({ ...data, borderColor: e.target.value })} className="w-full h-10 p-1 rounded-md cursor-pointer border border-gray-300" />
                 </div>
-                 <div>
+                <div>
                     <label className={commonLabelClasses}>Text Color</label>
                     <input type="color" value={data.textColor} onChange={e => onUpdate({ ...data, textColor: e.target.value })} className="w-full h-10 p-1 rounded-md cursor-pointer border border-gray-300" />
                 </div>
@@ -1500,14 +1507,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
     const renderProjectSettings = () => (
         <div className="space-y-4">
             <h3 className="text-lg font-bold text-gray-800 border-b pb-2">Project Settings</h3>
-            
+
             {props.projectId && (
                 <ServiceControls
                     projectId={props.projectId}
                     onOpenLogs={() => props.onOpenLogs?.()}
                 />
             )}
-            
+
             <div className="flex items-center justify-between mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
                 <div className="flex flex-col">
                     <span className="text-sm font-bold text-gray-700">Enable Project</span>
@@ -1535,12 +1542,12 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 <label className={commonLabelClasses}>Description</label>
                 <textarea value={projectSettings.description} onChange={e => onUpdateProjectSettings({ description: e.target.value })} className={`${commonInputClasses} h-24`} />
             </div>
-             <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4">
                 <div>
                     <label className={commonLabelClasses}>Crawl Delay (ms)</label>
                     <input type="number" value={projectSettings.crawlDelay} onChange={e => onUpdateProjectSettings({ crawlDelay: parseInt(e.target.value) })} className={commonInputClasses} />
                 </div>
-                 <div>
+                <div>
                     <label className={commonLabelClasses}>Concurrency</label>
                     <input type="number" value={projectSettings.concurrency} onChange={e => onUpdateProjectSettings({ concurrency: parseInt(e.target.value) })} className={commonInputClasses} />
                 </div>
@@ -1552,7 +1559,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
 
             <div className="pt-6 border-t mt-6">
                 <h4 className="font-semibold text-gray-700 mb-3">Actions</h4>
-                 <div className="flex gap-2">
+                <div className="flex gap-2">
                     <button onClick={onExport} className={`${commonButtonClasses} bg-indigo-600 hover:bg-indigo-700 flex items-center justify-center gap-2`}>
                         <ArrowDownTrayIcon /> Export JSON
                     </button>
@@ -1578,13 +1585,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                     <XMarkIcon />
                 </button>
             </div>
-            
+
             {node ? (
                 <>
                     {renderNodeSettings()}
                     {node.deletable !== false && (
-                         <div className="mt-8 pt-6 border-t">
-                            <button 
+                        <div className="mt-8 pt-6 border-t">
+                            <button
                                 onClick={() => onDeleteNode(node.id)}
                                 className="w-full p-2 bg-red-100 text-red-700 rounded-md font-semibold hover:bg-red-200 transition-colors flex items-center justify-center gap-2"
                             >
