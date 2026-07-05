@@ -1112,9 +1112,8 @@ const ProcessorNodeSettings: React.FC<{
     };
 
     const availableFields = useMemo(() => getAvailableFields(node.id), [nodes, edges, node.id]);
-
     const updateMapping = (field: string, value: string, mappingKey: string) => {
-        const currentSettings = data.settings as any;
+        const currentSettings = (data.settings ?? (data as any).processorConfig ?? {}) as any;
         const newMapping = { ...(currentSettings[mappingKey] || {}), [field]: value };
         handleSettingsChange(mappingKey, newMapping);
     };
@@ -1125,7 +1124,7 @@ const ProcessorNodeSettings: React.FC<{
         destLabel: string,
         autoMapLabel: string = "Auto Map Fields"
     ) => {
-        const settings = data.settings as any;
+        const settings = (data.settings ?? (data as any).processorConfig ?? {}) as any;
         const isAutoMap = settings[autoMapKey];
 
         return (
@@ -1284,16 +1283,16 @@ const WorkerNodeSettings: React.FC<{ node: Node<WorkerNodeData>; onUpdate: (data
 
     const addRule = () => {
         const newRule: WorkerRule = { id: `${Date.now()}`, type: 'dom-value', selector: '', condition: 'exists', value: '' };
-        onUpdate({ ...data, detectionRules: [...data.detectionRules, newRule] });
+        onUpdate({ ...data, detectionRules: [...(data.detectionRules || []), newRule] });
     };
 
     const updateRule = (id: string, ruleUpdate: Partial<WorkerRule>) => {
-        const newRules = data.detectionRules.map(r => r.id === id ? { ...r, ...ruleUpdate } as WorkerRule : r);
+        const newRules = (data.detectionRules || []).map(r => r.id === id ? { ...r, ...ruleUpdate } as WorkerRule : r);
         onUpdate({ ...data, detectionRules: newRules });
     };
 
     const removeRule = (id: string) => {
-        onUpdate({ ...data, detectionRules: data.detectionRules.filter(r => r.id !== id) });
+        onUpdate({ ...data, detectionRules: (data.detectionRules || []).filter(r => r.id !== id) });
     };
 
     return (
@@ -1301,21 +1300,21 @@ const WorkerNodeSettings: React.FC<{ node: Node<WorkerNodeData>; onUpdate: (data
             <h3 className="text-lg font-bold text-gray-800 border-b pb-2">Worker Settings</h3>
             <div className="flex justify-between items-center">
                 <label className={commonLabelClasses}>Priority</label>
-                <input type="number" value={data.priority} onChange={e => onUpdate({ ...data, priority: parseInt(e.target.value) })} className={`${commonInputClasses} w-24`} />
+                <input type="number" value={data.priority || 0} onChange={e => onUpdate({ ...data, priority: parseInt(e.target.value) || 0 })} className={`${commonInputClasses} w-24`} />
             </div>
 
             <CollapsibleSection title="Detection Rules" defaultOpen>
                 <div className="space-y-4">
                     <div className="flex items-center gap-2 mb-2 p-3 bg-slate-50 rounded border border-slate-200">
                         <span className="text-sm text-gray-700 font-medium">Match:</span>
-                        <select value={data.detectionLogic} onChange={e => onUpdate({ ...data, detectionLogic: e.target.value as 'and' | 'or' })} className={`${commonInputClasses} w-32 border-gray-300`}>
+                        <select value={data.detectionLogic || 'and'} onChange={e => onUpdate({ ...data, detectionLogic: e.target.value as 'and' | 'or' })} className={`${commonInputClasses} w-32 border-gray-300`}>
                             <option value="and">ALL</option>
                             <option value="or">ANY</option>
                         </select>
                         <span className="text-sm text-gray-700">of the following rules:</span>
                     </div>
 
-                    {data.detectionRules.map((rule, index) => (
+                    {(data.detectionRules || []).map((rule, index) => (
                         <div key={rule.id} className="p-4 border border-slate-200 bg-white rounded-lg shadow-sm space-y-4 relative group transition-all hover:border-blue-300">
 
                             <div className="flex justify-between items-center border-b border-slate-100 pb-2 mb-2">

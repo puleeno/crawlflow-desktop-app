@@ -13,7 +13,7 @@ const ProcessorNode: React.FC<CustomNodeProps<ProcessorNodeData>> = ({ data, sel
   const renderSummary = () => {
     switch (data.processorType) {
       case 'save-to-database':
-        return `Table: ${settings?.tableName || 'N/A'}`;
+        return `Table: ${settings?.tableName || 'N/A'} (${settings?.conflictStrategy || settings?.strategy || 'insert'})`;
 
       case 'send-to-api': {
         const url = (settings?.endpointUrl || '').replace(/^https?:\/\//, '');
@@ -41,9 +41,6 @@ const ProcessorNode: React.FC<CustomNodeProps<ProcessorNodeData>> = ({ data, sel
 
       case 'rust-limit':
         return `Limit: ${settings?.count ?? 'N/A'} (offset: ${settings?.offset ?? 0})`;
-
-      case 'save-to-database':
-        return `Strategy: ${settings?.strategy || 'insert'}`;
 
       default:
         return settings?.processorType
