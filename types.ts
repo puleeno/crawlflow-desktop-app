@@ -148,6 +148,29 @@ export interface RepositoryNodeData {
   // This node serves as a structural element and may not need specific data.
 }
 
+export interface UrlPattern {
+  enabled: boolean;
+  type: 'wildcard' | 'regex' | 'contains' | 'startswith' | 'endswith' | 'always';
+  value: string;
+}
+
+export interface ExtractRule {
+  type: string;
+  value: string;
+  attribute?: string | null;
+}
+
+export interface PreprocessorNodeData {
+  inputType: 'html' | 'csv' | 'json' | 'xml' | 'text';
+  itemSelector?: string;
+  urlPatterns: UrlPattern[];
+  extractRules: ExtractRule[];
+  csvDelimiter?: string;
+  csvHasHeader?: boolean;
+  jsonItemPath?: string;
+  pluginId?: string;
+}
+
 // FIX: Added missing ReceptionNodeData and ReceptionRule types to resolve import errors.
 export interface ReceptionRule {
     id: string;
@@ -337,6 +360,7 @@ export type NodeData =
     | ClickNodeData 
     | LoopNodeData 
     | RepositoryNodeData 
+    | PreprocessorNodeData 
     | ReceptionNodeData 
     | WorkerNodeData 
     | HTMLDataExtractorNodeData 

@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Node, Edge } from 'reactflow';
-import type { NodeData, ClickNodeData, LoopNodeData, StartNodeData, DataSourceType, WorkerNodeData, HTMLDataExtractorNodeData, ProcessorNodeData, CSVExtractorNodeData, JSONExtractorNodeData, XMLExtractorNodeData, MySQLExtractorNodeData, ShapeNodeData, ShapeType } from '../types';
+import type { NodeData, ClickNodeData, LoopNodeData, StartNodeData, DataSourceType, WorkerNodeData, HTMLDataExtractorNodeData, ProcessorNodeData, PreprocessorNodeData, CSVExtractorNodeData, JSONExtractorNodeData, XMLExtractorNodeData, MySQLExtractorNodeData, ShapeNodeData, ShapeType } from '../types';
 import {
   CursorArrowRaysIcon,
   DocumentMagnifyingGlassIcon,
@@ -14,6 +14,7 @@ import {
   Cog6ToothIcon,
   XMarkIcon,
   FlagIcon,
+  FunnelIcon,
   HandIcon,
   SquareIcon,
   CircleIcon,
@@ -289,6 +290,19 @@ const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onCl
     handleAddNode('start', data, null);
   }
 
+  const addPreprocessorNode = () => {
+    const data: PreprocessorNodeData = {
+      inputType: 'html',
+      itemSelector: '',
+      urlPatterns: [],
+      extractRules: [],
+      csvDelimiter: ',',
+      csvHasHeader: true,
+      jsonItemPath: '',
+    };
+    handleAddNode('preprocessor', data, selectedNode);
+  }
+
   const renderContent = () => {
     if (!selectedNode) {
       return (
@@ -495,7 +509,27 @@ const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onCl
       )
     }
 
-    return null; // For start nodes, etc., show nothing.
+    if (selectedNode.type === 'start') {
+      return (
+        <div>
+          <h2 className="text-xl font-bold text-gray-800 border-b pb-2">Data Preprocessing</h2>
+          <p className="text-sm text-gray-600 mt-2 mb-4">
+            Add a Preprocessor to extract items (URLs, records) from raw data before storing in the repository.
+          </p>
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={addPreprocessorNode}
+              className="flex items-center gap-3 p-3 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-all duration-200 shadow-md transform hover:scale-105"
+            >
+              <FunnelIcon />
+              <span className="font-semibold">Add Preprocessor</span>
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    return null; // For other node types, show nothing.
   }
 
   return (

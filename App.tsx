@@ -35,6 +35,7 @@ import RepositoryNode from './components/nodes/RepositoryNode';
 import FilterNode from './components/nodes/FilterNode';
 import HTMLDataExtractorNode, { CSVExtractorNode, JSONExtractorNode, XMLExtractorNode, MySQLExtractorNode } from './components/nodes/DataMappingNode';
 import ProcessorNode from './components/nodes/ProcessorNode';
+import PreprocessorNode from './components/nodes/PreprocessorNode';
 import CompletionNode from './components/nodes/CompletionNode';
 import ShapeNode from './components/nodes/ShapeNode';
 import { Bars3Icon, Cog6ToothIcon, HomeIcon, PlusIcon, PlayIcon, StopIcon, PauseIcon, TableCellsIcon } from './components/icons';
@@ -370,6 +371,16 @@ const App: React.FC = () => {
       return;
     }
 
+    if (sourceNode?.type === 'start' && targetNode?.type !== 'preprocessor' && targetNode?.type !== 'repository') {
+      console.warn("Connection prevented: Data Source can only connect to a Preprocessor or Repository node.");
+      return;
+    }
+
+    if (sourceNode?.type === 'preprocessor' && targetNode?.type !== 'repository') {
+      console.warn("Connection prevented: Preprocessor can only connect to a Repository node.");
+      return;
+    }
+
     setEdges((eds) => addEdge(params, eds));
   }, [nodes, setEdges]);
 
@@ -475,6 +486,50 @@ const App: React.FC = () => {
         setEdges((eds) => addEdge(startToRepoEdge, eds));
       }
 
+      return;
+    }
+
+    // Preprocessor Node Logic
+    if (type === 'preprocessor' && sourceNode?.type === 'start') {
+      const preprocessorNodes = nodes.filter(n => n.type === 'preprocessor');
+      const newNodeId = getId();
+      const startX = sourceNode.position.x;
+      const startY = sourceNode.position.y;
+      const newNode: Node = {
+        id: newNodeId,
+        type: 'preprocessor',
+        position: {
+          x: startX,
+          y: startY + NODE_V_SPACING * 0.6,
+        },
+        data,
+      };
+
+      // Remove old start → repository edge, add start → preprocessor and preprocessor → repository
+      const oldStartEdge = edges.find(e =>
+        e.source === sourceNode.id && nodes.some(n => n.id === e.target && n.type === 'repository')
+      );
+
+      setNodes((nds) => nds.concat(newNode));
+      setEdges((eds) => {
+        let updated = eds;
+        if (oldStartEdge) {
+          updated = updated.filter(e => e.id !== oldStartEdge.id);
+        }
+        updated = addEdge({
+          id: `e-${sourceNode.id}-${newNodeId}`,
+          source: sourceNode.id,
+          target: newNodeId,
+          animated: true,
+        }, updated);
+        updated = addEdge({
+          id: `e-${newNodeId}-${REPOSITORY_NODE_ID}`,
+          source: newNodeId,
+          target: REPOSITORY_NODE_ID,
+          animated: true,
+        }, updated);
+        return updated;
+      });
       return;
     }
 
@@ -806,8 +861,9 @@ const App: React.FC = () => {
     'csv-extractor': (props) => <CSVExtractorNode {...props} />,
     'json-extractor': (props) => <JSONExtractorNode {...props} />,
     'xml-extractor': (props) => <XMLExtractorNode {...props} />,
-    'mysql-extractor': (props) => <MySQLExtractorNode {...props} />,
-    processor: (props) => <ProcessorNode {...props} />,
+  'mysql-extractor':  (props) => <MySQLExtractorNode {...props} />,
+  preprocessor:       (props) => <PreprocessorNode {...props} />,
+  processor:          (props) => <ProcessorNode {...props} />,
     completion: (props) => <CompletionNode {...props} />,
     shape: (props) => <ShapeNode {...props} />,
   }), []);
