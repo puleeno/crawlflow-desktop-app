@@ -9,6 +9,7 @@ mod progress;
 mod python_plugins;
 mod request_clients;
 mod services;
+pub mod settings_engine;
 pub mod spreadsheet;
 mod system_service;
 
@@ -118,6 +119,11 @@ pub fn run() {
             commands::uninstall_system_service_cmd,
             commands::start_system_service_cmd,
             commands::stop_system_service_cmd,
+            // Settings engine
+            commands::list_processor_settings_schemas,
+            commands::get_processor_settings_schema,
+            commands::validate_settings_values,
+            commands::get_settings_defaults,
         ])
         .setup(|app| {
             let user_dir = get_user_plugins_dir();

@@ -809,3 +809,32 @@ pub async fn install_marketplace_item(
 
     Ok(base_dir.to_string_lossy().to_string())
 }
+
+// ── Settings Engine Commands ──────────────────────────────
+
+#[tauri::command]
+pub fn list_processor_settings_schemas() -> std::collections::HashMap<String, crate::settings_engine::SettingsSchema> {
+    crate::settings_engine::list_processor_schemas()
+}
+
+#[tauri::command]
+pub fn get_processor_settings_schema(processor_id: String) -> Option<crate::settings_engine::SettingsSchema> {
+    crate::settings_engine::get_processor_schema(&processor_id)
+}
+
+#[tauri::command]
+pub fn validate_settings_values(
+    processor_id: String,
+    values: serde_json::Value,
+) -> Result<Vec<crate::settings_engine::ValidationError>, String> {
+    let schema = crate::settings_engine::get_processor_schema(&processor_id)
+        .ok_or_else(|| format!("Processor '{}' not found", processor_id))?;
+    Ok(schema.validate(&values))
+}
+
+#[tauri::command]
+pub fn get_settings_defaults(processor_id: String) -> Result<serde_json::Value, String> {
+    let schema = crate::settings_engine::get_processor_schema(&processor_id)
+        .ok_or_else(|| format!("Processor '{}' not found", processor_id))?;
+    Ok(schema.apply_defaults())
+}

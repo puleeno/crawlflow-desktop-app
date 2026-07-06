@@ -172,7 +172,7 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
         ),
     );
 
-    let lm = SimpleLogger::as_log_manager();
+    let lm = Arc::new(SimpleLogger::as_log_manager());
     let mut cycle = 0u64;
 
     while !shutdown.load(Ordering::Relaxed) {
