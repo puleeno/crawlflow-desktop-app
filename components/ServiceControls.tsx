@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { PlayIcon, StopIcon, PauseIcon } from './icons';
+import type { Node, Edge } from 'reactflow';
 
 interface ServiceControlsProps {
   projectId: string;
   onOpenLogs: () => void;
+  nodes?: Node[];
+  edges?: Edge[];
 }
 
-const ServiceControls: React.FC<ServiceControlsProps> = ({ projectId, onOpenLogs }) => {
+const ServiceControls: React.FC<ServiceControlsProps> = ({ projectId, onOpenLogs, nodes, edges }) => {
   const [status, setStatus] = useState<string>('stopped');
   const [cycleCount, setCycleCount] = useState<number>(0);
   const [lastRunAt, setLastRunAt] = useState<string>('');
@@ -55,12 +58,12 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({ projectId, onOpenLogs
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('start_project_service_cmd', {
         projectId,
-        nodes: [],
-        edges: [],
+        nodes: nodes ?? [],
+        edges: edges ?? [],
         settings: { intervalSeconds: intervalSec },
       });
     } catch (e: any) { console.error(e); }
-  }, [projectId, intervalSec]);
+  }, [projectId, intervalSec, nodes, edges]);
 
   const stop = useCallback(async () => {
     try {

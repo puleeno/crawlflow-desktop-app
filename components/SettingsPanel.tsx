@@ -1749,6 +1749,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 <ServiceControls
                     projectId={props.projectId}
                     onOpenLogs={() => props.onOpenLogs?.()}
+                    nodes={nodes}
+                    edges={edges}
                 />
             )}
 

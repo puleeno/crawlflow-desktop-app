@@ -2,10 +2,24 @@ use crate::logs::{LogManager, ServiceStatusPayload};
 use crate::pipeline::PipelineConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
+
+fn project_db_path(project_id: &str) -> PathBuf {
+    let data_dir = dirs_next::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("crawlflow")
+        .join("projects");
+    let path = data_dir.join(format!("project_{}.db", project_id));
+    // Ensure the directory exists
+    if let Err(e) = std::fs::create_dir_all(&data_dir) {
+        log::error!("Failed to create projects directory: {}", e);
+    }
+    path
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -162,14 +176,30 @@ impl ServiceManager {
         let app = self.app();
         let lm = self.lm();
 
+        let nodes_count = nodes.len();
+        let edges_count = edges.len();
         let deser_nodes: Vec<crate::pipeline::PipelineNode> = nodes
             .into_iter()
-            .filter_map(|v| serde_json::from_value(v).ok())
+            .filter_map(|v| {
+                let result: Option<crate::pipeline::PipelineNode> = serde_json::from_value(v.clone()).ok();
+                if result.is_none() {
+                    log::warn!("Failed to deserialize node: {:?}", v);
+                }
+                result
+            })
             .collect();
         let deser_edges: Vec<crate::pipeline::PipelineEdge> = edges
             .into_iter()
-            .filter_map(|v| serde_json::from_value(v).ok())
+            .filter_map(|v| {
+                let result: Option<crate::pipeline::PipelineEdge> = serde_json::from_value(v.clone()).ok();
+                if result.is_none() {
+                    log::warn!("Failed to deserialize edge: {:?}", v);
+                }
+                result
+            })
             .collect();
+        log::info!("start_service: received {} nodes, deserialized {} nodes; received {} edges, deserialized {} edges",
+            nodes_count, deser_nodes.len(), edges_count, deser_edges.len());
 
         let pcfg = PipelineConfig {
             nodes: deser_nodes,
@@ -235,25 +265,24 @@ impl ServiceManager {
             Self::emit_st(app, project_id, "running", cc,
                 &started_at.read().unwrap(), &last_run_at.read().unwrap(), &last_error.read().unwrap());
 
-            let result = {
-                let mode = config.settings.get("executionMode")
-                    .and_then(|v| v.as_str())
-                    .map(|s| match s {
-                        "parallel" => crate::pipeline::ExecutionMode::Parallel,
-                        _ => crate::pipeline::ExecutionMode::Queue,
-                    })
-                    .unwrap_or_default();
-                crate::pipeline::execute_pipeline_with_mode(&config, mode, lm, project_id)
-            };
+            let db_path = project_db_path(project_id);
+            let result = crate::pipeline::execute_repository_pipeline(
+                &config,
+                &db_path,
+                lm,
+                project_id,
+                None,
+            );
 
             if result.success {
                 lm.info(project_id, "system",
-                    &format!("Cycle #{} complete: {} steps, {} final items",
-                        cc, result.steps.len(), result.final_output.len()));
+                    &format!("Cycle #{} complete: ingested {}, matched {}, processed {}, failed {}",
+                        cc, result.ingested, result.matched, result.processed, result.failed));
                 *last_error.write().unwrap() = None;
             } else {
                 let err = result.error.unwrap_or_else(|| "Unknown error".into());
-                lm.error(project_id, "system", &format!("Cycle #{} failed: {}", cc, err));
+                lm.error(project_id, "system", &format!("Cycle #{} failed (phase: {}): {}",
+                    cc, result.phase, err));
                 *last_error.write().unwrap() = Some(err.clone());
                 *status.write().unwrap() = ServiceStatus::Error(err.clone());
             }
