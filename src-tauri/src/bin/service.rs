@@ -279,19 +279,37 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
         );
 
         // Check if desktop app has this project open for editing
-        let is_editing = rusqlite::Connection::open(&master_db)
-            .map(|conn| is_project_being_edited(&conn, &project_id))
+        let conn_result = rusqlite::Connection::open(&master_db);
+        let is_editing = conn_result
+            .as_ref()
+            .map(|conn| is_project_being_edited(conn, &project_id))
             .unwrap_or(false);
 
-        if is_editing {
+        // Check if user requested a stop/pause via the desktop app UI
+        let is_paused_by_user = conn_result
+            .as_ref()
+            .map(|conn| {
+                conn.query_row(
+                    "SELECT service_control FROM project_runtime WHERE project_id = ?1",
+                    rusqlite::params![&project_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap_or_else(|_| "run".to_string())
+                    == "paused"
+            })
+            .unwrap_or(false);
+
+        if is_editing || is_paused_by_user {
+            let reason = if is_editing {
+                "open in desktop app"
+            } else {
+                "paused by user"
+            };
             SimpleLogger::log_msg(
                 &project_id,
                 "info",
                 "service",
-                &format!(
-                    "Project '{}' is open in the desktop app. Skipping cycle.",
-                    proj.name
-                ),
+                &format!("Project '{}' is {}. Skipping cycle.", proj.name, reason),
             );
             for _ in 0..interval_secs {
                 if shutdown.load(Ordering::Relaxed) {

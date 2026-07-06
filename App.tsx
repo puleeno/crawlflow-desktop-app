@@ -174,7 +174,7 @@ const App: React.FC = () => {
   const [isLogPanelOpen, setLogPanelOpen] = useState(false);
   const [serviceStatus, setServiceStatus] = useState<string>('stopped');
   const [serviceCycleCount, setServiceCycleCount] = useState(0);
-  const isRunning = serviceStatus === 'running';
+  const isRunning = serviceStatus === 'running' || serviceStatus === 'idle';
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
   // Auto-save project metadata (name, status) to master DB with debounce
@@ -202,15 +202,16 @@ const App: React.FC = () => {
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   }, [projectSettings, currentProjectId]);
 
-  // Subscribe to service status events
+  // Poll background service status from SQLite every 5s
+  // (background service doesn't emit Tauri events, so polling is required)
   useEffect(() => {
     if (!currentProjectId) {
       setServiceStatus('stopped');
       setServiceCycleCount(0);
       return;
     }
-    let unlisten: (() => void) | null = null;
-    const setup = async () => {
+
+    const fetchStatus = async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         const info: any = await invoke('get_service_status_cmd', { projectId: currentProjectId });
@@ -221,31 +222,43 @@ const App: React.FC = () => {
           setServiceStatus('stopped');
           setServiceCycleCount(0);
         }
+      } catch (_) { /* not in tauri */ }
+    };
 
+    fetchStatus(); // immediate
+    const timer = setInterval(fetchStatus, 5000);
+
+    // Also keep Tauri event subscription for in-app executor (if ever used)
+    let unlisten: (() => void) | null = null;
+    const setupEvent = async () => {
+      try {
         const { listen } = await import('@tauri-apps/api/event');
         unlisten = await listen<any>(`service-status:${currentProjectId}`, (event) => {
           const p = event.payload;
           setServiceStatus(p.status || 'stopped');
           setServiceCycleCount(p.cycle_count || 0);
         });
-      } catch (e) { /* not in tauri */ }
+      } catch (_) { /* ignore */ }
     };
-    setup();
-    return () => { if (unlisten) unlisten(); };
+    setupEvent();
+
+    return () => {
+      clearInterval(timer);
+      if (unlisten) unlisten();
+    };
   }, [currentProjectId]);
 
-  // Manage project editing lock file
+  // Manage project editing lock in SQLite
   useEffect(() => {
     if (!currentProjectId) return;
 
     const manageLock = async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        if (serviceStatus !== 'running') {
-          // Lock for editing
+        const isServiceRunning = serviceStatus === 'running' || serviceStatus === 'idle';
+        if (!isServiceRunning) {
           await invoke('lock_project_edit_cmd', { projectId: currentProjectId });
         } else {
-          // Unlock since it's running
           await invoke('unlock_project_edit_cmd', { projectId: currentProjectId });
         }
       } catch (e) {
@@ -255,13 +268,12 @@ const App: React.FC = () => {
 
     manageLock();
 
-    // Clean up: unlock project when unmounting or switching projects
     return () => {
       const cleanupLock = async () => {
         try {
           const { invoke } = await import('@tauri-apps/api/core');
           await invoke('unlock_project_edit_cmd', { projectId: currentProjectId });
-        } catch (e) { /* ignore */ }
+        } catch (_) { /* ignore */ }
       };
       cleanupLock();
     };

@@ -964,11 +964,23 @@ pub fn set_app_setting_cmd(key: String, value: String) -> Result<(), String> {
     Ok(())
 }
 
-fn get_lock_file_path(project_id: &str) -> PathBuf {
-    dirs_next::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.crawlflow.desktop")
-        .join(format!("{}.edit", project_id))
+fn ensure_runtime_table(conn: &rusqlite::Connection) {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS project_runtime (
+            project_id    TEXT PRIMARY KEY,
+            runner_status TEXT NOT NULL DEFAULT 'stopped',
+            runner_pid    INTEGER,
+            runner_type   TEXT DEFAULT 'service',
+            service_control TEXT NOT NULL DEFAULT 'run',
+            edit_pid      INTEGER,
+            cycle_count   INTEGER NOT NULL DEFAULT 0,
+            last_run_at   TEXT,
+            last_error    TEXT,
+            updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        [],
+    )
+    .ok();
 }
 
 #[tauri::command]
@@ -978,30 +990,15 @@ pub fn lock_project_edit_cmd(project_id: String) -> Result<(), String> {
         let _ = std::fs::create_dir_all(parent);
     }
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS project_runtime (
-            project_id TEXT PRIMARY KEY,
-            runner_status TEXT NOT NULL DEFAULT 'stopped',
-            runner_pid INTEGER,
-            runner_type TEXT DEFAULT 'app',
-            edit_pid INTEGER,
-            cycle_count INTEGER NOT NULL DEFAULT 0,
-            last_run_at TEXT,
-            last_error TEXT,
-            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )",
-        [],
-    )
-    .ok();
+    ensure_runtime_table(&conn);
     let pid = std::process::id() as i64;
     conn.execute(
-        "INSERT INTO project_runtime (project_id, edit_pid, runner_status, updated_at)
-         VALUES (?1, ?2, 'stopped', datetime('now'))
+        "INSERT INTO project_runtime (project_id, edit_pid, updated_at)
+         VALUES (?1, ?2, datetime('now'))
          ON CONFLICT(project_id) DO UPDATE SET edit_pid = ?2, updated_at = datetime('now')",
         rusqlite::params![project_id, pid],
     )
     .map_err(|e| e.to_string())?;
-    log::info!("Locked project {} for editing (PID: {})", project_id, pid);
     Ok(())
 }
 
@@ -1013,6 +1010,39 @@ pub fn unlock_project_edit_cmd(project_id: String) -> Result<(), String> {
         "UPDATE project_runtime SET edit_pid = NULL, updated_at = datetime('now') WHERE project_id = ?1",
         rusqlite::params![project_id],
     ).ok();
-    log::info!("Unlocked project {} from editing", project_id);
+    Ok(())
+}
+
+/// Tell the background service to run this project (service_control = 'run')
+#[tauri::command]
+pub fn request_project_run_cmd(project_id: String) -> Result<(), String> {
+    let db_path = master_db_path();
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+    ensure_runtime_table(&conn);
+    conn.execute(
+        "INSERT INTO project_runtime (project_id, service_control, updated_at)
+         VALUES (?1, 'run', datetime('now'))
+         ON CONFLICT(project_id) DO UPDATE SET service_control = 'run', updated_at = datetime('now')",
+        rusqlite::params![project_id],
+    ).map_err(|e| e.to_string())?;
+    log::info!("Requested run for project {}", project_id);
+    Ok(())
+}
+
+/// Tell the background service to pause/skip this project (service_control = 'paused')
+#[tauri::command]
+pub fn request_project_stop_cmd(project_id: String) -> Result<(), String> {
+    let db_path = master_db_path();
+    let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO project_runtime (project_id, service_control, runner_status, updated_at)
+         VALUES (?1, 'paused', 'stopped', datetime('now'))
+         ON CONFLICT(project_id) DO UPDATE SET service_control = 'paused', runner_status = 'stopped', updated_at = datetime('now')",
+        rusqlite::params![project_id],
+    ).map_err(|e| e.to_string())?;
+    log::info!("Requested stop for project {}", project_id);
     Ok(())
 }

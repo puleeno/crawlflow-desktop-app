@@ -1,13 +1,21 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { PlayIcon, StopIcon, PauseIcon } from './icons';
+/**
+ * ServiceControls — communicates exclusively with the background service via SQLite.
+ * Status is polled every POLL_INTERVAL_MS from `get_service_status_cmd`.
+ * Start/Stop write to project_runtime via request_project_run/stop_cmd.
+ * The background `crawlflow-service` binary is the ONLY executor.
+ */
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { PlayIcon, StopIcon } from './icons';
 import type { Node, Edge } from 'reactflow';
+
+const POLL_INTERVAL_MS = 4000;
 
 interface ServiceControlsProps {
   projectId: string;
   onOpenLogs: () => void;
   nodes?: Node[];
   edges?: Edge[];
-  /** When provided by App.tsx (the single source of truth), skip internal subscription */
+  /** Provided by App.tsx as the single source of truth (already being polled) */
   externalStatus?: string;
   externalCycleCount?: number;
 }
@@ -15,130 +23,82 @@ interface ServiceControlsProps {
 const ServiceControls: React.FC<ServiceControlsProps> = ({
   projectId,
   onOpenLogs,
-  nodes,
-  edges,
   externalStatus,
   externalCycleCount,
 }) => {
-  // Only maintain local state for fields not covered by the external source
+  const [localStatus, setLocalStatus] = useState<string>('stopped');
+  const [localCycleCount, setLocalCycleCount] = useState<number>(0);
   const [lastRunAt, setLastRunAt] = useState<string>('');
   const [lastError, setLastError] = useState<string | null>(null);
   const [intervalSec, setIntervalSec] = useState<number>(60);
+  const [busy, setBusy] = useState(false);
 
-  // If App.tsx provides status, use it directly (no duplicate subscription needed).
-  // Otherwise fall back to local state (standalone usage).
-  const [localStatus, setLocalStatus] = useState<string>('stopped');
-  const [localCycleCount, setLocalCycleCount] = useState<number>(0);
-
+  // Use external status when provided (App.tsx polls), otherwise manage locally
   const status = externalStatus ?? localStatus;
   const cycleCount = externalCycleCount ?? localCycleCount;
 
-  // Fetch ancillary info (lastRunAt, error, interval) from backend once
-  useEffect(() => {
-    const fetchStatus = async () => {
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const info: any = await invoke('get_service_status_cmd', { projectId });
-        if (info) {
-          // Only update local status if no external status provided
-          if (externalStatus === undefined) {
-            setLocalStatus(info.status ?? 'stopped');
-            setLocalCycleCount(info.cycle_count ?? 0);
-          }
-          setLastRunAt(info.last_run_at ?? '');
-          setLastError(info.last_error ?? null);
-          setIntervalSec(info.interval_seconds ?? 60);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const poll = useCallback(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const info: any = await invoke('get_service_status_cmd', { projectId });
+      if (info) {
+        if (externalStatus === undefined) {
+          setLocalStatus(info.status ?? 'stopped');
+          setLocalCycleCount(info.cycle_count ?? 0);
         }
-      } catch (e) { /* not in tauri */ }
-    };
-    fetchStatus();
-  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Only subscribe internally when there is no external status feed
-  useEffect(() => {
-    if (externalStatus !== undefined) return; // App.tsx already handles the subscription
-
-    const unlistenRef: { current: (() => void) | null } = { current: null };
-    let cancelled = false;
-    const setup = async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        const unsub = await listen<any>(`service-status:${projectId}`, (event) => {
-          const p = event.payload;
-          setLocalStatus(p.status || 'stopped');
-          setLocalCycleCount(p.cycle_count || 0);
-          setLastRunAt(p.last_run_at || '');
-          setLastError(p.last_error || null);
-        });
-        if (cancelled) { unsub(); } else { unlistenRef.current = unsub; }
-      } catch (e) { /* ignore */ }
-    };
-    setup();
-    return () => { cancelled = true; unlistenRef.current?.(); };
+        setLastRunAt(info.last_run_at ?? '');
+        setLastError(info.last_error ?? null);
+        setIntervalSec(info.interval_seconds ?? 60);
+      }
+    } catch (_) { /* not in tauri */ }
   }, [projectId, externalStatus]);
 
-  // Keep lastRunAt / lastError in sync from external events even when using external status
+  // When using external status, still poll for ancillary info (lastRunAt, error)
+  // When standalone, poll for everything
   useEffect(() => {
-    if (externalStatus === undefined) return; // handled above
+    poll(); // immediate
+    pollRef.current = setInterval(poll, POLL_INTERVAL_MS);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [poll]);
 
-    const unlistenRef: { current: (() => void) | null } = { current: null };
-    let cancelled = false;
-    const setup = async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event');
-        const unsub = await listen<any>(`service-status:${projectId}`, (event) => {
-          const p = event.payload;
-          setLastRunAt(p.last_run_at || '');
-          setLastError(p.last_error || null);
-        });
-        if (cancelled) { unsub(); } else { unlistenRef.current = unsub; }
-      } catch (e) { /* ignore */ }
-    };
-    setup();
-    return () => { cancelled = true; unlistenRef.current?.(); };
-  }, [projectId, externalStatus]);
-
-  const start = useCallback(async () => {
+  const requestStart = useCallback(async () => {
+    setBusy(true);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('start_project_service_cmd', {
-        projectId,
-        nodes: nodes ?? [],
-        edges: edges ?? [],
-        settings: { intervalSeconds: intervalSec },
-      });
+      await invoke('request_project_run_cmd', { projectId });
+      // Optimistically show pending while we wait for background service first cycle
+      if (externalStatus === undefined) setLocalStatus('idle');
+      // Force an immediate poll after a short delay
+      setTimeout(poll, 500);
     } catch (e: any) { console.error(e); }
-  }, [projectId, intervalSec, nodes, edges]);
+    finally { setBusy(false); }
+  }, [projectId, externalStatus, poll]);
 
-  const stop = useCallback(async () => {
+  const requestStop = useCallback(async () => {
+    setBusy(true);
     try {
       const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('stop_project_service_cmd', { projectId });
+      await invoke('request_project_stop_cmd', { projectId });
+      if (externalStatus === undefined) setLocalStatus('stopped');
+      setTimeout(poll, 500);
     } catch (e: any) { console.error(e); }
-  }, [projectId]);
+    finally { setBusy(false); }
+  }, [projectId, externalStatus, poll]);
 
-  const pause = useCallback(async () => {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('pause_project_service_cmd', { projectId });
-    } catch (e: any) { console.error(e); }
-  }, [projectId]);
+  const isRunning  = status === 'running';
+  const isIdle     = status === 'idle';
+  const isError    = status?.startsWith('error');
+  const isStopped  = status === 'stopped' || status === 'paused';
+  const isPaused   = status === 'paused';
 
-  const resume = useCallback(async () => {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('resume_project_service_cmd', { projectId });
-    } catch (e: any) { console.error(e); }
-  }, [projectId]);
+  // Running or idle both mean background service is active for this project
+  const serviceActive = isRunning || isIdle;
 
-  const isRunning = status === 'running';
-  const isPaused = status === 'paused';
-  const isError = status?.startsWith('error');
-  const isStopped = !isRunning && !isPaused && !isError;
-
-  const statusDot = isRunning ? 'bg-green-500' : isPaused ? 'bg-amber-500' : isError ? 'bg-red-500' : 'bg-gray-400';
-  const statusBg = isRunning ? 'bg-green-50 border-green-200' : isPaused ? 'bg-amber-50 border-amber-200' : isError ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200';
-  const statusLabel = isRunning ? 'Running' : isPaused ? 'Paused' : isError ? 'Error' : 'Stopped';
+  const statusDot   = isRunning ? 'bg-green-500' : isIdle ? 'bg-blue-400' : isError ? 'bg-red-500' : 'bg-gray-400';
+  const statusBg    = isRunning ? 'bg-green-50 border-green-200' : isIdle ? 'bg-blue-50 border-blue-200' : isError ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200';
+  const statusLabel = isRunning ? 'Running' : isIdle ? 'Idle' : isError ? 'Error' : isPaused ? 'Paused' : 'Stopped';
 
   return (
     <div className={`rounded-xl border p-4 ${statusBg}`}>
@@ -146,40 +106,29 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({
         <div className="flex items-center gap-2">
           <span className={`inline-block w-3 h-3 rounded-full ${statusDot} ${isRunning ? 'animate-pulse' : ''}`} />
           <span className="font-semibold text-gray-800">Service</span>
-          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isRunning ? 'bg-green-200 text-green-800' :
-              isPaused ? 'bg-amber-200 text-amber-800' :
-                isError ? 'bg-red-200 text-red-800' :
-                  'bg-gray-200 text-gray-700'
-            }`}>{statusLabel}</span>
+          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+            isRunning       ? 'bg-green-200 text-green-800' :
+            isIdle          ? 'bg-blue-200 text-blue-800' :
+            isError         ? 'bg-red-200 text-red-800' :
+                              'bg-gray-200 text-gray-700'
+          }`}>{statusLabel}</span>
         </div>
         <div className="flex items-center gap-1.5">
           {isStopped && (
-            <button onClick={start} className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors">
+            <button
+              onClick={requestStart}
+              disabled={busy}
+              className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded-lg transition-colors"
+            >
               <PlayIcon size={14} /> Start
             </button>
           )}
-          {isRunning && (
-            <>
-              <button onClick={pause} className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 rounded-lg transition-colors">
-                <PauseIcon size={14} /> Pause
-              </button>
-              <button onClick={stop} className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-red-700 bg-red-100 hover:bg-red-200 rounded-lg transition-colors">
-                <StopIcon size={14} /> Stop
-              </button>
-            </>
-          )}
-          {isPaused && (
-            <>
-              <button onClick={resume} className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-green-700 bg-green-100 hover:bg-green-200 rounded-lg transition-colors">
-                <PlayIcon size={14} /> Resume
-              </button>
-              <button onClick={stop} className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-red-700 bg-red-100 hover:bg-red-200 rounded-lg transition-colors">
-                <StopIcon size={14} /> Stop
-              </button>
-            </>
-          )}
-          {isError && (
-            <button onClick={stop} className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-red-700 bg-red-100 hover:bg-red-200 rounded-lg transition-colors">
+          {serviceActive && (
+            <button
+              onClick={requestStop}
+              disabled={busy}
+              className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-red-700 bg-red-100 hover:bg-red-200 disabled:opacity-50 rounded-lg transition-colors"
+            >
               <StopIcon size={14} /> Stop
             </button>
           )}
@@ -194,18 +143,7 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({
         </div>
         <div className="bg-white rounded-lg p-2 border border-slate-200">
           <span className="text-gray-500">Interval</span>
-          <div className="flex items-center gap-1 mt-0.5">
-            <input
-              type="number"
-              min={5}
-              max={86400}
-              value={intervalSec}
-              onChange={e => setIntervalSec(parseInt(e.target.value) || 60)}
-              className="w-16 px-1.5 py-0.5 border border-slate-300 rounded text-xs font-bold text-gray-800"
-              disabled={isRunning || isPaused}
-            />
-            <span className="text-gray-500">s</span>
-          </div>
+          <div className="font-bold text-gray-800 mt-0.5">{intervalSec}s</div>
         </div>
         <div className="bg-white rounded-lg p-2 border border-slate-200">
           <span className="text-gray-500">Last Run</span>
@@ -220,6 +158,10 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({
           {lastError}
         </div>
       )}
+
+      <div className="mt-2 text-xs text-gray-400 text-center">
+        Run by background service · polls every {POLL_INTERVAL_MS / 1000}s
+      </div>
 
       <button
         onClick={onOpenLogs}

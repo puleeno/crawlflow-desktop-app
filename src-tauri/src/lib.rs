@@ -137,6 +137,8 @@ pub fn run() {
             commands::set_app_setting_cmd,
             commands::lock_project_edit_cmd,
             commands::unlock_project_edit_cmd,
+            commands::request_project_run_cmd,
+            commands::request_project_stop_cmd,
         ])
         .setup(|app| {
             let user_dir = get_user_plugins_dir();
