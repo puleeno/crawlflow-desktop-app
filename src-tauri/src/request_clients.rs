@@ -181,8 +181,8 @@ pub fn fetch_chrome_sync(
     let _ = std::fs::create_dir_all(&profile_dir);
 
     let mut cmd = Command::new(&chrome);
+    let headless = profile.headless.unwrap_or(true);
     cmd.args([
-        "--headless",
         "--disable-gpu",
         "--no-sandbox",
         "--disable-dev-shm-usage",
@@ -195,6 +195,10 @@ pub fn fetch_chrome_sync(
         "--no-first-run",
         "--hide-scrollbars",
     ]);
+
+    if headless {
+        cmd.arg("--headless");
+    }
 
     if let Some(args) = &profile.chrome_args {
         for arg in args {
@@ -222,8 +226,9 @@ pub fn fetch_chrome_sync(
     cmd.arg("--dump-dom");
     cmd.arg(url);
 
-    let output = match cmd.output() {
-        Ok(o) => o,
+    let chrome_timeout = Duration::from_secs(profile.timeout_secs.unwrap_or(30));
+    let child = match cmd.spawn() {
+        Ok(c) => c,
         Err(e) => {
             return CrawlResult {
                 url: url.to_string(),
@@ -232,6 +237,35 @@ pub fn fetch_chrome_sync(
                 text: None,
                 extracted: None,
                 error: Some(format!("Chrome launch failed: {}", e)),
+            };
+        }
+    };
+    let pid = child.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let output = match rx.recv_timeout(chrome_timeout) {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => {
+            return CrawlResult {
+                url: url.to_string(),
+                status: 0,
+                html: None,
+                text: None,
+                extracted: None,
+                error: Some(format!("Chrome output error: {}", e)),
+            };
+        }
+        Err(_) => {
+            let _ = Command::new("kill").arg(pid.to_string()).output();
+            return CrawlResult {
+                url: url.to_string(),
+                status: 0,
+                html: None,
+                text: None,
+                extracted: None,
+                error: Some(format!("Chrome timed out after {}s", chrome_timeout.as_secs())),
             };
         }
     };

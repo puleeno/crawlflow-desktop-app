@@ -43,6 +43,7 @@ export interface HttpClientConfig {
   headers?: HeaderPair[];
   chromeArgs?: string[];
   waitForSelector?: string;
+  headless?: boolean;
 }
 
 export interface URLSourceSettings {

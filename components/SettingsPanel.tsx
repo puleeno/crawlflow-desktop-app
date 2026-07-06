@@ -289,6 +289,16 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
                     </div>
                     {config.clientType === 'chrome' && (
                         <>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="checkbox"
+                                    id="chromeHeadless"
+                                    checked={config.headless !== false}
+                                    onChange={e => updateHttpClient({ headless: e.target.checked })}
+                                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <label htmlFor="chromeHeadless" className="text-sm text-gray-700">Headless Mode</label>
+                            </div>
                             <div>
                                 <label className={commonLabelClasses}>Wait for Selector</label>
                                 <input type="text" value={config.waitForSelector ?? ''} onChange={e => updateHttpClient({ waitForSelector: e.target.value || undefined })} className={commonInputClasses} placeholder="e.g., .content-loaded" />

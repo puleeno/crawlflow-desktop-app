@@ -12,6 +12,7 @@ mod tests {
         assert_eq!(p.timeout_secs, Some(30));
         assert!(p.proxy_url.is_none());
         assert!(p.headers.is_none());
+        assert_eq!(p.headless, Some(true));
     }
 
     #[test]
@@ -26,6 +27,7 @@ mod tests {
             chrome_args: Some(vec!["--no-sandbox".into()]),
             wait_for_selector: Some(".loaded".into()),
             extra_nav_args: Some(vec!["--flag".into()]),
+            headless: Some(false),
         };
         let json = serde_json::to_string(&p).unwrap();
         let back: ClientProfile = serde_json::from_str(&json).unwrap();
@@ -35,6 +37,7 @@ mod tests {
         assert_eq!(back.timeout_secs, Some(60));
         assert_eq!(back.profile_dir, Some("/tmp/profiles".into()));
         assert_eq!(back.wait_for_selector, Some(".loaded".into()));
+        assert_eq!(back.headless, Some(false));
     }
 
     #[test]
@@ -159,6 +162,7 @@ pub struct ClientProfile {
     pub chrome_args: Option<Vec<String>>,
     pub wait_for_selector: Option<String>,
     pub extra_nav_args: Option<Vec<String>>,
+    pub headless: Option<bool>,
 }
 
 impl Default for ClientProfile {
@@ -173,6 +177,7 @@ impl Default for ClientProfile {
             chrome_args: None,
             wait_for_selector: None,
             extra_nav_args: None,
+            headless: Some(true),
         }
     }
 }

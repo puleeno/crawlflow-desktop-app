@@ -233,6 +233,7 @@ pub async fn fetch_url(request: CrawlRequest) -> CrawlResult {
             chrome_args: profile.chrome_args,
             wait_for_selector: request.wait_for_selector.clone().or(profile.wait_for_selector),
             extra_nav_args: profile.extra_nav_args,
+            headless: profile.headless,
         };
         return request_clients::fetch_with_client(&request.url, &chrome_profile, request.extract_rules).await;
     }

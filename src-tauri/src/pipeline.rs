@@ -108,6 +108,7 @@ fn extract_client_profile(node_data: &serde_json::Value) -> ClientProfile {
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
 
+            let headless = http_client.get("headless").and_then(|v| v.as_bool());
             return ClientProfile {
                 client_type,
                 user_agent,
@@ -118,6 +119,7 @@ fn extract_client_profile(node_data: &serde_json::Value) -> ClientProfile {
                 chrome_args,
                 wait_for_selector,
                 extra_nav_args: None,
+                headless,
             };
         }
     }

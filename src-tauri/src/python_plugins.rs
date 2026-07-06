@@ -634,6 +634,7 @@ fn py_fetch_with_client(
         chrome_args,
         wait_for_selector: None,
         extra_nav_args: None,
+        headless: Some(true),
     };
 
     let rt = tokio::runtime::Runtime::new()
