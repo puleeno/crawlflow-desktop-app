@@ -279,6 +279,134 @@ pub struct RawItemSaveResult {
     pub skipped: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemsSummary {
+    pub total: i64,
+    pub pending: i64,
+    pub processing: i64,
+    pub done: i64,
+    pub error: i64,
+    pub ignored: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemsQuery {
+    pub status: Option<String>,
+    pub worker_id: Option<String>,
+    pub search: Option<String>,
+    pub matched: Option<i32>,
+    pub limit: i64,
+    pub offset: i64,
+    pub sort_by: Option<String>,
+    pub sort_dir: Option<String>,
+}
+
+pub struct PaginatedItems {
+    pub items: Vec<RawItem>,
+    pub total: i64,
+}
+
+impl RawItemRepository {
+    /// Query items with filter by status, search text, and pagination
+    pub fn query_items(&self, query: &ItemsQuery) -> Result<PaginatedItems, String> {
+        let sort_by = query.sort_by.as_deref().unwrap_or("created_at");
+        let sort_dir = query.sort_dir.as_deref().unwrap_or("DESC");
+        let order_clause = format!("ORDER BY {} {}", sort_by, sort_dir);
+
+        // Build WHERE clause and params as string values
+        let mut clauses: Vec<String> = Vec::new();
+        let mut params: Vec<String> = Vec::new();
+
+        if let Some(ref status) = query.status {
+            clauses.push(format!("status = ?{}", params.len() + 1));
+            params.push(status.clone());
+        }
+        if let Some(ref worker_id) = query.worker_id {
+            clauses.push(format!("worker_id = ?{}", params.len() + 1));
+            params.push(worker_id.clone());
+        }
+        if let Some(matched) = query.matched {
+            clauses.push(format!("matched = ?{}", params.len() + 1));
+            params.push(matched.to_string());
+        }
+        if let Some(ref search) = query.search {
+            let pattern = format!("%{}%", search);
+            let n = params.len();
+            clauses.push(format!(
+                "(source_url LIKE ?{} OR extracted_url LIKE ?{} OR raw_content LIKE ?{})",
+                n + 1, n + 2, n + 3
+            ));
+            params.push(pattern.clone());
+            params.push(pattern.clone());
+            params.push(pattern);
+        }
+
+        let where_clause = if clauses.is_empty() { String::new() } else { format!("WHERE {}", clauses.join(" AND ")) };
+
+        // Count
+        let count_sql = format!("SELECT COUNT(*) FROM raw_items {}", where_clause);
+        let total: i64 = self.query_row_str(&count_sql, &params)?;
+
+        // Query with limit/offset appended
+        params.push(query.limit.to_string());
+        params.push(query.offset.to_string());
+        let query_sql = format!(
+            "SELECT id, source_url, item_type, item_hash, raw_content, extracted_url,
+                    dup_count, priority, worker_id, matched, status, created_at, updated_at
+             FROM raw_items {} {} LIMIT ?{} OFFSET ?{}",
+            where_clause, order_clause, params.len() - 1, params.len()
+        );
+
+        let items = self.query_items_raw(&query_sql, &params)?;
+        Ok(PaginatedItems { items: items.items, total })
+    }
+
+    fn query_row_str(&self, sql: &str, params: &[String]) -> Result<i64, String> {
+        let p: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        self.conn.query_row(sql, p.as_slice(), |r| r.get(0))
+            .map_err(|e| format!("Query failed: {}", e))
+    }
+
+    fn query_items_raw(&self, sql: &str, params: &[String]) -> Result<PaginatedItems, String> {
+        let p: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        let mut stmt = self.conn.prepare(sql)
+            .map_err(|e| format!("Prepare failed: {}", e))?;
+        let items = stmt.query_map(p.as_slice(), |row| {
+            Ok(RawItem {
+                id: row.get(0)?,
+                source_url: row.get(1)?,
+                item_type: row.get(2)?,
+                item_hash: row.get(3)?,
+                raw_content: row.get(4)?,
+                extracted_url: row.get(5)?,
+                dup_count: row.get(6)?,
+                priority: row.get(7)?,
+                worker_id: row.get(8)?,
+                matched: row.get(9)?,
+                status: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+            })
+        }).map_err(|e| format!("Query failed: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+        Ok(PaginatedItems { items, total: 0 })
+    }
+
+    /// Count items by all statuses
+    pub fn get_summary(&self) -> Result<ItemsSummary, String> {
+        let total = self.conn.query_row("SELECT COUNT(*) FROM raw_items", [], |r| r.get(0))
+            .map_err(|e| format!("Failed to count: {}", e))?;
+        let pending = self.count_by_status("pending")?;
+        let processing = self.count_by_status("processing")?;
+        let done = self.count_by_status("done")?;
+        let error = self.count_by_status("error")?;
+        let ignored = self.count_by_status("ignored")?;
+        Ok(ItemsSummary { total, pending, processing, done, error, ignored })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

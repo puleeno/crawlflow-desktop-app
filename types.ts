@@ -478,6 +478,31 @@ export interface PresetEdge {
     targetHandle?: string;
 }
 
+export interface RawItem {
+    id: number;
+    source_url: string;
+    item_type: string;
+    item_hash: string;
+    raw_content: string | null;
+    extracted_url: string | null;
+    dup_count: number;
+    priority: number;
+    worker_id: string | null;
+    matched: number;
+    status: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface ItemsSummary {
+    total: number;
+    pending: number;
+    processing: number;
+    done: number;
+    error: number;
+    ignored: number;
+}
+
 export interface Preset {
     id: string;
     name: string;

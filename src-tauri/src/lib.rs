@@ -129,6 +129,9 @@ pub fn run() {
             commands::get_processor_settings_schema,
             commands::validate_settings_values,
             commands::get_settings_defaults,
+            // Raw items browser
+            commands::get_raw_items_cmd,
+            commands::get_raw_items_summary_cmd,
         ])
         .setup(|app| {
             let user_dir = get_user_plugins_dir();

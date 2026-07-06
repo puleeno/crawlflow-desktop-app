@@ -37,9 +37,10 @@ import HTMLDataExtractorNode, { CSVExtractorNode, JSONExtractorNode, XMLExtracto
 import ProcessorNode from './components/nodes/ProcessorNode';
 import CompletionNode from './components/nodes/CompletionNode';
 import ShapeNode from './components/nodes/ShapeNode';
-import { Bars3Icon, Cog6ToothIcon, HomeIcon, PlusIcon, PlayIcon, StopIcon, PauseIcon } from './components/icons';
+import { Bars3Icon, Cog6ToothIcon, HomeIcon, PlusIcon, PlayIcon, StopIcon, PauseIcon, TableCellsIcon } from './components/icons';
 import { ProjectManager } from './components/ProjectManager';
 import { PluginManagerPanel } from './components/PluginManagerPanel';
+import { RawItemsBrowser } from './components/RawItemsBrowser';
 import LiveLogs from './components/LiveLogs';
 import AppSettings from './components/AppSettings';
 
@@ -163,6 +164,7 @@ const App: React.FC = () => {
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [isPluginManagerOpen, setPluginManagerOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showRawItemsBrowser, setShowRawItemsBrowser] = useState(false);
 
   // Ref for React Flow instance and wrapper
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
@@ -1159,6 +1161,13 @@ const App: React.FC = () => {
             )}
           </button>
           <button
+            onClick={() => setShowRawItemsBrowser(true)}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
+          >
+            <TableCellsIcon />
+            Raw Items
+          </button>
+          <button
             onClick={() => setPluginManagerOpen(true)}
             className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
           >
@@ -1175,6 +1184,9 @@ const App: React.FC = () => {
         </div>
       </div>
       <PluginManagerPanel isOpen={isPluginManagerOpen} onClose={() => setPluginManagerOpen(false)} />
+      {showRawItemsBrowser && currentProjectId && (
+        <RawItemsBrowser projectId={currentProjectId} onClose={() => setShowRawItemsBrowser(false)} />
+      )}
       <div className="flex flex-1 h-full overflow-hidden">
         <ReactFlowProvider>
           {/* Backdrop for mobile overlays */}

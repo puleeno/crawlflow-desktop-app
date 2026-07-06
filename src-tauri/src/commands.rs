@@ -838,3 +838,59 @@ pub fn get_settings_defaults(processor_id: String) -> Result<serde_json::Value, 
         .ok_or_else(|| format!("Processor '{}' not found", processor_id))?;
     Ok(schema.apply_defaults())
 }
+
+// ── Raw Items Commands ────────────────────────────────────
+
+fn get_project_db_path(project_id: &str) -> PathBuf {
+    let data_dir = dirs_next::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("crawlflow")
+        .join("projects");
+    data_dir.join(format!("project_{}.db", project_id))
+}
+
+#[tauri::command]
+pub fn get_raw_items_cmd(
+    project_id: String,
+    status: Option<String>,
+    search: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+    sort_by: Option<String>,
+    sort_dir: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let db_path = get_project_db_path(&project_id);
+    if !db_path.exists() {
+        return Ok(serde_json::json!({ "items": [], "total": 0 }));
+    }
+
+    let repo = crate::repository::RawItemRepository::open(&db_path)?;
+    let query = crate::repository::ItemsQuery {
+        status,
+        worker_id: None,
+        search,
+        matched: None,
+        limit: limit.unwrap_or(50),
+        offset: offset.unwrap_or(0),
+        sort_by,
+        sort_dir,
+    };
+
+    let result = repo.query_items(&query)?;
+    Ok(serde_json::json!({ "items": result.items, "total": result.total }))
+}
+
+#[tauri::command]
+pub fn get_raw_items_summary_cmd(
+    project_id: String,
+) -> Result<crate::repository::ItemsSummary, String> {
+    let db_path = get_project_db_path(&project_id);
+    if !db_path.exists() {
+        return Ok(crate::repository::ItemsSummary {
+            total: 0, pending: 0, processing: 0, done: 0, error: 0, ignored: 0,
+        });
+    }
+
+    let repo = crate::repository::RawItemRepository::open(&db_path)?;
+    repo.get_summary()
+}
