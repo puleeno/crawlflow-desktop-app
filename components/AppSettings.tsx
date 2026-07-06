@@ -20,6 +20,10 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
   const [loading, setLoading] = useState(true);
   const [operating, setOperating] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [chromePath, setChromePath] = useState('');
+  const [savedChromePath, setSavedChromePath] = useState('');
+  const [chromeLoading, setChromeLoading] = useState(false);
+  const [chromeMessage, setChromeMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const fetchInfo = useCallback(async () => {
     setLoading(true);
@@ -33,9 +37,34 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
     setLoading(false);
   }, []);
 
+  const fetchChromePath = useCallback(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const path: string | null = await invoke('get_app_setting_cmd', { key: 'chrome_path' });
+      const val = path ?? '';
+      setChromePath(val);
+      setSavedChromePath(val);
+    } catch (e) { /* ignore */ }
+  }, []);
+
+  const handleSaveChromePath = async () => {
+    setChromeLoading(true);
+    setChromeMessage(null);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_app_setting_cmd', { key: 'chrome_path', value: chromePath });
+      setSavedChromePath(chromePath);
+      setChromeMessage({ type: 'success', text: 'Chrome path saved.' });
+    } catch (e: any) {
+      setChromeMessage({ type: 'error', text: e?.toString() || 'Failed to save' });
+    }
+    setChromeLoading(false);
+  };
+
   useEffect(() => {
     fetchInfo();
-  }, [fetchInfo]);
+    fetchChromePath();
+  }, [fetchInfo, fetchChromePath]);
 
   const showMsg = (type: 'success' | 'error', text: string) => {
     setMessage({ type, text });
@@ -255,12 +284,36 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
           )}
         </div>
 
-        {/* Additional sections placeholder */}
+        {/* Chrome Browser Path */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <h3 className="text-base font-bold text-gray-800 mb-4">General Settings</h3>
-          <p className="text-sm text-gray-500 min-h-[80px]">
-            Additional settings (theme, language, notifications) will appear here in future updates.
-          </p>
+          <h3 className="text-base font-bold text-gray-800 mb-4">Chrome Browser</h3>
+          <div className="space-y-3">
+            <label className="text-sm font-semibold text-gray-700">Chrome/Chromium Path</label>
+            <p className="text-xs text-gray-500">
+              Leave empty to auto-detect. Set a custom path if Chrome is not found automatically.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={chromePath}
+                onChange={e => setChromePath(e.target.value)}
+                placeholder="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+                className="flex-1 p-2.5 text-sm border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
+              <button
+                onClick={handleSaveChromePath}
+                disabled={chromePath === savedChromePath || chromeLoading}
+                className="px-4 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-xl transition-colors"
+              >
+                Save
+              </button>
+            </div>
+            {chromeMessage && (
+              <p className={`text-xs font-medium ${chromeMessage.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                {chromeMessage.text}
+              </p>
+            )}
+          </div>
         </div>
       </div>
     </div>

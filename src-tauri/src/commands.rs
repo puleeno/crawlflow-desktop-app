@@ -898,3 +898,33 @@ pub fn get_raw_items_summary_cmd(
     let repo = crate::repository::RawItemRepository::open(&db_path)?;
     repo.get_summary()
 }
+
+fn master_db_path() -> PathBuf {
+    let data_dir = dirs_next::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("crawlflow");
+    data_dir.join("crawlflow.db")
+}
+
+#[tauri::command]
+pub fn get_app_setting_cmd(key: String) -> Result<Option<String>, String> {
+    let db_path = master_db_path();
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| format!("Failed to open master DB: {}", e))?;
+    let mut stmt = conn.prepare("SELECT value FROM app_settings WHERE key = ?1")
+        .map_err(|e| format!("Failed to prepare: {}", e))?;
+    let result: Option<String> = stmt.query_row([&key], |row| row.get(0)).ok();
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn set_app_setting_cmd(key: String, value: String) -> Result<(), String> {
+    let db_path = master_db_path();
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| format!("Failed to open master DB: {}", e))?;
+    conn.execute(
+        "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
+        rusqlite::params![key, value],
+    ).map_err(|e| format!("Failed to save setting: {}", e))?;
+    Ok(())
+}

@@ -4,6 +4,23 @@ use std::process::Command;
 use std::time::Duration;
 
 fn find_chrome() -> Option<PathBuf> {
+    // Check configured path from app settings first
+    if let Some(data_dir) = dirs_next::data_dir() {
+        let master_db = data_dir.join("crawlflow").join("crawlflow.db");
+        if master_db.exists() {
+            if let Ok(conn) = rusqlite::Connection::open(&master_db) {
+                if let Ok(mut stmt) = conn.prepare("SELECT value FROM app_settings WHERE key = 'chrome_path'") {
+                    if let Ok(row) = stmt.query_row([], |r| r.get::<_, String>(0)) {
+                        let p = PathBuf::from(&row);
+                        if p.exists() {
+                            return Some(p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let candidates: Vec<PathBuf> = if cfg!(target_os = "macos") {
         vec![
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".into(),
@@ -153,11 +170,12 @@ pub fn fetch_chrome_sync(
     };
 
     let profile_dir = profile.profile_dir.clone().unwrap_or_else(|| {
-        std::env::temp_dir()
+        let dir = std::env::temp_dir()
             .join("crawlflow-chrome-profiles")
-            .join(simple_hash(url))
-            .to_string_lossy()
-            .to_string()
+            .join(simple_hash(url));
+        // Remove stale lock files from previous runs
+        let _ = std::fs::remove_dir_all(&dir);
+        dir.to_string_lossy().to_string()
     });
 
     let _ = std::fs::create_dir_all(&profile_dir);

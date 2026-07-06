@@ -71,6 +71,7 @@ pub struct ExecutionResult {
 }
 
 fn extract_client_profile(node_data: &serde_json::Value) -> ClientProfile {
+    let default_timeout = Some(30u64);
     if let Some(url_settings) = node_data.get("urlSettings") {
         if let Some(http_client) = url_settings.get("httpClient") {
             let client_type = http_client.get("clientType")
@@ -86,7 +87,8 @@ fn extract_client_profile(node_data: &serde_json::Value) -> ClientProfile {
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
             let timeout_secs = http_client.get("timeoutSecs")
-                .and_then(|v| v.as_u64());
+                .and_then(|v| v.as_u64())
+                .or(default_timeout);
             let headers = http_client.get("headers")
                 .and_then(|v| v.as_array())
                 .map(|arr| {
@@ -605,15 +607,10 @@ pub async fn execute_repository_pipeline(
         match source_type {
             "url" | "api" => {
                 let url = source_value.to_string();
-                log_manager.info(project_id, "fetching",
-                    &format!("Fetching URL: {} ...", url));
                 let profile = extract_client_profile(&node.data);
                 log_manager.info(project_id, "fetching",
-                    &format!("Client type: {}, timeout: {:?}, proxy: {:?}",
-                        profile.client_type, profile.timeout_secs, profile.proxy_url));
+                    &format!("Fetching: {} (client: {})", url, profile.client_type));
                 let crawl_result = request_clients::fetch_with_client(&url, &profile, None).await;
-                log_manager.info(project_id, "fetching",
-                    &format!("Fetch completed, error: {:?}, status: {}", crawl_result.error, crawl_result.status));
                 let result = if crawl_result.error.is_some() {
                     Err(crawl_result.error.unwrap())
                 } else {

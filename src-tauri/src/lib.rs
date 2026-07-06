@@ -132,6 +132,9 @@ pub fn run() {
             // Raw items browser
             commands::get_raw_items_cmd,
             commands::get_raw_items_summary_cmd,
+            // App settings
+            commands::get_app_setting_cmd,
+            commands::set_app_setting_cmd,
         ])
         .setup(|app| {
             let user_dir = get_user_plugins_dir();
