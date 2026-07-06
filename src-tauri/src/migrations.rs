@@ -194,3 +194,51 @@ pub fn get_project_migrations() -> Vec<Migration> {
         },
     ]
 }
+
+pub fn get_project_migrations_v2() -> Vec<Migration> {
+    vec![
+        Migration {
+            version: 2,
+            description: "create raw_items and processing_log tables",
+            sql: "
+                CREATE TABLE IF NOT EXISTS raw_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_url TEXT NOT NULL,
+                    item_type TEXT NOT NULL DEFAULT 'url',
+                    item_hash TEXT NOT NULL,
+                    raw_content TEXT,
+                    extracted_url TEXT,
+                    dup_count INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    worker_id TEXT,
+                    matched INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_raw_items_hash ON raw_items(item_hash);
+                CREATE INDEX IF NOT EXISTS idx_raw_items_status ON raw_items(status);
+                CREATE INDEX IF NOT EXISTS idx_raw_items_matched ON raw_items(matched);
+                CREATE INDEX IF NOT EXISTS idx_raw_items_worker ON raw_items(worker_id);
+
+                CREATE TABLE IF NOT EXISTS processing_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id INTEGER NOT NULL,
+                    worker_id TEXT,
+                    processor_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    output TEXT,
+                    error TEXT,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_processing_log_item ON processing_log(item_id);
+                CREATE INDEX IF NOT EXISTS idx_processing_log_worker ON processing_log(worker_id);
+            ",
+            kind: MigrationKind::Up,
+        },
+    ]
+}

@@ -1,5 +1,7 @@
 mod commands;
 mod crawler;
+mod finish_actions;
+mod item_matcher;
 pub mod logs;
 mod migrations;
 mod models;
@@ -7,11 +9,13 @@ pub mod pipeline;
 mod plugins;
 mod progress;
 mod python_plugins;
+mod repository;
 mod request_clients;
-mod services;
 pub mod settings_engine;
+mod services;
 pub mod spreadsheet;
 mod system_service;
+mod worker_engine;
 
 use commands::AppState;
 use logs::LogManager;

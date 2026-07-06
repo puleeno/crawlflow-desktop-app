@@ -1,7 +1,12 @@
 use crate::logs::LogManager;
 use crate::plugins;
+use crate::repository::{NewRawItem, RawItemRepository};
+use crate::item_matcher::{ItemMatcher, MatchPattern, MatchRule};
+use crate::worker_engine::{WorkerDef, ProcessorStep, WorkerEngine};
+use crate::finish_actions::{FinishAction, ActionEngine};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
