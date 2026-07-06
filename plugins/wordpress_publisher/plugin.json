@@ -1,0 +1,9 @@
+{
+  "id": "wordpress-publisher",
+  "name": "WordPress Publisher",
+  "version": "1.0.0",
+  "description": "Publish posts, pages, products, and custom post types to WordPress via REST API. Supports Application Passwords authentication, field mapping, categories, tags, and featured images.",
+  "author": "CrawlFlow",
+  "capabilities": ["processor", "export"],
+  "settings_schema_class": "WordPressPublisherSettings"
+}
