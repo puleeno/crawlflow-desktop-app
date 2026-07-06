@@ -3,7 +3,7 @@ import React, { useState, useRef, ChangeEvent, useEffect, useMemo } from 'react'
 import { Node, Edge } from 'reactflow';
 import { invoke } from '@tauri-apps/api/core';
 import { XMarkIcon, Cog6ToothIcon, ArrowUpTrayIcon, ArrowDownTrayIcon, TrashIcon, ChevronDownIcon, ChevronUpIcon, CursorArrowRaysIcon, CloudIcon } from './icons';
-import { NodeData, StartNodeData, ClickNodeData, ExtractionRule, FileInputMethod, MySQLConnection, ProjectSettings, LoopNodeData, WorkerNodeData, HTMLDataExtractorNodeData, ProcessorNodeData, PreprocessorNodeData, WorkerRule, WorkerRuleType, URLFormatRule, HTMLContainsRule, DOMValueRule, TagAttributeRule, ExtractFrom, URLSourceSettings, APISourceSettings, APIKeyAuth, BearerTokenAuth, BasicAuth, XMLSourceSettings, JSONSourceSettings, PagePagination, OffsetLimitPagination, NextURLPagination, RuleCondition, SaveToDbSettings, SendToApiSettings, GenerateCsvSettings, GenerateExcelSettings, SendEmailSettings, CSVExtractorNodeData, ColumnMapping, JSONExtractorNodeData, PathMapping, XMLExtractorNodeData, MySQLExtractorNodeData, ShapeNodeData, DataSourceTypeRule } from '../types';
+import { NodeData, StartNodeData, ClickNodeData, ExtractionRule, FileInputMethod, MySQLConnection, ProjectSettings, LoopNodeData, WorkerNodeData, HTMLDataExtractorNodeData, ProcessorNodeData, PreprocessorNodeData, WorkerRule, WorkerRuleType, URLFormatRule, HTMLContainsRule, DOMValueRule, TagAttributeRule, ExtractFrom, URLSourceSettings, APISourceSettings, APIKeyAuth, BearerTokenAuth, BasicAuth, XMLSourceSettings, JSONSourceSettings, PagePagination, OffsetLimitPagination, NextURLPagination, RuleCondition, SaveToDbSettings, SendToApiSettings, GenerateCsvSettings, GenerateExcelSettings, SendEmailSettings, CSVExtractorNodeData, ColumnMapping, JSONExtractorNodeData, PathMapping, XMLExtractorNodeData, MySQLExtractorNodeData, ShapeNodeData, DataSourceTypeRule, HttpClientConfig, HeaderPair } from '../types';
 import { PRESETS, PROCESSORS } from '../presets';
 import { DynamicForm } from './settings/DynamicForm';
 import type { SettingsSchema, FieldDef } from '../types/settings';
@@ -223,6 +223,89 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
         );
     };
 
+    const renderHttpClientSettings = () => {
+        const config = (data.urlSettings?.httpClient || { clientType: 'reqwest' }) as HttpClientConfig;
+
+        const updateHttpClient = (update: Partial<HttpClientConfig>) => {
+            const current = data.urlSettings || {} as URLSourceSettings;
+            handleNestedUpdate('urlSettings', {
+                httpClient: { ...config, ...update },
+            });
+        };
+
+        const addHeader = () => {
+            const headers = config.headers || [];
+            updateHttpClient({ headers: [...headers, { key: '', value: '' }] });
+        };
+
+        const updateHeader = (index: number, field: 'key' | 'value', val: string) => {
+            const headers = [...(config.headers || [])];
+            headers[index] = { ...headers[index], [field]: val };
+            updateHttpClient({ headers });
+        };
+
+        const removeHeader = (index: number) => {
+            const headers = [...(config.headers || [])];
+            headers.splice(index, 1);
+            updateHttpClient({ headers });
+        };
+
+        return (
+            <CollapsibleSection title="HTTP Client" defaultOpen={false}>
+                <div className="space-y-4">
+                    <div>
+                        <label className={commonLabelClasses}>Client Type</label>
+                        <select value={config.clientType} onChange={e => updateHttpClient({ clientType: e.target.value as HttpClientConfig['clientType'] })} className={commonInputClasses}>
+                            <option value="reqwest">Built-in (Reqwest)</option>
+                            <option value="chrome">Headless Chrome</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className={commonLabelClasses}>User-Agent</label>
+                        <input type="text" value={config.userAgent ?? ''} onChange={e => updateHttpClient({ userAgent: e.target.value || undefined })} className={commonInputClasses} placeholder="CrawlFlow/1.0" />
+                    </div>
+                    <div>
+                        <label className={commonLabelClasses}>Timeout (seconds)</label>
+                        <input type="number" value={config.timeoutSecs ?? 30} onChange={e => updateHttpClient({ timeoutSecs: parseInt(e.target.value) || 30 })} className={commonInputClasses} min={1} max={300} />
+                    </div>
+                    <div>
+                        <label className={commonLabelClasses}>Proxy URL</label>
+                        <input type="text" value={config.proxyUrl ?? ''} onChange={e => updateHttpClient({ proxyUrl: e.target.value || undefined })} className={commonInputClasses} placeholder="e.g., http://127.0.0.1:8080" />
+                    </div>
+                    <div>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className={commonLabelClasses}>Custom Headers</label>
+                            <button type="button" onClick={addHeader} className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">+ Add</button>
+                        </div>
+                        <div className="space-y-2">
+                            {(config.headers || []).map((h, i) => (
+                                <div key={i} className="flex gap-2 items-start">
+                                    <input type="text" value={h.key} onChange={e => updateHeader(i, 'key', e.target.value)} className={`${commonInputClasses} flex-1`} placeholder="Header" />
+                                    <input type="text" value={h.value} onChange={e => updateHeader(i, 'value', e.target.value)} className={`${commonInputClasses} flex-1`} placeholder="Value" />
+                                    <button type="button" onClick={() => removeHeader(i)} className="text-red-500 hover:text-red-700 text-lg leading-none mt-1">&times;</button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    {config.clientType === 'chrome' && (
+                        <>
+                            <div>
+                                <label className={commonLabelClasses}>Wait for Selector</label>
+                                <input type="text" value={config.waitForSelector ?? ''} onChange={e => updateHttpClient({ waitForSelector: e.target.value || undefined })} className={commonInputClasses} placeholder="e.g., .content-loaded" />
+                            </div>
+                            <TagInput
+                                label="Chrome Arguments"
+                                tags={config.chromeArgs || []}
+                                onChange={(tags) => updateHttpClient({ chromeArgs: tags })}
+                                placeholder="e.g., --disable-web-security"
+                            />
+                        </>
+                    )}
+                </div>
+            </CollapsibleSection>
+        );
+    };
+
     const renderAPISettings = () => {
         const settings = data.apiSettings || {} as APISourceSettings;
         const authDetails = settings.authDetails || {};
@@ -435,6 +518,7 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
             )}
 
             {data.sourceType === 'url' && renderURLSettings()}
+            {data.sourceType === 'url' && renderHttpClientSettings()}
             {data.sourceType === 'api' && renderAPISettings()}
             {data.sourceType === 'xml' && renderXMLSettings()}
             {data.sourceType === 'json' && renderJSONSettings()}

@@ -30,6 +30,21 @@ export interface ProjectSettings {
 export type CrawlScope = 'current-url' | 'entire-website';
 export type DomainImportPolicy = 'all' | 'whitelist-only';
 
+export interface HeaderPair {
+  key: string;
+  value: string;
+}
+
+export interface HttpClientConfig {
+  clientType: 'reqwest' | 'chrome';
+  userAgent?: string;
+  timeoutSecs?: number;
+  proxyUrl?: string;
+  headers?: HeaderPair[];
+  chromeArgs?: string[];
+  waitForSelector?: string;
+}
+
 export interface URLSourceSettings {
   scope: CrawlScope;
   excludeExtensions: string[];
@@ -37,6 +52,7 @@ export interface URLSourceSettings {
   whitelistPatterns: string[];
   domainPolicy: DomainImportPolicy;
   domainWhitelist: string[];
+  httpClient?: HttpClientConfig;
 }
 
 export type APIAuthType = 'none' | 'api-key' | 'bearer' | 'basic';

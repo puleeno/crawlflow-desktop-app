@@ -1,9 +1,11 @@
 use crate::data_preprocessor::{DataPreprocessor, PreprocessorConfig, UrlPattern, ExtractRule};
 use crate::logs::LogManager;
+use crate::models::ClientProfile;
 use crate::plugins;
 use crate::python_plugins::PythonPluginEngine;
 use crate::repository::RawItemRepository;
 use crate::item_matcher::{MatchPattern, MatchRule};
+use crate::request_clients;
 use crate::worker_engine::{WorkerDef, ProcessorStep, WorkerEngine};
 use crate::finish_actions::{FinishAction, ActionEngine};
 use serde::{Deserialize, Serialize};
@@ -66,6 +68,58 @@ pub struct ExecutionResult {
     pub steps: Vec<ExecutionStep>,
     pub final_output: Vec<serde_json::Value>,
     pub error: Option<String>,
+}
+
+fn extract_client_profile(node_data: &serde_json::Value) -> ClientProfile {
+    if let Some(url_settings) = node_data.get("urlSettings") {
+        if let Some(http_client) = url_settings.get("httpClient") {
+            let client_type = http_client.get("clientType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("reqwest")
+                .to_string();
+            let user_agent = http_client.get("userAgent")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            let proxy_url = http_client.get("proxyUrl")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            let timeout_secs = http_client.get("timeoutSecs")
+                .and_then(|v| v.as_u64());
+            let headers = http_client.get("headers")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter().filter_map(|h| {
+                        let key = h.get("key")?.as_str()?.to_string();
+                        let value = h.get("value")?.as_str()?.to_string();
+                        Some((key, value))
+                    }).collect::<Vec<_>>()
+                });
+            let chrome_args = http_client.get("chromeArgs")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter().filter_map(|a| a.as_str().map(|s| s.to_string())).collect()
+                });
+            let wait_for_selector = http_client.get("waitForSelector")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            return ClientProfile {
+                client_type,
+                user_agent,
+                proxy_url,
+                headers,
+                timeout_secs,
+                profile_dir: None,
+                chrome_args,
+                wait_for_selector,
+                extra_nav_args: None,
+            };
+        }
+    }
+    ClientProfile::default()
 }
 
 fn demo_sample_data() -> Vec<serde_json::Value> {
@@ -558,12 +612,14 @@ pub fn execute_repository_pipeline(
                     }
                 };
                 let url = source_value.to_string();
+                let profile = extract_client_profile(&node.data);
                 let result = rt.block_on(async {
-                    let client = reqwest::Client::builder()
-                        .user_agent("CrawlFlow/1.0")
-                        .build().map_err(|e| e.to_string())?;
-                    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
-                    Ok::<_, String>(resp.text().await.map_err(|e| e.to_string())?)
+                    let crawl_result = request_clients::fetch_with_client(&url, &profile, None).await;
+                    if crawl_result.error.is_some() {
+                        Err(crawl_result.error.unwrap())
+                    } else {
+                        Ok(crawl_result.html.unwrap_or_default())
+                    }
                 });
                 match result {
                     Ok(html) => {
