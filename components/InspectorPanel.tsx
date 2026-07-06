@@ -57,22 +57,25 @@ const InspectorPanel: React.FC<InspectorPanelProps> = ({ htmlContent, baseUrl, i
 
   const wrappedHtml = React.useMemo(() => {
     if (!htmlContent) return '';
-    
+
+    // Safely strip all script tags to protect Tauri shell from remote code execution since sandbox is omitted
+    const sanitizedHtml = htmlContent.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+
     // If it's already a full HTML document, use as-is
-    if (htmlContent.trim().toLowerCase().startsWith('<!doctype html') || htmlContent.includes('<html')) {
+    if (sanitizedHtml.trim().toLowerCase().startsWith('<!doctype html') || sanitizedHtml.includes('<html')) {
       // Inject base tag if baseUrl is provided
       if (baseUrl) {
         const baseTag = `<base href="${baseUrl}">`;
-        if (htmlContent.includes('<head>')) {
-          return htmlContent.replace('<head>', `<head>${baseTag}`);
-        } else if (htmlContent.includes('<HEAD>')) {
-          return htmlContent.replace('<HEAD>', `<HEAD>${baseTag}`);
+        if (sanitizedHtml.includes('<head>')) {
+          return sanitizedHtml.replace('<head>', `<head>${baseTag}`);
+        } else if (sanitizedHtml.includes('<HEAD>')) {
+          return sanitizedHtml.replace('<HEAD>', `<HEAD>${baseTag}`);
         } else {
           // No head found, wrap it
-          return `<!DOCTYPE html><html><head>${baseTag}</head><body>${htmlContent}</body></html>`;
+          return `<!DOCTYPE html><html><head>${baseTag}</head><body>${sanitizedHtml}</body></html>`;
         }
       }
-      return htmlContent;
+      return sanitizedHtml;
     }
 
     // Raw HTML fragment - wrap in a full document
@@ -90,20 +93,17 @@ const InspectorPanel: React.FC<InspectorPanelProps> = ({ htmlContent, baseUrl, i
   </style>
 </head>
 <body>
-${htmlContent}
+${sanitizedHtml}
 </body>
 </html>`;
   }, [htmlContent, baseUrl]);
 
-  // Effect to manage the iframe's loaded state.
-  // When the iframe's srcDoc changes, it reloads. The 'load' event lets us know when it's ready.
-  useEffect(() => {
+  // Called when the iframe finishes loading its srcDoc content.
+  const handleLoad = useCallback(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
-
-    const handleLoad = () => {
+    try {
       if (iframe.contentDocument) {
-        // Inject a <base> tag to help the iframe resolve relative asset paths (like images/CSS) correctly.
         if (baseUrl) {
           const existingBase = iframe.contentDocument.querySelector('base');
           if (!existingBase) {
@@ -114,19 +114,10 @@ ${htmlContent}
         }
         setIframeBody(iframe.contentDocument.body as HTMLBodyElement);
       }
-    };
-
-    iframe.addEventListener('load', handleLoad);
-    
-    // In some fast-refresh scenarios, the iframe might already be loaded.
-    if (iframe.contentDocument && iframe.contentDocument.readyState === 'complete') {
-      handleLoad();
+    } catch (err) {
+      console.error('Error accessing iframe contentDocument:', err);
     }
-
-    return () => {
-      iframe.removeEventListener('load', handleLoad);
-    };
-  }, [wrappedHtml]); // Rerun when wrappedHtml changes, forcing a reload.
+  }, [baseUrl]);
 
   // Effect to highlight elements based on the `highlightedSelector` prop.
   useEffect(() => {
@@ -141,7 +132,7 @@ ${htmlContent}
     if (!iframeBody || !highlightedSelector) {
       return;
     }
-    
+
     try {
       const elements = iframeBody.querySelectorAll(highlightedSelector);
       if (elements.length > 0) {
@@ -152,7 +143,7 @@ ${htmlContent}
           htmlEl.style.boxShadow = '0 0 10px 2px rgba(234, 88, 12, 0.6)';
           highlightedElementsRef.current.push(htmlEl);
         });
-        
+
         // Scroll the first element into view
         (elements[0] as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
@@ -261,7 +252,7 @@ ${htmlContent}
       }
     };
   }, [iframeBody, isPicking, onSelectorPicked]);
-  
+
   // Effect for toast visibility transition
   useEffect(() => {
     if (toast?.visible) {
@@ -278,17 +269,17 @@ ${htmlContent}
       <header className="flex justify-between items-center p-2 bg-gray-100 border-b">
         <h3 className="font-bold text-gray-800">Inspector Preview</h3>
         <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-600 hidden md:block">Right-click to copy selector</span>
-            {isPicking && (
-                <div className="p-1 px-3 bg-blue-100 text-blue-800 rounded-full text-sm font-semibold animate-pulse">
-                    Picking Element...
-                </div>
-            )}
+          <span className="text-sm text-gray-600 hidden md:block">Right-click to copy selector</span>
+          {isPicking && (
+            <div className="p-1 px-3 bg-blue-100 text-blue-800 rounded-full text-sm font-semibold animate-pulse">
+              Picking Element...
+            </div>
+          )}
         </div>
-        <button 
-            onClick={onClose} 
-            className="p-2 text-gray-600 rounded-md hover:bg-gray-200 hover:text-gray-900"
-            title="Close Inspector"
+        <button
+          onClick={onClose}
+          className="p-2 text-gray-600 rounded-md hover:bg-gray-200 hover:text-gray-900"
+          title="Close Inspector"
         >
           <XMarkIcon />
         </button>
@@ -298,16 +289,16 @@ ${htmlContent}
           ref={iframeRef}
           srcDoc={wrappedHtml}
           title="Inspector Preview"
-          sandbox="allow-same-origin" // Security: No scripts, but allow content to be treated as same-origin
+          onLoad={handleLoad}
           className={`w-full h-full border-0 ${isPicking ? 'cursor-crosshair' : 'cursor-default'}`}
         />
         {toast && (
-            <div 
-                className={`absolute p-2 bg-black text-white text-sm rounded-md shadow-lg transition-opacity duration-200 pointer-events-none ${toast.visible ? 'opacity-75' : 'opacity-0'}`}
-                style={{ left: `${toast.x + 15}px`, top: `${toast.y + 10}px`, zIndex: 100 }}
-            >
-                {toast.message}
-            </div>
+          <div
+            className={`absolute p-2 bg-black text-white text-sm rounded-md shadow-lg transition-opacity duration-200 pointer-events-none ${toast.visible ? 'opacity-75' : 'opacity-0'}`}
+            style={{ left: `${toast.x + 15}px`, top: `${toast.y + 10}px`, zIndex: 100 }}
+          >
+            {toast.message}
+          </div>
         )}
       </div>
     </div>

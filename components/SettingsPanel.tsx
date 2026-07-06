@@ -717,6 +717,16 @@ const HTMLDataExtractorSettings: React.FC<{
                                                 <input type="number" placeholder="Group" value={rule.regexGroup || 0} onChange={e => handleRuleChange(rule.id, 'regexGroup', parseInt(e.target.value))} className={smallInputClasses} />
                                             </div>
                                         )}
+                                        <label className="flex items-center gap-2 cursor-pointer select-none mt-1">
+                                            <div className="relative" onClick={() => handleRuleChange(rule.id, 'extractMultiple', !rule.extractMultiple)}>
+                                                <div className={`w-8 h-4 rounded-full transition-colors ${rule.extractMultiple ? 'bg-teal-500' : 'bg-gray-300'}`} />
+                                                <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${rule.extractMultiple ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                                            </div>
+                                            <span className="text-xs text-gray-600">
+                                                Extract Multiple
+                                                {rule.extractMultiple && <span className="ml-1 text-teal-600 font-semibold">(→ array)</span>}
+                                            </span>
+                                        </label>
                                     </>
                                 )}
                                 {(rule.extractFrom === 'json-ld' || rule.extractFrom === 'html-comment') && (
@@ -1517,73 +1527,73 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
 
             <CollapsibleSection title="General" defaultOpen>
                 <div className="flex items-center justify-between mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-700">Enable Project</span>
-                    <span className="text-xs text-gray-500">{projectSettings.enabled ? 'Project is active' : 'Project is disabled'}</span>
+                    <div className="flex flex-col">
+                        <span className="text-sm font-bold text-gray-700">Enable Project</span>
+                        <span className="text-xs text-gray-500">{projectSettings.enabled ? 'Project is active' : 'Project is disabled'}</span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => onUpdateProjectSettings({ enabled: !projectSettings.enabled })}
+                        disabled={isRunning}
+                        className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${projectSettings.enabled ? 'bg-green-500' : 'bg-gray-300'}`}
+                        role="switch"
+                        aria-checked={projectSettings.enabled}
+                    >
+                        <span
+                            aria-hidden="true"
+                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${projectSettings.enabled ? 'translate-x-5' : 'translate-x-0'}`}
+                        />
+                    </button>
                 </div>
-                <button
-                    type="button"
-                    onClick={() => onUpdateProjectSettings({ enabled: !projectSettings.enabled })}
-                    disabled={isRunning}
-                    className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${projectSettings.enabled ? 'bg-green-500' : 'bg-gray-300'}`}
-                    role="switch"
-                    aria-checked={projectSettings.enabled}
-                >
-                    <span
-                        aria-hidden="true"
-                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${projectSettings.enabled ? 'translate-x-5' : 'translate-x-0'}`}
-                    />
-                </button>
-            </div>
 
-            <div>
-                <label className={commonLabelClasses}>Project Name</label>
-                <input type="text" value={projectSettings.name} onChange={e => onUpdateProjectSettings({ name: e.target.value })} className={commonInputClasses} disabled={isRunning} />
-            </div>
-            <div>
-                <label className={commonLabelClasses}>Description</label>
-                <textarea value={projectSettings.description} onChange={e => onUpdateProjectSettings({ description: e.target.value })} className={`${commonInputClasses} h-24`} disabled={isRunning} />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
                 <div>
-                    <label className={commonLabelClasses}>Crawl Delay (ms)</label>
-                    <input type="number" value={projectSettings.crawlDelay} onChange={e => onUpdateProjectSettings({ crawlDelay: parseInt(e.target.value) })} className={commonInputClasses} disabled={isRunning} />
+                    <label className={commonLabelClasses}>Project Name</label>
+                    <input type="text" value={projectSettings.name} onChange={e => onUpdateProjectSettings({ name: e.target.value })} className={commonInputClasses} disabled={isRunning} />
                 </div>
                 <div>
-                    <label className={commonLabelClasses}>Concurrency</label>
-                    <input type="number" value={projectSettings.concurrency} onChange={e => onUpdateProjectSettings({ concurrency: parseInt(e.target.value) })} className={commonInputClasses} disabled={isRunning} />
+                    <label className={commonLabelClasses}>Description</label>
+                    <textarea value={projectSettings.description} onChange={e => onUpdateProjectSettings({ description: e.target.value })} className={`${commonInputClasses} h-24`} disabled={isRunning} />
                 </div>
-            </div>
-            <div>
-                <label className={commonLabelClasses}>Execution Mode</label>
-                <div className="flex gap-2">
-                    <button
-                        type="button"
-                        onClick={() => onUpdateProjectSettings({ executionMode: 'queue' })}
-                        disabled={isRunning}
-                        className={`flex-1 p-2 rounded-md text-sm font-semibold border transition-colors ${projectSettings.executionMode === 'queue' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'} disabled:opacity-50`}
-                    >
-                        Queue
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => onUpdateProjectSettings({ executionMode: 'parallel' })}
-                        disabled={isRunning}
-                        className={`flex-1 p-2 rounded-md text-sm font-semibold border transition-colors ${projectSettings.executionMode === 'parallel' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'} disabled:opacity-50`}
-                    >
-                        Parallel
-                    </button>
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className={commonLabelClasses}>Crawl Delay (ms)</label>
+                        <input type="number" value={projectSettings.crawlDelay} onChange={e => onUpdateProjectSettings({ crawlDelay: parseInt(e.target.value) })} className={commonInputClasses} disabled={isRunning} />
+                    </div>
+                    <div>
+                        <label className={commonLabelClasses}>Concurrency</label>
+                        <input type="number" value={projectSettings.concurrency} onChange={e => onUpdateProjectSettings({ concurrency: parseInt(e.target.value) })} className={commonInputClasses} disabled={isRunning} />
+                    </div>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">
-                    {projectSettings.executionMode === 'queue'
-                        ? 'Nodes run one at a time in order.'
-                        : `Nodes at the same level run concurrently (max ${projectSettings.concurrency}).`}
-                </p>
-            </div>
-            <div>
-                <label className={commonLabelClasses}>User Agent</label>
-                <input type="text" value={projectSettings.userAgent} onChange={e => onUpdateProjectSettings({ userAgent: e.target.value })} className={commonInputClasses} disabled={isRunning} />
-            </div>
+                <div>
+                    <label className={commonLabelClasses}>Execution Mode</label>
+                    <div className="flex gap-2">
+                        <button
+                            type="button"
+                            onClick={() => onUpdateProjectSettings({ executionMode: 'queue' })}
+                            disabled={isRunning}
+                            className={`flex-1 p-2 rounded-md text-sm font-semibold border transition-colors ${projectSettings.executionMode === 'queue' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'} disabled:opacity-50`}
+                        >
+                            Queue
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => onUpdateProjectSettings({ executionMode: 'parallel' })}
+                            disabled={isRunning}
+                            className={`flex-1 p-2 rounded-md text-sm font-semibold border transition-colors ${projectSettings.executionMode === 'parallel' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'} disabled:opacity-50`}
+                        >
+                            Parallel
+                        </button>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                        {projectSettings.executionMode === 'queue'
+                            ? 'Nodes run one at a time in order.'
+                            : `Nodes at the same level run concurrently (max ${projectSettings.concurrency}).`}
+                    </p>
+                </div>
+                <div>
+                    <label className={commonLabelClasses}>User Agent</label>
+                    <input type="text" value={projectSettings.userAgent} onChange={e => onUpdateProjectSettings({ userAgent: e.target.value })} className={commonInputClasses} disabled={isRunning} />
+                </div>
 
             </CollapsibleSection>
 

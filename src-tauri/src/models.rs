@@ -42,7 +42,10 @@ mod tests {
         let req = CrawlRequest {
             url: "https://example.com".into(),
             method: Some("GET".into()),
-            headers: Some(vec![HeaderPair { key: "Accept".into(), value: "text/html".into() }]),
+            headers: Some(vec![HeaderPair {
+                key: "Accept".into(),
+                value: "text/html".into(),
+            }]),
             body: None,
             use_browser: Some(false),
             wait_for_selector: None,
@@ -101,7 +104,8 @@ mod tests {
 
     #[test]
     fn test_extract_rule_defaults() {
-        let rule: ExtractRule = serde_json::from_str(r#"{"field":"title","selector":"h1"}"#).unwrap();
+        let rule: ExtractRule =
+            serde_json::from_str(r#"{"field":"title","selector":"h1"}"#).unwrap();
         assert_eq!(rule.field, "title");
         assert_eq!(rule.selector, "h1");
         assert!(rule.attribute.is_none());
@@ -193,9 +197,11 @@ pub struct HeaderPair {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractRule {
+    #[serde(alias = "name")]
     pub field: String,
     pub selector: String,
     pub attribute: Option<String>,
+    #[serde(alias = "extractMultiple")]
     pub extract_multiple: Option<bool>,
 }
 
