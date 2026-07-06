@@ -204,10 +204,24 @@ const App: React.FC = () => {
 
   // Subscribe to service status events
   useEffect(() => {
-    if (!currentProjectId) return;
+    if (!currentProjectId) {
+      setServiceStatus('stopped');
+      setServiceCycleCount(0);
+      return;
+    }
     let unlisten: (() => void) | null = null;
     const setup = async () => {
       try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const info: any = await invoke('get_service_status_cmd', { projectId: currentProjectId });
+        if (info) {
+          setServiceStatus(info.status || 'stopped');
+          setServiceCycleCount(info.cycle_count || 0);
+        } else {
+          setServiceStatus('stopped');
+          setServiceCycleCount(0);
+        }
+
         const { listen } = await import('@tauri-apps/api/event');
         unlisten = await listen<any>(`service-status:${currentProjectId}`, (event) => {
           const p = event.payload;
@@ -219,6 +233,39 @@ const App: React.FC = () => {
     setup();
     return () => { if (unlisten) unlisten(); };
   }, [currentProjectId]);
+
+  // Manage project editing lock file
+  useEffect(() => {
+    if (!currentProjectId) return;
+
+    const manageLock = async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        if (serviceStatus !== 'running') {
+          // Lock for editing
+          await invoke('lock_project_edit_cmd', { projectId: currentProjectId });
+        } else {
+          // Unlock since it's running
+          await invoke('unlock_project_edit_cmd', { projectId: currentProjectId });
+        }
+      } catch (e) {
+        console.warn('Failed to toggle project edit lock:', e);
+      }
+    };
+
+    manageLock();
+
+    // Clean up: unlock project when unmounting or switching projects
+    return () => {
+      const cleanupLock = async () => {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('unlock_project_edit_cmd', { projectId: currentProjectId });
+        } catch (e) { /* ignore */ }
+      };
+      cleanupLock();
+    };
+  }, [currentProjectId, serviceStatus]);
 
   // Effect to clean up the entire workflow when no start nodes exist
   useEffect(() => {
@@ -697,7 +744,7 @@ const App: React.FC = () => {
       setProjectSettings(prev => {
         if (prev.name && prev.name.includes('{url}')) {
           let label = updatedUrl!;
-          try { label = new URL(updatedUrl!).hostname.replace('www.', ''); } catch {}
+          try { label = new URL(updatedUrl!).hostname.replace('www.', ''); } catch { }
           return { ...prev, name: prev.name.replace(/\{url\}/g, label) };
         }
         return prev;
@@ -861,9 +908,9 @@ const App: React.FC = () => {
     'csv-extractor': (props) => <CSVExtractorNode {...props} />,
     'json-extractor': (props) => <JSONExtractorNode {...props} />,
     'xml-extractor': (props) => <XMLExtractorNode {...props} />,
-  'mysql-extractor':  (props) => <MySQLExtractorNode {...props} />,
-  preprocessor:       (props) => <PreprocessorNode {...props} />,
-  processor:          (props) => <ProcessorNode {...props} />,
+    'mysql-extractor': (props) => <MySQLExtractorNode {...props} />,
+    preprocessor: (props) => <PreprocessorNode {...props} />,
+    processor: (props) => <ProcessorNode {...props} />,
     completion: (props) => <CompletionNode {...props} />,
     shape: (props) => <ShapeNode {...props} />,
   }), []);
@@ -1117,7 +1164,7 @@ const App: React.FC = () => {
           );
           if (dsNode) {
             let label = dsNode.data.sourceValue;
-            try { label = new URL(label).hostname.replace('www.', ''); } catch {}
+            try { label = new URL(label).hostname.replace('www.', ''); } catch { }
             resolvedName = settingsName.replace(/\{url\}/g, label);
           }
         }
@@ -1207,9 +1254,9 @@ const App: React.FC = () => {
             className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
           >
             <span className={`inline-block w-2.5 h-2.5 rounded-full ${serviceStatus === 'running' ? 'bg-green-500 animate-pulse' :
-                serviceStatus === 'paused' ? 'bg-amber-500' :
-                  serviceStatus?.startsWith('error') ? 'bg-red-500' :
-                    'bg-gray-400'
+              serviceStatus === 'paused' ? 'bg-amber-500' :
+                serviceStatus?.startsWith('error') ? 'bg-red-500' :
+                  'bg-gray-400'
               }`} />
             Service
             {serviceCycleCount > 0 && (
@@ -1261,6 +1308,7 @@ const App: React.FC = () => {
             mouseMode={mouseMode}
             onSetMouseMode={setMouseMode}
             onAddShapeNode={addShapeNode}
+            isRunning={isRunning}
           />
           <main className="flex-1 h-full relative" ref={reactFlowWrapper}>
             <ReactFlow
@@ -1339,6 +1387,8 @@ const App: React.FC = () => {
             projectId={currentProjectId}
             onOpenLogs={() => setLogPanelOpen(true)}
             isRunning={isRunning}
+            serviceStatus={serviceStatus}
+            serviceCycleCount={serviceCycleCount}
           />
         </ReactFlowProvider>
       </div>

@@ -35,6 +35,7 @@ interface SidebarProps {
   mouseMode: 'select' | 'pan';
   onSetMouseMode: (mode: 'select' | 'pan') => void;
   onAddShapeNode: (shapeType: ShapeType) => void;
+  isRunning?: boolean;
 }
 
 const dataSources: {
@@ -180,7 +181,7 @@ const DiagramElementsPanel: React.FC<{ onAddShapeNode: (shapeType: ShapeType) =>
 };
 
 
-const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onClose, nodes, edges, mouseMode, onSetMouseMode, onAddShapeNode }) => {
+const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onClose, nodes, edges, mouseMode, onSetMouseMode, onAddShapeNode, isRunning }) => {
 
   const handleAddNode = (type: string, data: NodeData, sourceNode?: Node | null) => {
     onAddNode(type, data, sourceNode);
@@ -540,10 +541,15 @@ const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onCl
           <XMarkIcon />
         </button>
       </div>
-      <div className="flex flex-col gap-3 mt-4 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-gray-400 transition-colors">
+      <div className={`flex flex-col gap-3 mt-4 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-300 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-gray-400 transition-colors ${isRunning ? 'pointer-events-none opacity-60' : ''}`}>
+        {isRunning && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold rounded-lg p-3 mb-2 select-none pointer-events-auto">
+            ⚠️ Service is running. Stop the service in the project config to edit this project.
+          </div>
+        )}
         {renderContent()}
       </div>
-      <div className="mt-auto pt-4 border-t">
+      <div className={`mt-auto pt-4 border-t ${isRunning ? 'pointer-events-none opacity-60' : ''}`}>
         <div className="flex items-center justify-center gap-1 p-1 bg-slate-100 rounded-lg mb-2">
           <button
             onClick={() => onSetMouseMode('select')}

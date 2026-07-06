@@ -7,35 +7,57 @@ interface ServiceControlsProps {
   onOpenLogs: () => void;
   nodes?: Node[];
   edges?: Edge[];
+  /** When provided by App.tsx (the single source of truth), skip internal subscription */
+  externalStatus?: string;
+  externalCycleCount?: number;
 }
 
-const ServiceControls: React.FC<ServiceControlsProps> = ({ projectId, onOpenLogs, nodes, edges }) => {
-  const [status, setStatus] = useState<string>('stopped');
-  const [cycleCount, setCycleCount] = useState<number>(0);
+const ServiceControls: React.FC<ServiceControlsProps> = ({
+  projectId,
+  onOpenLogs,
+  nodes,
+  edges,
+  externalStatus,
+  externalCycleCount,
+}) => {
+  // Only maintain local state for fields not covered by the external source
   const [lastRunAt, setLastRunAt] = useState<string>('');
   const [lastError, setLastError] = useState<string | null>(null);
   const [intervalSec, setIntervalSec] = useState<number>(60);
 
-  // Fetch initial status
+  // If App.tsx provides status, use it directly (no duplicate subscription needed).
+  // Otherwise fall back to local state (standalone usage).
+  const [localStatus, setLocalStatus] = useState<string>('stopped');
+  const [localCycleCount, setLocalCycleCount] = useState<number>(0);
+
+  const status = externalStatus ?? localStatus;
+  const cycleCount = externalCycleCount ?? localCycleCount;
+
+  // Fetch ancillary info (lastRunAt, error, interval) from backend once
   useEffect(() => {
     const fetchStatus = async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         const info: any = await invoke('get_service_status_cmd', { projectId });
         if (info) {
-          setStatus(info.status);
-          setCycleCount(info.cycle_count);
-          setLastRunAt(info.last_run_at);
-          setLastError(info.last_error);
-          setIntervalSec(info.interval_seconds);
+          // Only update local status if no external status provided
+          if (externalStatus === undefined) {
+            setLocalStatus(info.status ?? 'stopped');
+            setLocalCycleCount(info.cycle_count ?? 0);
+          }
+          setLastRunAt(info.last_run_at ?? '');
+          setLastError(info.last_error ?? null);
+          setIntervalSec(info.interval_seconds ?? 60);
         }
       } catch (e) { /* not in tauri */ }
     };
     fetchStatus();
-  }, [projectId]);
+  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Subscribe to status changes
+  // Only subscribe internally when there is no external status feed
   useEffect(() => {
+    if (externalStatus !== undefined) return; // App.tsx already handles the subscription
+
     const unlistenRef: { current: (() => void) | null } = { current: null };
     let cancelled = false;
     const setup = async () => {
@@ -43,8 +65,8 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({ projectId, onOpenLogs
         const { listen } = await import('@tauri-apps/api/event');
         const unsub = await listen<any>(`service-status:${projectId}`, (event) => {
           const p = event.payload;
-          setStatus(p.status || 'stopped');
-          setCycleCount(p.cycle_count || 0);
+          setLocalStatus(p.status || 'stopped');
+          setLocalCycleCount(p.cycle_count || 0);
           setLastRunAt(p.last_run_at || '');
           setLastError(p.last_error || null);
         });
@@ -53,7 +75,28 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({ projectId, onOpenLogs
     };
     setup();
     return () => { cancelled = true; unlistenRef.current?.(); };
-  }, [projectId]);
+  }, [projectId, externalStatus]);
+
+  // Keep lastRunAt / lastError in sync from external events even when using external status
+  useEffect(() => {
+    if (externalStatus === undefined) return; // handled above
+
+    const unlistenRef: { current: (() => void) | null } = { current: null };
+    let cancelled = false;
+    const setup = async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        const unsub = await listen<any>(`service-status:${projectId}`, (event) => {
+          const p = event.payload;
+          setLastRunAt(p.last_run_at || '');
+          setLastError(p.last_error || null);
+        });
+        if (cancelled) { unsub(); } else { unlistenRef.current = unsub; }
+      } catch (e) { /* ignore */ }
+    };
+    setup();
+    return () => { cancelled = true; unlistenRef.current?.(); };
+  }, [projectId, externalStatus]);
 
   const start = useCallback(async () => {
     try {
@@ -103,12 +146,11 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({ projectId, onOpenLogs
         <div className="flex items-center gap-2">
           <span className={`inline-block w-3 h-3 rounded-full ${statusDot} ${isRunning ? 'animate-pulse' : ''}`} />
           <span className="font-semibold text-gray-800">Service</span>
-          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-            isRunning ? 'bg-green-200 text-green-800' :
-            isPaused ? 'bg-amber-200 text-amber-800' :
-            isError ? 'bg-red-200 text-red-800' :
-            'bg-gray-200 text-gray-700'
-          }`}>{statusLabel}</span>
+          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isRunning ? 'bg-green-200 text-green-800' :
+              isPaused ? 'bg-amber-200 text-amber-800' :
+                isError ? 'bg-red-200 text-red-800' :
+                  'bg-gray-200 text-gray-700'
+            }`}>{statusLabel}</span>
         </div>
         <div className="flex items-center gap-1.5">
           {isStopped && (
@@ -137,11 +179,9 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({ projectId, onOpenLogs
             </>
           )}
           {isError && (
-            <>
-              <button onClick={stop} className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-red-700 bg-red-100 hover:bg-red-200 rounded-lg transition-colors">
-                <StopIcon size={14} /> Stop
-              </button>
-            </>
+            <button onClick={stop} className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-red-700 bg-red-100 hover:bg-red-200 rounded-lg transition-colors">
+              <StopIcon size={14} /> Stop
+            </button>
           )}
         </div>
       </div>

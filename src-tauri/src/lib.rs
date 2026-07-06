@@ -12,8 +12,8 @@ mod progress;
 mod python_plugins;
 mod repository;
 mod request_clients;
-pub mod settings_engine;
 mod services;
+pub mod settings_engine;
 pub mod spreadsheet;
 mod system_service;
 mod worker_engine;
@@ -135,10 +135,24 @@ pub fn run() {
             // App settings
             commands::get_app_setting_cmd,
             commands::set_app_setting_cmd,
+            commands::lock_project_edit_cmd,
+            commands::unlock_project_edit_cmd,
         ])
         .setup(|app| {
             let user_dir = get_user_plugins_dir();
             let builtin_dir = get_builtin_plugins_dir(app);
+
+            // Clear any stale edit locks
+            if let Ok(dir) = app.path().app_data_dir() {
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() && path.extension().map_or(false, |ext| ext == "edit") {
+                            let _ = std::fs::remove_file(path);
+                        }
+                    }
+                }
+            }
 
             std::fs::create_dir_all(&user_dir).ok();
             if let Some(ref bd) = builtin_dir {

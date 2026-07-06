@@ -157,13 +157,101 @@ fn load_pipeline(
     Ok((nodes, edges))
 }
 
+fn ensure_runtime_table(conn: &rusqlite::Connection) {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS project_runtime (
+            project_id TEXT PRIMARY KEY,
+            runner_status TEXT NOT NULL DEFAULT 'stopped',
+            runner_pid INTEGER,
+            runner_type TEXT DEFAULT 'service',
+            edit_pid INTEGER,
+            cycle_count INTEGER NOT NULL DEFAULT 0,
+            last_run_at TEXT,
+            last_error TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        [],
+    )
+    .ok();
+}
+
+fn is_pid_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        if let Ok(mut child) = std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            if let Ok(status) = child.wait() {
+                return status.success();
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(output) = std::process::Command::new("tasklist")
+            .arg("/FI")
+            .arg(format!("PID eq {}", pid))
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return stdout.contains(&pid.to_string());
+        }
+    }
+    false
+}
+
+/// Returns true if the project has an active editor (desktop app with a live PID)
+fn is_project_being_edited(conn: &rusqlite::Connection, project_id: &str) -> bool {
+    let result: rusqlite::Result<Option<i64>> = conn.query_row(
+        "SELECT edit_pid FROM project_runtime WHERE project_id = ?1",
+        rusqlite::params![project_id],
+        |row| row.get(0),
+    );
+    match result {
+        Ok(Some(pid)) if pid > 0 => is_pid_alive(pid as u32),
+        _ => false,
+    }
+}
+
+fn set_runner_status(
+    conn: &rusqlite::Connection,
+    project_id: &str,
+    status: &str,
+    pid: Option<i64>,
+    cycle: Option<i64>,
+    last_run: Option<&str>,
+    last_error: Option<&str>,
+) {
+    conn.execute(
+        "INSERT INTO project_runtime (project_id, runner_status, runner_pid, runner_type, cycle_count, last_run_at, last_error, updated_at)
+         VALUES (?1, ?2, ?3, 'service', COALESCE(?4, 0), ?5, ?6, datetime('now'))
+         ON CONFLICT(project_id) DO UPDATE SET
+             runner_status = ?2,
+             runner_pid = ?3,
+             runner_type = 'service',
+             cycle_count = COALESCE(?4, cycle_count),
+             last_run_at = COALESCE(?5, last_run_at),
+             last_error = ?6,
+             updated_at = datetime('now')",
+        rusqlite::params![project_id, status, pid, cycle, last_run, last_error],
+    ).ok();
+}
+
 // ── Per-project async loop ─────────────────────────────────────────────────────────
 
 async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<AtomicBool>) {
-    let pid = proj.id.clone();
+    let project_id = proj.id.clone();
     let db_path = project_db_path(&proj.db_path);
+    let master_db = master_db_path();
+
     SimpleLogger::log_msg(
-        &pid,
+        &project_id,
         "info",
         "service",
         &format!(
@@ -172,17 +260,60 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
         ),
     );
 
+    // Ensure project_runtime table exists
+    if let Ok(conn) = rusqlite::Connection::open(&master_db) {
+        ensure_runtime_table(&conn);
+    }
+
     let lm = Arc::new(SimpleLogger::as_log_manager());
+    let self_pid = std::process::id() as i64;
     let mut cycle = 0u64;
 
     while !shutdown.load(Ordering::Relaxed) {
         cycle += 1;
         SimpleLogger::log_msg(
-            &pid,
+            &project_id,
             "info",
             "service",
             &format!("--- Cycle #{} ---", cycle),
         );
+
+        // Check if desktop app has this project open for editing
+        let is_editing = rusqlite::Connection::open(&master_db)
+            .map(|conn| is_project_being_edited(&conn, &project_id))
+            .unwrap_or(false);
+
+        if is_editing {
+            SimpleLogger::log_msg(
+                &project_id,
+                "info",
+                "service",
+                &format!(
+                    "Project '{}' is open in the desktop app. Skipping cycle.",
+                    proj.name
+                ),
+            );
+            for _ in 0..interval_secs {
+                if shutdown.load(Ordering::Relaxed) {
+                    break;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            }
+            continue;
+        }
+
+        // Mark as running in shared SQLite
+        if let Ok(conn) = rusqlite::Connection::open(&master_db) {
+            set_runner_status(
+                &conn,
+                &project_id,
+                "running",
+                Some(self_pid),
+                Some(cycle as i64),
+                None,
+                None,
+            );
+        }
 
         match load_pipeline(&db_path) {
             Ok((nodes, edges)) => {
@@ -191,35 +322,77 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                     edges,
                     settings: serde_json::json!({}),
                 };
-                let result = crawlflow_lib::pipeline::execute_pipeline(&config, &lm, &pid);
-                if result.success {
-                    SimpleLogger::log_msg(
-                        &pid,
-                        "info",
-                        "service",
-                        &format!(
-                            "Cycle #{}: {} steps, {} items",
-                            cycle,
-                            result.steps.len(),
-                            result.final_output.len()
-                        ),
-                    );
-                } else {
-                    SimpleLogger::log_msg(
-                        &pid,
-                        "error",
-                        "service",
-                        &format!(
-                            "Cycle #{} failed: {}",
-                            cycle,
-                            result.error.unwrap_or_default()
-                        ),
-                    );
+                let result = crawlflow_lib::pipeline::execute_pipeline(&config, &lm, &project_id);
+                let now = {
+                    let secs = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let (h, m, s) = ((secs % 86400) / 3600, (secs % 3600) / 60, secs % 60);
+                    format!(
+                        "{:04}-01-01T{:02}:{:02}:{:02}Z",
+                        1970 + secs / 31536000,
+                        h,
+                        m,
+                        s
+                    )
+                };
+                if let Ok(conn) = rusqlite::Connection::open(&master_db) {
+                    if result.success {
+                        set_runner_status(
+                            &conn,
+                            &project_id,
+                            "idle",
+                            Some(self_pid),
+                            Some(cycle as i64),
+                            Some(&now),
+                            None,
+                        );
+                        SimpleLogger::log_msg(
+                            &project_id,
+                            "info",
+                            "service",
+                            &format!(
+                                "Cycle #{}: {} steps, {} items",
+                                cycle,
+                                result.steps.len(),
+                                result.final_output.len()
+                            ),
+                        );
+                    } else {
+                        let err = result.error.clone().unwrap_or_default();
+                        set_runner_status(
+                            &conn,
+                            &project_id,
+                            "idle",
+                            Some(self_pid),
+                            Some(cycle as i64),
+                            Some(&now),
+                            Some(&err),
+                        );
+                        SimpleLogger::log_msg(
+                            &project_id,
+                            "error",
+                            "service",
+                            &format!("Cycle #{} failed: {}", cycle, err),
+                        );
+                    }
                 }
             }
             Err(e) => {
+                if let Ok(conn) = rusqlite::Connection::open(&master_db) {
+                    set_runner_status(
+                        &conn,
+                        &project_id,
+                        "idle",
+                        Some(self_pid),
+                        None,
+                        None,
+                        Some(&e),
+                    );
+                }
                 SimpleLogger::log_msg(
-                    &pid,
+                    &project_id,
                     "error",
                     "service",
                     &format!("Load pipeline failed: {}", e),
@@ -236,7 +409,11 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
         }
     }
 
-    SimpleLogger::log_msg(&pid, "info", "service", "Loop stopped.");
+    // Mark stopped on exit
+    if let Ok(conn) = rusqlite::Connection::open(&master_db) {
+        set_runner_status(&conn, &project_id, "stopped", None, None, None, None);
+    }
+    SimpleLogger::log_msg(&project_id, "info", "service", "Loop stopped.");
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────────

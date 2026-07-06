@@ -53,8 +53,16 @@ fn now_str() -> String {
     let h = t / 3600;
     let m = (t % 3600) / 60;
     let s = t % 60;
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-        1970 + days / 365, 1, 1, h, m, s, ms)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        1970 + days / 365,
+        1,
+        1,
+        h,
+        m,
+        s,
+        ms
+    )
 }
 
 fn status_str(s: &ServiceStatus) -> String {
@@ -84,6 +92,53 @@ pub struct ServiceManager {
     log_manager: RwLock<Option<Arc<LogManager>>>,
 }
 
+fn is_process_running(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        if let Ok(mut child) = std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            if let Ok(status) = child.wait() {
+                return status.success();
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(output) = std::process::Command::new("tasklist")
+            .arg("/FI")
+            .arg(format!("PID eq {}", pid))
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return stdout.contains(&pid.to_string());
+        }
+    }
+    false
+}
+
+fn is_project_running_in_background(project_id: &str) -> bool {
+    let path = dirs_next::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("com.crawlflow.desktop")
+        .join(format!("{}.run", project_id));
+    if !path.exists() {
+        return false;
+    }
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(pid) = content.trim().parse::<u32>() {
+            return is_process_running(pid);
+        }
+    }
+    false
+}
+
 impl ServiceManager {
     pub fn new_uninitialized() -> Self {
         Self {
@@ -99,11 +154,19 @@ impl ServiceManager {
     }
 
     fn app(&self) -> AppHandle {
-        self.app_handle.read().unwrap().clone().expect("ServiceManager not initialized")
+        self.app_handle
+            .read()
+            .unwrap()
+            .clone()
+            .expect("ServiceManager not initialized")
     }
 
     fn lm(&self) -> Arc<LogManager> {
-        self.log_manager.read().unwrap().clone().expect("ServiceManager not initialized")
+        self.log_manager
+            .read()
+            .unwrap()
+            .clone()
+            .expect("ServiceManager not initialized")
     }
 
     fn emit_st(
@@ -116,20 +179,25 @@ impl ServiceManager {
         le: &Option<String>,
     ) {
         let event = format!("service-status:{}", pid);
-        let _ = app.emit(&event, ServiceStatusPayload {
-            project_id: pid.to_string(),
-            status: st.to_string(),
-            cycle_count: cc,
-            started_at: sa.to_string(),
-            last_run_at: lr.to_string(),
-            last_error: le.clone(),
-        });
+        let _ = app.emit(
+            &event,
+            ServiceStatusPayload {
+                project_id: pid.to_string(),
+                status: st.to_string(),
+                cycle_count: cc,
+                started_at: sa.to_string(),
+                last_run_at: lr.to_string(),
+                last_error: le.clone(),
+            },
+        );
     }
 
     fn emit_for_state(&self, pid: &str, st: &ServiceState, status_str: &str) {
         let app = self.app();
         Self::emit_st(
-            &app, pid, status_str,
+            &app,
+            pid,
+            status_str,
             *st.cycle_count.read().unwrap(),
             &st.started_at.read().unwrap().clone(),
             &st.last_run_at.read().unwrap().clone(),
@@ -149,8 +217,10 @@ impl ServiceManager {
             return Err("Service already exists for this project".into());
         }
 
-        let interval = settings.get("intervalSeconds")
-            .and_then(|v| v.as_u64()).unwrap_or(60);
+        let interval = settings
+            .get("intervalSeconds")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(60);
 
         let status = Arc::new(RwLock::new(ServiceStatus::Running));
         let cancel = Arc::new(AtomicBool::new(false));
@@ -181,7 +251,8 @@ impl ServiceManager {
         let deser_nodes: Vec<crate::pipeline::PipelineNode> = nodes
             .into_iter()
             .filter_map(|v| {
-                let result: Option<crate::pipeline::PipelineNode> = serde_json::from_value(v.clone()).ok();
+                let result: Option<crate::pipeline::PipelineNode> =
+                    serde_json::from_value(v.clone()).ok();
                 if result.is_none() {
                     log::warn!("Failed to deserialize node: {:?}", v);
                 }
@@ -191,7 +262,8 @@ impl ServiceManager {
         let deser_edges: Vec<crate::pipeline::PipelineEdge> = edges
             .into_iter()
             .filter_map(|v| {
-                let result: Option<crate::pipeline::PipelineEdge> = serde_json::from_value(v.clone()).ok();
+                let result: Option<crate::pipeline::PipelineEdge> =
+                    serde_json::from_value(v.clone()).ok();
                 if result.is_none() {
                     log::warn!("Failed to deserialize edge: {:?}", v);
                 }
@@ -209,11 +281,20 @@ impl ServiceManager {
 
         tauri::async_runtime::spawn(async move {
             Self::run_loop(
-                &pid, pcfg, &app, &lm,
-                cancel, pause, status,
-                cycle_count, last_run_at, last_error,
-                interval_seconds, started_at,
-            ).await;
+                &pid,
+                pcfg,
+                &app,
+                &lm,
+                cancel,
+                pause,
+                status,
+                cycle_count,
+                last_run_at,
+                last_error,
+                interval_seconds,
+                started_at,
+            )
+            .await;
         });
 
         services.insert(project_id.to_string(), state);
@@ -249,7 +330,9 @@ impl ServiceManager {
             while pause.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             }
-            if cancel.load(Ordering::Relaxed) { break; }
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
 
             let _ = {
                 let mut cc = cycle_count.write().unwrap();
@@ -262,38 +345,58 @@ impl ServiceManager {
             *status.write().unwrap() = ServiceStatus::Running;
 
             lm.info(project_id, "system", &format!("--- Cycle #{} ---", cc));
-            Self::emit_st(app, project_id, "running", cc,
-                &started_at.read().unwrap(), &last_run_at.read().unwrap(), &last_error.read().unwrap());
+            Self::emit_st(
+                app,
+                project_id,
+                "running",
+                cc,
+                &started_at.read().unwrap(),
+                &last_run_at.read().unwrap(),
+                &last_error.read().unwrap(),
+            );
 
             let db_path = project_db_path(project_id);
             let result = crate::pipeline::execute_repository_pipeline(
-                &config,
-                &db_path,
-                lm,
-                project_id,
-                None,
-            ).await;
+                &config, &db_path, lm, project_id, None,
+            )
+            .await;
 
             if result.success {
-                lm.info(project_id, "system",
-                    &format!("Cycle #{} complete: ingested {}, matched {}, processed {}, failed {}",
-                        cc, result.ingested, result.matched, result.processed, result.failed));
+                lm.info(
+                    project_id,
+                    "system",
+                    &format!(
+                        "Cycle #{} complete: ingested {}, matched {}, processed {}, failed {}",
+                        cc, result.ingested, result.matched, result.processed, result.failed
+                    ),
+                );
                 *last_error.write().unwrap() = None;
             } else {
                 let err = result.error.unwrap_or_else(|| "Unknown error".into());
-                lm.error(project_id, "system", &format!("Cycle #{} failed (phase: {}): {}",
-                    cc, result.phase, err));
+                lm.error(
+                    project_id,
+                    "system",
+                    &format!("Cycle #{} failed (phase: {}): {}", cc, result.phase, err),
+                );
                 *last_error.write().unwrap() = Some(err.clone());
                 *status.write().unwrap() = ServiceStatus::Error(err.clone());
             }
 
-            Self::emit_st(app, project_id,
-                &status_str(&*status.read().unwrap()), cc,
-                &started_at.read().unwrap(), &last_run_at.read().unwrap(), &last_error.read().unwrap());
+            Self::emit_st(
+                app,
+                project_id,
+                &status_str(&*status.read().unwrap()),
+                cc,
+                &started_at.read().unwrap(),
+                &last_run_at.read().unwrap(),
+                &last_error.read().unwrap(),
+            );
 
             let interval = *interval_seconds.read().unwrap();
             for _ in 0..interval {
-                if cancel.load(Ordering::Relaxed) { break; }
+                if cancel.load(Ordering::Relaxed) {
+                    break;
+                }
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
         }
@@ -301,8 +404,15 @@ impl ServiceManager {
         lm.info(project_id, "system", "Service stopped");
         *status.write().unwrap() = ServiceStatus::Stopped;
         let cc = *cycle_count.read().unwrap();
-        Self::emit_st(app, project_id, "stopped", cc,
-            &started_at.read().unwrap(), &last_run_at.read().unwrap(), &last_error.read().unwrap());
+        Self::emit_st(
+            app,
+            project_id,
+            "stopped",
+            cc,
+            &started_at.read().unwrap(),
+            &last_run_at.read().unwrap(),
+            &last_error.read().unwrap(),
+        );
     }
 
     pub fn stop_service(&self, project_id: &str) -> Result<(), String> {
@@ -344,39 +454,89 @@ impl ServiceManager {
     }
 
     pub fn get_service_info(&self, project_id: &str) -> Option<ServiceInfo> {
-        let services = self.services.read().ok()?;
-        let st = services.get(project_id)?;
-        let info = ServiceInfo {
+        // 1. Check in-process service manager (in-app executor)
+        if let Ok(services) = self.services.read() {
+            if let Some(st) = services.get(project_id) {
+                return Some(ServiceInfo {
+                    project_id: project_id.to_string(),
+                    status: status_str(&*st.status.read().unwrap()),
+                    cycle_count: *st.cycle_count.read().unwrap(),
+                    started_at: st.started_at.read().unwrap().clone(),
+                    last_run_at: st.last_run_at.read().unwrap().clone(),
+                    last_error: st.last_error.read().unwrap().clone(),
+                    interval_seconds: *st.interval_seconds.read().unwrap(),
+                });
+            }
+        }
+
+        // 2. Fall back to SQLite project_runtime (background system service)
+        let db_path = dirs_next::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("com.crawlflow.desktop")
+            .join("crawlflow.db");
+        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+            let row: rusqlite::Result<(String, i64, Option<String>, Option<String>, u64)> = conn.query_row(
+                "SELECT runner_status, cycle_count, last_run_at, last_error, COALESCE(runner_pid, 0) FROM project_runtime WHERE project_id = ?1",
+                rusqlite::params![project_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, u64>(4).unwrap_or(0))),
+            );
+            if let Ok((status, cycle_count, last_run_at, last_error, runner_pid)) = row {
+                // For background service "running" status, verify the PID is still alive
+                let effective_status = if status == "running" {
+                    if is_project_running_in_background(project_id) {
+                        "running"
+                    } else {
+                        "stopped"
+                    }
+                } else {
+                    &status
+                };
+                return Some(ServiceInfo {
+                    project_id: project_id.to_string(),
+                    status: effective_status.to_string(),
+                    cycle_count: cycle_count as u64,
+                    started_at: String::new(),
+                    last_run_at: last_run_at.unwrap_or_default(),
+                    last_error,
+                    interval_seconds: 60,
+                });
+            }
+        }
+
+        // 3. Default: stopped (no record means no service has ever run)
+        Some(ServiceInfo {
             project_id: project_id.to_string(),
-            status: status_str(&*st.status.read().unwrap()),
-            cycle_count: *st.cycle_count.read().unwrap(),
-            started_at: st.started_at.read().unwrap().clone(),
-            last_run_at: st.last_run_at.read().unwrap().clone(),
-            last_error: st.last_error.read().unwrap().clone(),
-            interval_seconds: *st.interval_seconds.read().unwrap(),
-        };
-        Some(info)
+            status: "stopped".to_string(),
+            cycle_count: 0,
+            started_at: String::new(),
+            last_run_at: String::new(),
+            last_error: None,
+            interval_seconds: 60,
+        })
     }
 
     pub fn list_service_infos(&self) -> Vec<ServiceInfo> {
         let services = self.services.read().unwrap();
-        services.iter().map(|(pid, st)| {
-            let status = status_str(&*st.status.read().unwrap());
-            let cc = *st.cycle_count.read().unwrap();
-            let sa = st.started_at.read().unwrap().clone();
-            let lr = st.last_run_at.read().unwrap().clone();
-            let le = st.last_error.read().unwrap().clone();
-            let iv = *st.interval_seconds.read().unwrap();
-            ServiceInfo {
-                project_id: pid.clone(),
-                status,
-                cycle_count: cc,
-                started_at: sa,
-                last_run_at: lr,
-                last_error: le,
-                interval_seconds: iv,
-            }
-        }).collect()
+        services
+            .iter()
+            .map(|(pid, st)| {
+                let status = status_str(&*st.status.read().unwrap());
+                let cc = *st.cycle_count.read().unwrap();
+                let sa = st.started_at.read().unwrap().clone();
+                let lr = st.last_run_at.read().unwrap().clone();
+                let le = st.last_error.read().unwrap().clone();
+                let iv = *st.interval_seconds.read().unwrap();
+                ServiceInfo {
+                    project_id: pid.clone(),
+                    status,
+                    cycle_count: cc,
+                    started_at: sa,
+                    last_run_at: lr,
+                    last_error: le,
+                    interval_seconds: iv,
+                }
+            })
+            .collect()
     }
 }
 

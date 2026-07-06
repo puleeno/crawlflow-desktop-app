@@ -3,9 +3,9 @@ use crate::logs::LogManager;
 use crate::models::*;
 use crate::plugins::PluginEngine;
 use crate::services::ServiceManager;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::State;
-use std::path::PathBuf;
 
 pub struct AppState {
     pub plugin_engine: Mutex<PluginEngine>,
@@ -31,10 +31,7 @@ pub async fn extract_html_cmd(html: String, rules: Vec<ExtractRule>) -> Vec<Extr
 }
 
 #[tauri::command]
-pub fn execute_processor_cmd(
-    state: State<'_, AppState>,
-    request: ProcessRequest,
-) -> ProcessResult {
+pub fn execute_processor_cmd(state: State<'_, AppState>, request: ProcessRequest) -> ProcessResult {
     let mut engine = state.plugin_engine.lock().unwrap();
     engine.execute_processor(&request.processor_type, request.data, request.config)
 }
@@ -112,8 +109,14 @@ pub fn inner_fetch_rss(url: &str, max_items: usize) -> Result<Vec<serde_json::Va
             "pubDate".into(),
             serde_json::Value::String(get_text("pubDate, published, updated")),
         );
-        item.insert("author".into(), serde_json::Value::String(get_text("author")));
-        item.insert("guid".into(), serde_json::Value::String(get_text("guid, id")));
+        item.insert(
+            "author".into(),
+            serde_json::Value::String(get_text("author")),
+        );
+        item.insert(
+            "guid".into(),
+            serde_json::Value::String(get_text("guid, id")),
+        );
 
         items.push(serde_json::Value::Object(item));
     }
@@ -229,7 +232,8 @@ pub async fn export_excel_cmd(request: ExportRequest) -> ExportResult {
             let content = base64::engine::general_purpose::STANDARD.encode(&bytes);
             ExportResult {
                 file_name: format!("export_{}.xlsx", chrono_now()),
-                mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
+                mime_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    .into(),
                 content,
             }
         }
@@ -237,7 +241,7 @@ pub async fn export_excel_cmd(request: ExportRequest) -> ExportResult {
             file_name: "error.txt".into(),
             mime_type: "text/plain".into(),
             content: format!("Excel export failed: {}", e),
-        }
+        },
     }
 }
 
@@ -257,12 +261,9 @@ pub async fn spreadsheet_read_cmd(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn spreadsheet_write_cmd(
-    data: String,
-    path: String,
-) -> Result<(), String> {
-    let wb: crate::spreadsheet::Workbook = serde_json::from_str(&data)
-        .map_err(|e| format!("Invalid workbook JSON: {}", e))?;
+pub async fn spreadsheet_write_cmd(data: String, path: String) -> Result<(), String> {
+    let wb: crate::spreadsheet::Workbook =
+        serde_json::from_str(&data).map_err(|e| format!("Invalid workbook JSON: {}", e))?;
     crate::spreadsheet::write(&wb, &path)
 }
 
@@ -286,11 +287,13 @@ pub async fn spreadsheet_export_cmd(
             let wb = crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name);
             match crate::spreadsheet::to_csv_string(&wb) {
                 Ok(csv) => (csv, "text/csv".into(), "csv".into()),
-                Err(e) => return SpreadsheetResult {
-                    file_name: "error.txt".into(),
-                    mime_type: "text/plain".into(),
-                    content: format!("CSV export failed: {}", e),
-                },
+                Err(e) => {
+                    return SpreadsheetResult {
+                        file_name: "error.txt".into(),
+                        mime_type: "text/plain".into(),
+                        content: format!("CSV export failed: {}", e),
+                    }
+                }
             }
         }
         "ods" => {
@@ -299,13 +302,19 @@ pub async fn spreadsheet_export_cmd(
                 Ok(bytes) => {
                     use base64::Engine;
                     let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                    (encoded, "application/vnd.oasis.opendocument.spreadsheet".into(), "ods".into())
+                    (
+                        encoded,
+                        "application/vnd.oasis.opendocument.spreadsheet".into(),
+                        "ods".into(),
+                    )
                 }
-                Err(e) => return SpreadsheetResult {
-                    file_name: "error.txt".into(),
-                    mime_type: "text/plain".into(),
-                    content: format!("ODS export failed: {}", e),
-                },
+                Err(e) => {
+                    return SpreadsheetResult {
+                        file_name: "error.txt".into(),
+                        mime_type: "text/plain".into(),
+                        content: format!("ODS export failed: {}", e),
+                    }
+                }
             }
         }
         _ => {
@@ -315,13 +324,19 @@ pub async fn spreadsheet_export_cmd(
                 Ok(bytes) => {
                     use base64::Engine;
                     let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                    (encoded, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(), "xlsx".into())
+                    (
+                        encoded,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
+                        "xlsx".into(),
+                    )
                 }
-                Err(e) => return SpreadsheetResult {
-                    file_name: "error.txt".into(),
-                    mime_type: "text/plain".into(),
-                    content: format!("XLSX export failed: {}", e),
-                },
+                Err(e) => {
+                    return SpreadsheetResult {
+                        file_name: "error.txt".into(),
+                        mime_type: "text/plain".into(),
+                        content: format!("XLSX export failed: {}", e),
+                    }
+                }
             }
         }
     };
@@ -333,7 +348,11 @@ pub async fn spreadsheet_export_cmd(
     }
 }
 
-pub fn inner_parse_html_table(html: &str, table_index: usize, has_header: bool) -> Vec<serde_json::Value> {
+pub fn inner_parse_html_table(
+    html: &str,
+    table_index: usize,
+    has_header: bool,
+) -> Vec<serde_json::Value> {
     let document = scraper::Html::parse_document(html);
     let table_selector = scraper::Selector::parse("table").unwrap();
     let tables: Vec<_> = document.select(&table_selector).collect();
@@ -382,7 +401,10 @@ pub fn inner_parse_html_table(html: &str, table_index: usize, has_header: bool) 
 }
 
 #[tauri::command]
-pub async fn parse_html_table_cmd(html: String, config: serde_json::Value) -> Vec<serde_json::Value> {
+pub async fn parse_html_table_cmd(
+    html: String,
+    config: serde_json::Value,
+) -> Vec<serde_json::Value> {
     let table_index = config
         .get("tableIndex")
         .and_then(|v| v.as_u64())
@@ -398,7 +420,9 @@ pub async fn parse_html_table_cmd(html: String, config: serde_json::Value) -> Ve
 // ── Python plugin commands ───────────────────────────────────────
 
 #[tauri::command]
-pub fn list_python_plugins_cmd(state: State<'_, AppState>) -> Vec<crate::python_plugins::PythonPluginMeta> {
+pub fn list_python_plugins_cmd(
+    state: State<'_, AppState>,
+) -> Vec<crate::python_plugins::PythonPluginMeta> {
     let mut engine = state.plugin_engine.lock().unwrap();
     engine.list_python_plugins_meta()
 }
@@ -478,9 +502,7 @@ pub fn parse_html_with_bs4_cmd(
 /// Process parsed HTML items — demonstrates Rust-side processing of
 /// data parsed by Python BeautifulSoup.
 #[tauri::command]
-pub fn summarize_parsed_html_cmd(
-    items: Vec<ParsedHtmlItem>,
-) -> ParsedHtmlSummary {
+pub fn summarize_parsed_html_cmd(items: Vec<ParsedHtmlItem>) -> ParsedHtmlSummary {
     let mut summary = ParsedHtmlSummary {
         total_items: items.len(),
         links: vec![],
@@ -558,7 +580,8 @@ pub fn run_demo_cmd() -> Result<serde_json::Value, String> {
     });
 
     // Step 3: Run filter processor (only items with views > 500)
-    let filter_config = serde_json::json!({"field": "views", "operator": "greater_than", "value": "500"});
+    let filter_config =
+        serde_json::json!({"field": "views", "operator": "greater_than", "value": "500"});
     let filter_plugin = plugins::RustPlugin {
         id: "rust-filter".into(),
         name: "Filter".into(),
@@ -627,9 +650,16 @@ pub fn start_project_service_cmd(
     edges: Vec<serde_json::Value>,
     settings: serde_json::Value,
 ) -> Result<String, String> {
-    log::info!("start_project_service_cmd: {} nodes, {} edges", nodes.len(), edges.len());
+    log::info!(
+        "start_project_service_cmd: {} nodes, {} edges",
+        nodes.len(),
+        edges.len()
+    );
     if let Some(first) = nodes.first() {
-        log::info!("start_project_service_cmd: first node keys: {:?}", first.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+        log::info!(
+            "start_project_service_cmd: first node keys: {:?}",
+            first.as_object().map(|o| o.keys().collect::<Vec<_>>())
+        );
     }
     state
         .service_manager
@@ -679,9 +709,7 @@ pub fn get_service_status_cmd(
 }
 
 #[tauri::command]
-pub fn list_project_services_cmd(
-    state: State<'_, AppState>,
-) -> Vec<crate::services::ServiceInfo> {
+pub fn list_project_services_cmd(state: State<'_, AppState>) -> Vec<crate::services::ServiceInfo> {
     state.service_manager.list_service_infos()
 }
 
@@ -701,10 +729,7 @@ pub fn get_project_logs_cmd(
 }
 
 #[tauri::command]
-pub fn clear_project_logs_cmd(
-    state: State<'_, AppState>,
-    project_id: String,
-) -> String {
+pub fn clear_project_logs_cmd(state: State<'_, AppState>, project_id: String) -> String {
     state.log_manager.clear(&project_id);
     format!("Logs cleared for project {}", project_id)
 }
@@ -788,8 +813,8 @@ pub async fn install_marketplace_item(
 
     // Extract zip
     let reader = std::io::Cursor::new(&bytes);
-    let mut archive = zip::ZipArchive::new(reader)
-        .map_err(|e| format!("Failed to open zip: {}", e))?;
+    let mut archive =
+        zip::ZipArchive::new(reader).map_err(|e| format!("Failed to open zip: {}", e))?;
 
     for i in 0..archive.len() {
         let mut file = archive
@@ -817,12 +842,15 @@ pub async fn install_marketplace_item(
 // ── Settings Engine Commands ──────────────────────────────
 
 #[tauri::command]
-pub fn list_processor_settings_schemas() -> std::collections::HashMap<String, crate::settings_engine::SettingsSchema> {
+pub fn list_processor_settings_schemas(
+) -> std::collections::HashMap<String, crate::settings_engine::SettingsSchema> {
     crate::settings_engine::list_processor_schemas()
 }
 
 #[tauri::command]
-pub fn get_processor_settings_schema(processor_id: String) -> Option<crate::settings_engine::SettingsSchema> {
+pub fn get_processor_settings_schema(
+    processor_id: String,
+) -> Option<crate::settings_engine::SettingsSchema> {
     crate::settings_engine::get_processor_schema(&processor_id)
 }
 
@@ -891,7 +919,12 @@ pub fn get_raw_items_summary_cmd(
     let db_path = get_project_db_path(&project_id);
     if !db_path.exists() {
         return Ok(crate::repository::ItemsSummary {
-            total: 0, pending: 0, processing: 0, done: 0, error: 0, ignored: 0,
+            total: 0,
+            pending: 0,
+            processing: 0,
+            done: 0,
+            error: 0,
+            ignored: 0,
         });
     }
 
@@ -900,10 +933,10 @@ pub fn get_raw_items_summary_cmd(
 }
 
 fn master_db_path() -> PathBuf {
-    let data_dir = dirs_next::data_dir()
+    dirs_next::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("crawlflow");
-    data_dir.join("crawlflow.db")
+        .join("com.crawlflow.desktop")
+        .join("crawlflow.db")
 }
 
 #[tauri::command]
@@ -911,7 +944,8 @@ pub fn get_app_setting_cmd(key: String) -> Result<Option<String>, String> {
     let db_path = master_db_path();
     let conn = rusqlite::Connection::open(&db_path)
         .map_err(|e| format!("Failed to open master DB: {}", e))?;
-    let mut stmt = conn.prepare("SELECT value FROM app_settings WHERE key = ?1")
+    let mut stmt = conn
+        .prepare("SELECT value FROM app_settings WHERE key = ?1")
         .map_err(|e| format!("Failed to prepare: {}", e))?;
     let result: Option<String> = stmt.query_row([&key], |row| row.get(0)).ok();
     Ok(result)
@@ -925,6 +959,60 @@ pub fn set_app_setting_cmd(key: String, value: String) -> Result<(), String> {
     conn.execute(
         "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?1, ?2)",
         rusqlite::params![key, value],
-    ).map_err(|e| format!("Failed to save setting: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to save setting: {}", e))?;
+    Ok(())
+}
+
+fn get_lock_file_path(project_id: &str) -> PathBuf {
+    dirs_next::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("com.crawlflow.desktop")
+        .join(format!("{}.edit", project_id))
+}
+
+#[tauri::command]
+pub fn lock_project_edit_cmd(project_id: String) -> Result<(), String> {
+    let db_path = master_db_path();
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS project_runtime (
+            project_id TEXT PRIMARY KEY,
+            runner_status TEXT NOT NULL DEFAULT 'stopped',
+            runner_pid INTEGER,
+            runner_type TEXT DEFAULT 'app',
+            edit_pid INTEGER,
+            cycle_count INTEGER NOT NULL DEFAULT 0,
+            last_run_at TEXT,
+            last_error TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        [],
+    )
+    .ok();
+    let pid = std::process::id() as i64;
+    conn.execute(
+        "INSERT INTO project_runtime (project_id, edit_pid, runner_status, updated_at)
+         VALUES (?1, ?2, 'stopped', datetime('now'))
+         ON CONFLICT(project_id) DO UPDATE SET edit_pid = ?2, updated_at = datetime('now')",
+        rusqlite::params![project_id, pid],
+    )
+    .map_err(|e| e.to_string())?;
+    log::info!("Locked project {} for editing (PID: {})", project_id, pid);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn unlock_project_edit_cmd(project_id: String) -> Result<(), String> {
+    let db_path = master_db_path();
+    let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE project_runtime SET edit_pid = NULL, updated_at = datetime('now') WHERE project_id = ?1",
+        rusqlite::params![project_id],
+    ).ok();
+    log::info!("Unlocked project {} from editing", project_id);
     Ok(())
 }
