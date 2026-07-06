@@ -1,4 +1,4 @@
-use crate::item_matcher::{ItemMatcher, MatchResult, MatchRule};
+use crate::item_matcher::{ItemMatcher, MatchRule};
 use crate::repository::{RawItem, RawItemRepository};
 use serde::{Deserialize, Serialize};
 

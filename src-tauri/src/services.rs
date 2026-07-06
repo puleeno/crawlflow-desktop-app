@@ -1,5 +1,5 @@
 use crate::logs::{LogManager, ServiceStatusPayload};
-use crate::pipeline::{PipelineConfig, execute_pipeline};
+use crate::pipeline::PipelineConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};

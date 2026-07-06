@@ -23,8 +23,9 @@ All node types are registered in `App.tsx` via `nodeTypes` (React Flow). Each ty
 | Node Type             | React Component          | Role                                      |
 |-----------------------|--------------------------|-------------------------------------------|
 | `start`               | `StartNode`              | **Data Source** — entry point of the pipeline. Fetches URLs, RSS, API, file, MySQL. Mandatory. |
-| `repository`          | `RepositoryNode`         | **Raw Data Store** — singleton. Receives data from all `start` nodes. Fixed ID: `repository-node`. |
-| `worker`              | `WorkerNode`             | **Router/Dispatcher** — receives raw data from `repository`, routes to extractors. |
+| `preprocessor`        | `PreprocessorNode`       | **Data Preprocessor** — extracts items from raw data (HTML/CSV/JSON/XML) using configurable rules + plugin dispatch. Sits between `start` and `repository`. |
+| `repository`          | `RepositoryNode`         | **Raw Data Store** — singleton. Receives processed items from all `preprocessor`/`start` nodes. Fixed ID: `repository-node`. |
+| `worker`              | `WorkerNode`             | **Router/Dispatcher** — receives raw items from `repository` via matching rules, routes to processor chains. |
 | `html-data-extractor` | `HTMLDataExtractorNode`  | **Extractor** — parses HTML using CSS selectors/JSON-LD/regex rules. |
 | `csv-extractor`       | `CSVExtractorNode`       | **Extractor** — maps CSV columns to named fields. |
 | `json-extractor`      | `JSONExtractorNode`      | **Extractor** — maps JSONPath expressions to named fields. |
@@ -58,24 +59,27 @@ These rules are enforced in `App.tsx` (`onConnect`, `addNode`, and reactive `use
 Every valid pipeline **must** follow this layered layout (top → bottom):
 
 ```
-[start]  [start]  [start]   ← Layer 0: Data Sources (1 or more)
+[start]    [start]    [start]     ← Layer 0: Data Sources (1 or more)
+   |          |          |
+[preprocessor]            |       ← Layer 0.5: Data Preprocessors (optional)
+   |                      |
+    → [repository] ←──────       ← Layer 1: Single shared repository (singleton)
          |
-    [repository]             ← Layer 1: Single shared repository (auto-created, singleton)
-         |
-[worker] [worker]            ← Layer 2: Data Routers (1 or more)
+[worker] [worker]                ← Layer 2: Data Routers (1 or more)
    |           |
-[extractor] [extractor]      ← Layer 3: Extractors (feed INTO worker, not from)
+[extractor] [extractor]          ← Layer 3: Extractors (feed INTO worker, not from)
          |
-[processor] → [processor]    ← Layer 4: Processor chain (linear or branching)
+[processor] → [processor]        ← Layer 4: Processor chain (linear or branching)
          |
-   [completion]              ← Layer 5: Terminal (auto-managed by UI)
+   [completion]                  ← Layer 5: Terminal (auto-managed by UI)
 ```
 
 ### 3.2 Specific Connection Constraints
 
 | Source Type       | Allowed Targets       | Rule |
 |-------------------|-----------------------|------|
-| `start`           | `repository` only     | Adding a `start` node auto-creates the `repository` node and an edge `start → repository` if none exists. |
+| `start`           | `preprocessor` or `repository` | Adding a `start` node auto-creates the `repository` node. If no `preprocessor` exists, `start → repository` edge is auto-created. |
+| `preprocessor`    | `repository` only     | Preprocessors connect to the repository. Each `start` can optionally have a `preprocessor` between it and `repository`. |
 | `repository`      | `worker` only         | **Hard rule** (enforced in `onConnect`): `repository` → any non-`worker` target is **rejected**. |
 | Extractor types   | `worker` only         | Extractors connect **into** the worker (reverse of intuition). Edge direction: `extractor → worker`. Each `worker` may only have **one** extractor input; a second attempt shows an alert. |
 | `worker`          | `processor` or other  | Workers output to processors. Adding a `processor` from a `worker` appends to the end of the existing processor chain. |
@@ -199,10 +203,11 @@ processor  → processor     (optional chain)
 
 ## 7. Pipeline Execution (Rust Backend)
 
-The file `src-tauri/src/pipeline.rs` implements `execute_pipeline()`.  
-The pipeline is topologically sorted (Kahn's algorithm) and nodes execute in dependency order.
+Two execution paths exist:
 
-### Node Type Handlers in `execute_pipeline`:
+### 7a. Legacy Pipeline (`execute_pipeline` / `execute_pipeline_with_mode`)
+
+File: `src-tauri/src/pipeline.rs`. Topologically sorted (Kahn's algorithm), nodes execute in dependency order with Queue or Parallel mode.
 
 | Node type string (Rust) | Behavior |
 |-------------------------|----------|
@@ -214,7 +219,58 @@ The pipeline is topologically sorted (Kahn's algorithm) and nodes execute in dep
 | `"csvExport"` / `"databaseExport"` | Logs and passes data through |
 | `_` (any other) | Logs a debug warning, passes data through |
 
-> ⚠️ **Type mismatch note:** Frontend node types use kebab-case (e.g., `html-data-extractor`), while `pipeline.rs` uses camelCase aliases (e.g., `htmlExtractor`). All unknown types fall through to the passthrough handler without error. The Rust pipeline is designed to be non-blocking — unknown nodes pass data forward.
+> ⚠️ **Type mismatch note:** Frontend node types use kebab-case (e.g., `html-data-extractor`), while `pipeline.rs` uses camelCase aliases (e.g., `htmlExtractor`). All unknown types fall through to the passthrough handler without error.
+
+### 7b. Repository-based Pipeline (`execute_repository_pipeline`)
+
+New architecture with 4 phases using `raw_items` + `processing_log` SQLite tables per project:
+
+#### Phase 1a: Data Fetching
+Iterates `start`/`dataSource`/`rssSource` nodes, fetches raw data:
+- `"url"` / `"api"` → HTTP fetch via reqwest (blocking tokio runtime)
+- `"csv"` / `"json"` / `"xml"` / `"text"` → file read via `std::fs::read_to_string`
+
+#### Phase 1b: Data Preprocessing
+- Looks for `preprocessor` nodes matching the source's `inputType` (`html`/`csv`/`json`/`xml`/`text`)
+- Extracts items from raw data using configurable rules:
+  - **HTML**: CSS selector + URL pattern extraction (via `ItemMatcher`)
+  - **CSV**: delimiter-based row parsing with optional headers
+  - **JSON**: JSON path navigation + auto URL extraction
+  - **XML**: regex-based `<item>` extraction
+  - **Text**: line-by-line processing
+- Dispatches to **Python plugin preprocessors** first if a matching plugin is registered:
+  - Plugin declares `"preprocessor"` in its `capabilities`
+  - Plugin exposes `register_preprocessors()` returning preprocessor registrations
+  - Plugin exposes `preprocess_data(data_json)` for custom extraction logic
+  - Fallback to built-in `DataPreprocessor` if plugin fails or no match
+- Saves extracted `NewRawItem` structs to `raw_items` table in project DB
+
+#### Phase 2: Worker Matching
+- Reads worker nodes with `detectionRules`/`matchingRules` (6 pattern types: wildcard, regex, contains, startsWith, endsWith, always)
+- `WorkerEngine::match_items()` assigns matched items to workers, ignores unmatched items
+
+#### Phase 3: Chain of Processors
+- For each worker, fetches matched items from `raw_items` table
+- Runs processors sequentially per item via `execute_processor_static()`:
+  - `rust-deduplicate`, `rust-filter`, `rust-sort`, `rust-limit`
+  - Python plugin processors prefixed with `py-`
+- Logs each step to `processing_log` table
+
+#### Phase 4: Finish Actions
+- Export actions: `ExportExcel`, `ExportCsv`, `SaveToDatabase`, `SendToApi`, `Webhook`, `LogSummary`
+- Default: `LogSummary` if no finish nodes found
+
+### Signature
+```rust
+pub fn execute_repository_pipeline(
+    config: &PipelineConfig,
+    db_path: &Path,
+    log_manager: &Arc<LogManager>,
+    project_id: &str,
+    python_engine: Option<&mut PythonPluginEngine>,
+) -> RepositoryPipelineResult
+```
+`python_engine` is optional — if `None`, only built-in processing is used.
 
 ---
 
@@ -265,6 +321,8 @@ crawlflow-desktop-app/
 ├── App.tsx                    # Main canvas, node types, flow rules, addNode logic
 ├── types.ts                   # All TypeScript types (NodeData, Preset, ProcessorNodeData, etc.)
 ├── presets.ts                 # HTML extraction presets (CSS selector sets for html-data-extractor)
+├── types/
+│   └── settings.ts            # Settings Framework TypeScript types
 ├── lib/
 │   ├── presets.ts             # Project template presets (fetched from Rust backend)
 │   ├── db.ts                  # SQLite CRUD (createProject, saveProjectState, createProjectFromPreset)
@@ -272,13 +330,33 @@ crawlflow-desktop-app/
 │   └── marketplace.ts         # Marketplace API client (crawlflow.pages.dev)
 ├── components/
 │   ├── nodes/                 # React components for each node type
+│   ├── settings/              # DynamicForm + field renderers (Settings Framework)
 │   ├── ProjectManager.tsx     # Project selection and preset application
 │   └── Sidebar.tsx            # Node palette (data sources, processors)
+├── plugins/                   # Python plugins (marketplace distribution)
+│   ├── wordpress_publisher/   # WordPress REST API publisher
+│   ├── oreka_shop_crawler/    # Oreka.vn product crawler
+│   ├── settings/              # Settings Framework (Field types, Schema)
+│   └── processors/            # Example processors
 └── src-tauri/src/
-    ├── pipeline.rs            # DAG execution engine (topological sort)
-    ├── plugins.rs             # Built-in Rust processors + preset definitions
+    ├── pipeline.rs            # Legacy + Repository-based pipeline execution engines
+    ├── plugins.rs             # PluginEngine (Rust + Python dispatch), built-in processors, presets
+    ├── data_preprocessor.rs   # Data Preprocessor (HTML/CSV/JSON/XML/text + plugin dispatch)
+    ├── repository.rs          # Raw Items Repository (SQLite CRUD, dedup, priority)
+    ├── item_matcher.rs        # Pattern matching engine (6 pattern types, URL extraction)
+    ├── worker_engine.rs       # Worker match + processor chain execution
+    ├── finish_actions.rs      # Post-processing actions (export, webhook, log)
+    ├── settings_engine.rs     # Settings Framework (schema validation, registry)
+    ├── python_plugins.rs      # PyO3 Python plugin engine (hooks, presets, preprocessors)
+    ├── spreadsheet.rs         # XLSX/CSV/ODS read/write
     ├── commands.rs            # Tauri command handlers
     ├── services.rs            # In-process background service manager
     ├── system_service.rs      # OS-level service install/uninstall
+    ├── migrations.rs          # SQLite schema migrations (v1 + v2 with raw_items)
+    ├── models.rs              # Shared structs (CrawlRequest, ProcessResult, etc.)
+    ├── crawler.rs             # Async HTTP fetch + HTML extraction
+    ├── request_clients.rs     # Multiple client implementations (reqwest, Chrome, Playwright)
+    ├── logs.rs                # Ring buffer log manager
+    ├── progress.rs            # Progress tracking
     └── bin/service.rs         # Headless crawlflow-service binary
 ```

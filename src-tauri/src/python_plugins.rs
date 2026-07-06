@@ -369,6 +369,98 @@ impl PythonPluginEngine {
         })
     }
 
+    /// Collect preprocessor registrations from all plugins with `register_preprocessors()`.
+    pub fn collect_preprocessors(&mut self) -> Vec<crate::data_preprocessor::PreprocessorRegistration> {
+        let mut registrations = Vec::new();
+        let plugin_ids: Vec<String> = self.plugins.keys().cloned().collect();
+
+        for id in &plugin_ids {
+            let result: Result<Vec<crate::data_preprocessor::PreprocessorRegistration>, String> =
+                Python::with_gil(|py| {
+                    let plugin = match self.plugins.get_mut(id) {
+                        Some(p) => p,
+                        None => return Ok(vec![]),
+                    };
+
+                    let globals = plugin
+                        .ensure_loaded(py)
+                        .map_err(|e| format!("Failed to load plugin '{}': {}", id, e))?;
+
+                    let func = match globals.get_item("register_preprocessors") {
+                        Ok(Some(f)) if f.is_callable() => f,
+                        _ => return Ok(vec![]),
+                    };
+
+                    let result = func
+                        .call0()
+                        .map_err(|e| {
+                            format!("Python plugin '{}.register_preprocessors' failed: {}", id, e)
+                        })?;
+
+                    let result_str: String = result.extract().map_err(|e| {
+                        format!("Failed to extract preprocessor string: {}", e)
+                    })?;
+
+                    let mut parsed: Vec<crate::data_preprocessor::PreprocessorRegistration> =
+                        serde_json::from_str(&result_str).map_err(|e| {
+                            format!("Failed to parse preprocessor JSON: {}", e)
+                        })?;
+
+                    // Gắn plugin_id cho mỗi registration
+                    for reg in &mut parsed {
+                        reg.plugin_id = id.clone();
+                    }
+
+                    Ok(parsed)
+                });
+
+            if let Ok(mut regs) = result {
+                registrations.append(&mut regs);
+            }
+        }
+
+        registrations
+    }
+
+    /// Call `preprocess_data` hook in a Python plugin.
+    /// Input: serde_json::Value (raw_data, source_url, config)
+    /// Output: Vec<NewRawItem>
+    pub fn call_preprocessor_hook(
+        &mut self,
+        plugin_id: &str,
+        data: serde_json::Value,
+    ) -> Result<Vec<crate::repository::NewRawItem>, String> {
+        let plugin = self
+            .plugins
+            .get_mut(plugin_id)
+            .ok_or_else(|| format!("Python plugin '{}' not found", plugin_id))?;
+
+        Python::with_gil(|py| -> Result<Vec<crate::repository::NewRawItem>, String> {
+            let globals = plugin
+                .ensure_loaded(py)
+                .map_err(|e| format!("Failed to load plugin: {}", e))?;
+
+            let func = match globals.get_item("preprocess_data") {
+                Ok(Some(f)) if f.is_callable() => f,
+                _ => return Err("preprocess_data not found".to_string()),
+            };
+
+            let data_json =
+                serde_json::to_string(&data).map_err(|e| format!("Serialisation error: {}", e))?;
+
+            let result = func
+                .call1((data_json,))
+                .map_err(|e| format!("Python plugin '{}.preprocess_data' failed: {}", plugin_id, e))?;
+
+            let result_str: String = result
+                .extract()
+                .map_err(|e| format!("Failed to extract Python result string: {}", e))?;
+
+            serde_json::from_str(&result_str)
+                .map_err(|e| format!("Failed to parse Python result JSON: {}", e))
+        })
+    }
+
     /// Run a processing pipeline: for each step, delegate to the Python plugin.
     pub fn run_pipeline(
         &mut self,

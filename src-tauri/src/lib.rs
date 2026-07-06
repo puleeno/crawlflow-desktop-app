@@ -1,5 +1,6 @@
 mod commands;
 mod crawler;
+pub mod data_preprocessor;
 mod finish_actions;
 mod item_matcher;
 pub mod logs;

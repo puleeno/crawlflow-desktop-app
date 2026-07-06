@@ -175,6 +175,51 @@ impl PluginEngine {
         self.python_engine.discover()
     }
 
+    // ── Preprocessors ─────────────────────────────────────────────
+
+    /// Collect preprocessor registrations từ tất cả Python plugins
+    pub fn list_preprocessors(&mut self) -> Vec<crate::data_preprocessor::PreprocessorRegistration> {
+        self.python_engine.collect_preprocessors()
+    }
+
+    /// Execute preprocessor: dispatch to plugin's preprocess_data hook hoặc fallback
+    pub fn execute_preprocessor(
+        &mut self,
+        raw_data: &str,
+        source_url: &str,
+        config: &crate::data_preprocessor::PreprocessorConfig,
+    ) -> crate::data_preprocessor::PreprocessorResult {
+        crate::data_preprocessor::DataPreprocessor::process_with_plugins(
+            raw_data,
+            source_url,
+            config,
+            &mut self.python_engine,
+        )
+    }
+}
+
+/// Static processor dispatch for use outside PluginEngine
+/// (used by the new repository-based pipeline)
+/// Static processor dispatch — wraps Result<Vec<Value>, String> into ProcessResult
+pub fn execute_processor_static(
+    processor_type: &str,
+    data: Vec<serde_json::Value>,
+    config: serde_json::Value,
+) -> ProcessResult {
+    let result = match processor_type {
+        "deduplicate" | "rust-deduplicate" => deduplicate_plugin(data, config),
+        "filter" | "rust-filter" => filter_plugin(data, config),
+        "sort" | "rust-sort" => sort_plugin(data, config),
+        "limit" | "rust-limit" => limit_plugin(data, config),
+        _ => return ProcessResult { success: true, data, error: None },
+    };
+    match result {
+        Ok(data) => ProcessResult { success: true, data, error: None },
+        Err(e) => ProcessResult { success: false, data: vec![], error: Some(e) },
+    }
+}
+
+impl PluginEngine {
     // ── Presets ───────────────────────────────────────────────────
     // FLOW RULES (all presets must obey):
     //  1. start           → repository-node   (singleton; auto-created by UI)

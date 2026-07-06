@@ -1,0 +1,505 @@
+use crate::item_matcher::{ItemMatcher, MatchPattern};
+use crate::repository::NewRawItem;
+use serde::{Deserialize, Serialize};
+
+// ── Preprocessor Config ───────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputType {
+    Html,
+    Csv,
+    Json,
+    Xml,
+    Text,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractRule {
+    #[serde(rename = "type")]
+    pub rule_type: String,
+    pub value: String,
+    pub attribute: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UrlPattern {
+    pub enabled: bool,
+    #[serde(rename = "type")]
+    pub pattern_type: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreprocessorConfig {
+    pub input_type: String,
+    pub item_selector: Option<String>,
+    pub url_patterns: Vec<UrlPattern>,
+    pub extract_rules: Vec<ExtractRule>,
+    pub csv_delimiter: Option<String>,
+    pub csv_has_header: Option<bool>,
+    pub json_item_path: Option<String>,
+}
+
+/// Preprocessor registration từ plugin — cho phép plugin đăng ký xử lý riêng
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreprocessorRegistration {
+    pub id: String,
+    pub name: String,
+    pub plugin_id: String,
+    pub input_type: String,
+    pub platform: Option<String>,
+    pub config: PreprocessorConfig,
+}
+
+// ── Preprocessor Result ───────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreprocessorResult {
+    pub items: Vec<NewRawItem>,
+    pub extracted_count: usize,
+    pub errors: Vec<String>,
+}
+
+// ── Data Preprocessor Engine ──────────────────────────────
+
+pub struct DataPreprocessor;
+
+impl DataPreprocessor {
+    /// Process raw data với plugin dispatch:
+    /// 1. Nếu có plugin preprocessor phù hợp → gọi plugin's `preprocess_data`
+    /// 2. Fallback vào built-in xử lý
+    pub fn process_with_plugins(
+        raw_data: &str,
+        source_url: &str,
+        config: &PreprocessorConfig,
+        python_engine: &mut crate::python_plugins::PythonPluginEngine,
+    ) -> PreprocessorResult {
+        // Tìm plugin preprocessor phù hợp dựa trên platform / input_type
+        let registrations = python_engine.collect_preprocessors();
+        let matched = registrations.iter().find(|r| {
+            let platform_matches = match &r.platform {
+                Some(p) => source_url.contains(p),
+                None => true,
+            };
+            platform_matches && r.input_type == config.input_type
+        });
+
+        if let Some(reg) = matched {
+            // Plugin tồn tại — thử gọi preprocess_data hook
+            let data_json = serde_json::json!({
+                "raw_data": raw_data,
+                "source_url": source_url,
+                "config": config,
+            });
+            let result = python_engine.call_preprocessor_hook(&reg.plugin_id, data_json);
+            match result {
+                Ok(items) => {
+                    let count = items.len();
+                    return PreprocessorResult {
+                        items,
+                        extracted_count: count,
+                        errors: vec![],
+                    };
+                }
+                Err(e) => {
+                    // Plugin hook thất bại → fallback vào built-in
+                    log::warn!("Plugin preprocessor '{}' failed (fallback to built-in): {}", reg.plugin_id, e);
+                }
+            }
+        }
+
+        // Fallback: built-in xử lý
+        Self::process(raw_data, source_url, config)
+    }
+
+    /// Process raw data từ data source theo config, trích xuất items
+    pub fn process(
+        raw_data: &str,
+        source_url: &str,
+        config: &PreprocessorConfig,
+    ) -> PreprocessorResult {
+        match config.input_type.as_str() {
+            "html" => Self::process_html(raw_data, source_url, config),
+            "csv" => Self::process_csv(raw_data, source_url, config),
+            "json" => Self::process_json(raw_data, source_url, config),
+            "xml" => Self::process_xml(raw_data, source_url, config),
+            _ => Self::process_text(raw_data, source_url, config),
+        }
+    }
+
+    // ── HTML Processing ───────────────────────────────────────
+
+    fn process_html(html: &str, source_url: &str, config: &PreprocessorConfig) -> PreprocessorResult {
+        let mut items = Vec::new();
+        let mut errors = Vec::new();
+
+        // Convert URL patterns to MatchPattern
+        let match_patterns: Vec<MatchPattern> = config.url_patterns.iter()
+            .filter(|p| p.enabled)
+            .filter_map(|p| {
+                match p.pattern_type.as_str() {
+                    "wildcard" => Some(MatchPattern::Wildcard(p.value.clone())),
+                    "regex" => Some(MatchPattern::Regex(p.value.clone())),
+                    "contains" => Some(MatchPattern::Contains(p.value.clone())),
+                    "startswith" => Some(MatchPattern::StartsWith(p.value.clone())),
+                    "endswith" => Some(MatchPattern::EndsWith(p.value.clone())),
+                    "always" | "all" => Some(MatchPattern::Always),
+                    _ => None,
+                }
+            }).collect();
+
+        if let Some(selector) = &config.item_selector {
+            // Extract items by CSS selector → then extract URLs from each item
+            let items_html = Self::extract_by_selector(html, selector);
+            for item_html in items_html {
+                let urls = ItemMatcher::extract_matching_urls(&item_html, source_url, &match_patterns);
+                for url in urls {
+                    let item_hash = Self::hash(&url);
+                    items.push(NewRawItem {
+                        source_url: source_url.to_string(),
+                        item_type: "url".into(),
+                        item_hash,
+                        raw_content: Some(item_html.clone()),
+                        extracted_url: Some(url),
+                    });
+                }
+            }
+        } else {
+            // No CSS selector → extract URLs directly from full HTML
+            let urls = ItemMatcher::extract_matching_urls(html, source_url, &match_patterns);
+            if urls.is_empty() {
+                // Fallback: save entire HTML as one item
+                let item_hash = Self::hash(html);
+                items.push(NewRawItem {
+                    source_url: source_url.to_string(),
+                    item_type: "page".into(),
+                    item_hash,
+                    raw_content: Some(html.to_string()),
+                    extracted_url: None,
+                });
+            } else {
+                for url in urls {
+                    let item_hash = Self::hash(&url);
+                    items.push(NewRawItem {
+                        source_url: source_url.to_string(),
+                        item_type: "url".into(),
+                        item_hash,
+                        raw_content: None,
+                        extracted_url: Some(url),
+                    });
+                }
+            }
+        }
+
+        // Apply extract rules (field extraction từ HTML)
+        if !config.extract_rules.is_empty() {
+            for item in &mut items {
+                if let Some(content) = &item.raw_content {
+                    let extracted = Self::apply_extract_rules(content, &config.extract_rules);
+                    item.raw_content = Some(extracted);
+                }
+            }
+        }
+
+        PreprocessorResult {
+            extracted_count: items.len(),
+            items,
+            errors,
+        }
+    }
+
+    // ── CSV Processing ────────────────────────────────────────
+
+    fn process_csv(data: &str, source_url: &str, config: &PreprocessorConfig) -> PreprocessorResult {
+        let mut items = Vec::new();
+        let mut errors = Vec::new();
+        let delimiter = config.csv_delimiter.as_deref().unwrap_or(",");
+        let has_header = config.csv_has_header.unwrap_or(true);
+
+        let mut lines = data.lines().filter(|l| !l.trim().is_empty());
+        let headers: Vec<String> = if has_header {
+            lines.next().map(|line| {
+                line.split(delimiter).map(|s| s.trim().to_string()).collect()
+            }).unwrap_or_default()
+        } else {
+            (0..20).map(|i| format!("col_{}", i)).collect()
+        };
+
+        for line in lines {
+            let cols: Vec<&str> = line.split(delimiter).collect();
+            let mut fields = serde_json::Map::new();
+            for (i, col) in cols.iter().enumerate() {
+                let key = headers.get(i).cloned().unwrap_or_else(|| format!("col_{}", i));
+                fields.insert(key, serde_json::Value::String(col.trim().to_string()));
+            }
+
+            let row_json = serde_json::Value::Object(fields);
+            let row_str = row_json.to_string();
+            let item_hash = Self::hash(&row_str);
+
+            items.push(NewRawItem {
+                source_url: source_url.to_string(),
+                item_type: "csv_row".into(),
+                item_hash,
+                raw_content: Some(row_str),
+                extracted_url: None,
+            });
+        }
+
+        PreprocessorResult { extracted_count: items.len(), items, errors }
+    }
+
+    // ── JSON Processing ───────────────────────────────────────
+
+    fn process_json(data: &str, source_url: &str, config: &PreprocessorConfig) -> PreprocessorResult {
+        let mut items = Vec::new();
+        let mut errors = Vec::new();
+
+        // Parse JSON
+        let json: serde_json::Value = match serde_json::from_str(data) {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("Invalid JSON: {}", e));
+                return PreprocessorResult { extracted_count: 0, items, errors };
+            }
+        };
+
+        // Navigate to item array using json path
+        let item_array = if let Some(path) = &config.json_item_path {
+            Self::navigate_json_path(&json, path)
+        } else {
+            json.clone()
+        };
+
+        let arr = match &item_array {
+            serde_json::Value::Array(a) => a.clone(),
+            _ => vec![item_array],
+        };
+
+        for item_val in arr {
+            let item_str = item_val.to_string();
+            let item_hash = Self::hash(&item_str);
+            let extracted_url = item_val.get("url")
+                .or_else(|| item_val.get("link"))
+                .or_else(|| item_val.get("href"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            items.push(NewRawItem {
+                source_url: source_url.to_string(),
+                item_type: "json_item".into(),
+                item_hash,
+                raw_content: Some(item_str),
+                extracted_url,
+            });
+        }
+
+        PreprocessorResult { extracted_count: items.len(), items, errors }
+    }
+
+    // ── XML Processing ────────────────────────────────────────
+
+    fn process_xml(data: &str, source_url: &str, config: &PreprocessorConfig) -> PreprocessorResult {
+        let mut items = Vec::new();
+        let mut errors = Vec::new();
+
+        // Extract item-like tags using regex (simple XML parsing)
+        let item_tag = config.item_selector.as_deref().unwrap_or("item");
+        let re = match regex::Regex::new(&format!(r"<{}[^>]*>(.*?)</{}>", regex::escape(item_tag), regex::escape(item_tag))) {
+            Ok(r) => r,
+            Err(e) => {
+                errors.push(format!("Invalid XML pattern: {}", e));
+                return PreprocessorResult { extracted_count: 0, items, errors };
+            }
+        };
+
+        for cap in re.captures_iter(data) {
+            let content = cap.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
+            let item_hash = Self::hash(&content);
+
+            // Extract URL from <link> or <url> child
+            let extracted_url = regex::Regex::new(r"<(?:link|url)>(.*?)</(?:link|url)>")
+                .ok()
+                .and_then(|re| re.captures(&content))
+                .map(|c| c[1].to_string());
+
+            items.push(NewRawItem {
+                source_url: source_url.to_string(),
+                item_type: "xml_item".into(),
+                item_hash,
+                raw_content: Some(content),
+                extracted_url,
+            });
+        }
+
+        if items.is_empty() {
+            // Fallback: save whole XML
+            let item_hash = Self::hash(data);
+            items.push(NewRawItem {
+                source_url: source_url.to_string(),
+                item_type: "xml_doc".into(),
+                item_hash,
+                raw_content: Some(data.to_string()),
+                extracted_url: None,
+            });
+        }
+
+        PreprocessorResult { extracted_count: items.len(), items, errors }
+    }
+
+    // ── Text Processing ───────────────────────────────────────
+
+    fn process_text(data: &str, source_url: &str, _config: &PreprocessorConfig) -> PreprocessorResult {
+        let mut items = Vec::new();
+
+        // Mỗi dòng là 1 item
+        for line in data.lines() {
+            let line = line.trim();
+            if line.is_empty() { continue; }
+
+            let item_hash = Self::hash(line);
+            let is_url = line.starts_with("http://") || line.starts_with("https://");
+
+            items.push(NewRawItem {
+                source_url: source_url.to_string(),
+                item_type: if is_url { "url".into() } else { "text".into() },
+                item_hash,
+                raw_content: Some(line.to_string()),
+                extracted_url: if is_url { Some(line.to_string()) } else { None },
+            });
+        }
+
+        PreprocessorResult { extracted_count: items.len(), items, errors: vec![] }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────
+
+    /// Simple CSS selector → extract inner HTML fragments
+    fn extract_by_selector(html: &str, selector: &str) -> Vec<String> {
+        use scraper::{Html, Selector};
+
+        let document = Html::parse_fragment(html);
+        if let Ok(sel) = Selector::parse(selector) {
+            document.select(&sel)
+                .map(|el| el.inner_html())
+                .collect()
+        } else {
+            vec![]
+        }
+    }
+
+    /// Apply field extraction rules to HTML content
+    fn apply_extract_rules(html: &str, rules: &[ExtractRule]) -> String {
+        use scraper::{Html, Selector};
+
+        let mut result = serde_json::Map::new();
+        let document = Html::parse_fragment(html);
+
+        for rule in rules {
+            if let Ok(sel) = Selector::parse(&rule.value) {
+                if let Some(element) = document.select(&sel).next() {
+                    let text = if let Some(attr) = &rule.attribute {
+                        element.value().attr(attr).unwrap_or("").to_string()
+                    } else {
+                        element.text().collect::<Vec<_>>().join(" ").trim().to_string()
+                    };
+                    result.insert(rule.rule_type.clone(), serde_json::Value::String(text));
+                }
+            }
+        }
+
+        if result.is_empty() {
+            html.to_string()
+        } else {
+            serde_json::to_string(&result).unwrap_or_else(|_| html.to_string())
+        }
+    }
+
+    /// Simple JSON path navigation (e.g., "data.items")
+    fn navigate_json_path(json: &serde_json::Value, path: &str) -> serde_json::Value {
+        let parts: Vec<&str> = path.split('.').collect();
+        let mut current = json.clone();
+        for part in parts {
+            match current {
+                serde_json::Value::Object(ref m) => {
+                    current = m.get(part).cloned().unwrap_or(serde_json::Value::Null);
+                }
+                serde_json::Value::Array(ref a) => {
+                    if let Ok(idx) = part.parse::<usize>() {
+                        current = a.get(idx).cloned().unwrap_or(serde_json::Value::Null);
+                    } else {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        current
+    }
+
+    fn hash(input: &str) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        input.hash(&mut hasher);
+        format!("{:x}", hasher.finish())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_csv_processing() {
+        let csv = "title,price\nProduct A,100\nProduct B,200\n";
+        let config = PreprocessorConfig {
+            input_type: "csv".into(),
+            item_selector: None,
+            url_patterns: vec![],
+            extract_rules: vec![],
+            csv_delimiter: Some(",".into()),
+            csv_has_header: Some(true),
+            json_item_path: None,
+        };
+        let result = DataPreprocessor::process(csv, "https://example.com/data.csv", &config);
+        assert_eq!(result.extracted_count, 2);
+    }
+
+    #[test]
+    fn test_json_processing() {
+        let json = r#"{"items": [{"title": "A", "url": "https://a.com"}, {"title": "B", "url": "https://b.com"}]}"#;
+        let config = PreprocessorConfig {
+            input_type: "json".into(),
+            item_selector: None,
+            url_patterns: vec![],
+            extract_rules: vec![],
+            csv_delimiter: None,
+            csv_has_header: None,
+            json_item_path: Some("items".into()),
+        };
+        let result = DataPreprocessor::process(json, "https://example.com/data.json", &config);
+        assert_eq!(result.extracted_count, 2);
+        assert_eq!(result.items[0].extracted_url.as_deref(), Some("https://a.com"));
+    }
+
+    #[test]
+    fn test_html_url_extraction() {
+        let html = r#"<a href="/product/1">P1</a><a href="/product/2">P2</a><a href="/blog">Blog</a>"#;
+        let config = PreprocessorConfig {
+            input_type: "html".into(),
+            item_selector: None,
+            url_patterns: vec![UrlPattern {
+                enabled: true,
+                pattern_type: "contains".into(),
+                value: "/product/".into(),
+            }],
+            extract_rules: vec![],
+            csv_delimiter: None,
+            csv_has_header: None,
+            json_item_path: None,
+        };
+        let result = DataPreprocessor::process(html, "https://example.com", &config);
+        assert_eq!(result.extracted_count, 2);
+    }
+}

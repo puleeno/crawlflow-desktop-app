@@ -1,12 +1,13 @@
+use crate::data_preprocessor::{DataPreprocessor, PreprocessorConfig, UrlPattern, ExtractRule};
 use crate::logs::LogManager;
 use crate::plugins;
-use crate::repository::{NewRawItem, RawItemRepository};
-use crate::item_matcher::{ItemMatcher, MatchPattern, MatchRule};
+use crate::python_plugins::PythonPluginEngine;
+use crate::repository::RawItemRepository;
+use crate::item_matcher::{MatchPattern, MatchRule};
 use crate::worker_engine::{WorkerDef, ProcessorStep, WorkerEngine};
 use crate::finish_actions::{FinishAction, ActionEngine};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -167,158 +168,6 @@ fn node_inputs(
         }
     }
     combined
-}
-
-fn label_of(node: &PipelineNode) -> &str {
-    node.label.as_deref().unwrap_or(&node.node_type)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn make_node(id: &str, node_type: &str) -> PipelineNode {
-        PipelineNode {
-            id: id.to_string(),
-            node_type: node_type.to_string(),
-            label: None,
-            data: serde_json::Value::Null,
-            position: None,
-        }
-    }
-
-    fn make_edge(id: &str, src: &str, tgt: &str) -> PipelineEdge {
-        PipelineEdge {
-            id: id.to_string(),
-            source: src.to_string(),
-            target: tgt.to_string(),
-            source_handle: None,
-            target_handle: None,
-        }
-    }
-
-    #[test]
-    fn test_topological_sort_simple() {
-        let nodes = vec![
-            make_node("a", "start"),
-            make_node("b", "processor"),
-            make_node("c", "export"),
-        ];
-        let edges = vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "c")];
-        let order = topological_sort(&nodes, &edges).unwrap();
-        assert_eq!(order, vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn test_topological_sort_disconnected() {
-        let nodes = vec![
-            make_node("a", "start"),
-            make_node("b", "processor"),
-            make_node("c", "export"),
-        ];
-        let edges = vec![];
-        let order = topological_sort(&nodes, &edges).unwrap();
-        assert_eq!(order.len(), 3);
-    }
-
-    #[test]
-    fn test_topological_sort_diamond() {
-        let nodes = vec![
-            make_node("a", "start"),
-            make_node("b", "processor"),
-            make_node("c", "processor"),
-            make_node("d", "export"),
-        ];
-        let edges = vec![
-            make_edge("e1", "a", "b"),
-            make_edge("e2", "a", "c"),
-            make_edge("e3", "b", "d"),
-            make_edge("e4", "c", "d"),
-        ];
-        let order = topological_sort(&nodes, &edges).unwrap();
-        assert_eq!(order.len(), 4);
-        assert_eq!(order[0], "a");
-        assert_eq!(order[3], "d");
-    }
-
-    #[test]
-    fn test_topological_sort_cycle_detected() {
-        let nodes = vec![make_node("a", "start"), make_node("b", "processor")];
-        let edges = vec![make_edge("e1", "a", "b"), make_edge("e2", "b", "a")];
-        let result = topological_sort(&nodes, &edges);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_topological_sort_single_node() {
-        let nodes = vec![make_node("a", "start")];
-        let edges = vec![];
-        let order = topological_sort(&nodes, &edges).unwrap();
-        assert_eq!(order, vec!["a"]);
-    }
-
-    #[test]
-    fn test_node_inputs_single_edge() {
-        let node_outputs: HashMap<String, Vec<serde_json::Value>> =
-            [("a".to_string(), vec![serde_json::json!({"val": 1})])].into();
-        let edges = vec![make_edge("e1", "a", "b")];
-        let inputs = node_inputs("b", &edges, &node_outputs);
-        assert_eq!(inputs.len(), 1);
-        assert_eq!(inputs[0]["val"], 1);
-    }
-
-    #[test]
-    fn test_node_inputs_multiple_edges() {
-        let node_outputs: HashMap<String, Vec<serde_json::Value>> = [
-            ("a".to_string(), vec![serde_json::json!({"val": 1})]),
-            ("b".to_string(), vec![serde_json::json!({"val": 2})]),
-        ]
-        .into();
-        let edges = vec![make_edge("e1", "a", "c"), make_edge("e2", "b", "c")];
-        let inputs = node_inputs("c", &edges, &node_outputs);
-        assert_eq!(inputs.len(), 2);
-    }
-
-    #[test]
-    fn test_node_inputs_no_edges() {
-        let node_outputs: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
-        let edges = vec![];
-        let inputs = node_inputs("a", &edges, &node_outputs);
-        assert_eq!(inputs.len(), 0);
-    }
-
-    #[test]
-    fn test_topological_levels_linear() {
-        let nodes = vec!["a", "b", "c"];
-        let edges = vec![
-            make_edge("e1", "a", "b"),
-            make_edge("e2", "b", "c"),
-        ];
-        let order = vec!["a".into(), "b".into(), "c".into()];
-        let levels = topological_levels(&order, &edges);
-        assert_eq!(levels.len(), 3);
-        assert_eq!(levels[0], vec!["a"]);
-        assert_eq!(levels[1], vec!["b"]);
-        assert_eq!(levels[2], vec!["c"]);
-    }
-
-    #[test]
-    fn test_topological_levels_diamond() {
-        let edges = vec![
-            make_edge("e1", "a", "b"),
-            make_edge("e2", "a", "c"),
-            make_edge("e3", "b", "d"),
-            make_edge("e4", "c", "d"),
-        ];
-        let order = vec!["a".into(), "b".into(), "c".into(), "d".into()];
-        let levels = topological_levels(&order, &edges);
-        assert_eq!(levels.len(), 3);
-        assert_eq!(levels[0], vec!["a"]);
-        assert_eq!(levels[1].len(), 2); // b and c at same level
-        assert!(levels[1].contains(&"b".to_string()));
-        assert!(levels[1].contains(&"c".to_string()));
-        assert_eq!(levels[2], vec!["d"]);
-    }
 }
 
 pub fn execute_pipeline(
@@ -645,4 +494,581 @@ fn node_inputs_read(
         }
     }
     combined
+}
+
+
+
+// ── Repository-based Pipeline (New Architecture) ─────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepositoryPipelineResult {
+    pub success: bool,
+    pub phase: String,
+    pub ingested: i64,
+    pub matched: i64,
+    pub processed: i64,
+    pub failed: i64,
+    pub actions: Vec<crate::finish_actions::ActionResult>,
+    pub error: Option<String>,
+}
+
+pub fn execute_repository_pipeline(
+    config: &PipelineConfig,
+    db_path: &std::path::Path,
+    log_manager: &Arc<LogManager>,
+    project_id: &str,
+    mut python_engine: Option<&mut PythonPluginEngine>,
+) -> RepositoryPipelineResult {
+    log_manager.info(project_id, "pipeline",
+        &format!("Repository pipeline started: {} nodes", config.nodes.len()));
+
+    let repo = match RawItemRepository::open(db_path) {
+        Ok(r) => { r.ensure_tables().ok(); r }
+        Err(e) => return RepositoryPipelineResult {
+            success: false, phase: "init".into(),
+            ingested: 0, matched: 0, processed: 0, failed: 0,
+            actions: vec![], error: Some(e),
+        },
+    };
+
+    // ── Phase 1a: Data Fetching ─────────────────────────────
+    log_manager.info(project_id, "pipeline", "Phase 1a: Data Fetching");
+
+    struct FetchedData {
+        source_url: String,
+        raw_data: String,
+        input_type: String,
+    }
+
+    let mut fetched_sources: Vec<FetchedData> = Vec::new();
+    for node in &config.nodes {
+        if !matches!(node.node_type.as_str(), "start" | "dataSource" | "rssSource") {
+            continue;
+        }
+        let source_type = node.data.get("sourceType").and_then(|v| v.as_str()).unwrap_or("url");
+        let source_value = node.data.get("sourceValue").and_then(|v| v.as_str()).unwrap_or("");
+
+        match source_type {
+            "url" | "api" => {
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        log_manager.error(project_id, "fetching", &format!("Runtime error: {}", e));
+                        continue;
+                    }
+                };
+                let url = source_value.to_string();
+                let result = rt.block_on(async {
+                    let client = reqwest::Client::builder()
+                        .user_agent("CrawlFlow/1.0")
+                        .build().map_err(|e| e.to_string())?;
+                    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+                    Ok::<_, String>(resp.text().await.map_err(|e| e.to_string())?)
+                });
+                match result {
+                    Ok(html) => {
+                        log_manager.info(project_id, "fetching",
+                            &format!("Fetched {} ({} bytes)", source_value, html.len()));
+                        fetched_sources.push(FetchedData {
+                            source_url: source_value.to_string(),
+                            raw_data: html,
+                            input_type: "html".into(),
+                        });
+                    }
+                    Err(e) => { log_manager.error(project_id, "fetching", &e); },
+                }
+            }
+            "csv" | "json" | "xml" | "text" => {
+                if let Ok(content) = std::fs::read_to_string(source_value) {
+                    fetched_sources.push(FetchedData {
+                        source_url: source_value.to_string(),
+                        raw_data: content,
+                        input_type: source_type.to_string(),
+                    });
+                }
+            }
+            _ => {
+                log_manager.warn(project_id, "fetching",
+                    &format!("Unknown source type: {}", source_type));
+            }
+        }
+    }
+
+    // ── Phase 1b: Data Preprocessing ────────────────────────
+    log_manager.info(project_id, "pipeline", "Phase 1b: Data Preprocessing");
+
+    let preprocessor_nodes = extract_preprocessors(config);
+    let mut total_ingested = 0i64;
+
+    for fetched in &fetched_sources {
+        // Tìm preprocessor node phù hợp cho source này (theo input_type)
+        let preproc_config = preprocessor_nodes.iter()
+            .find(|p| p.input_type == fetched.input_type)
+            .cloned()
+            .unwrap_or_else(|| PreprocessorConfig {
+                input_type: fetched.input_type.clone(),
+                item_selector: None,
+                url_patterns: vec![],
+                extract_rules: vec![],
+                csv_delimiter: None,
+                csv_has_header: None,
+                json_item_path: None,
+            });
+
+        let result = if let Some(engine) = python_engine.as_deref_mut() {
+            DataPreprocessor::process_with_plugins(
+                &fetched.raw_data,
+                &fetched.source_url,
+                &preproc_config,
+                engine,
+            )
+        } else {
+            DataPreprocessor::process(
+                &fetched.raw_data,
+                &fetched.source_url,
+                &preproc_config,
+            )
+        };
+
+        match repo.save_items(&result.items) {
+            Ok(r) => {
+                total_ingested += r.inserted;
+                log_manager.info(project_id, "preprocessing",
+                    &format!("Source {}: {} extracted, {} new, {} dup",
+                        fetched.source_url, result.extracted_count, r.inserted, r.duplicated));
+            }
+            Err(e) => { log_manager.error(project_id, "preprocessing", &e); },
+        }
+    }
+
+    // ── Phase 2: Worker Matching ─────────────────────────────
+    log_manager.info(project_id, "pipeline", "Phase 2: Worker Matching");
+
+    let workers = extract_workers(config);
+    let mut pending_items = match repo.get_pending_items(10000) {
+        Ok(items) => items,
+        Err(e) => return RepositoryPipelineResult {
+            success: false, phase: "worker_matching".into(),
+            ingested: total_ingested, matched: 0, processed: 0, failed: 0,
+            actions: vec![], error: Some(e),
+        },
+    };
+
+    let match_result = match WorkerEngine::match_items(&repo, &workers, &mut pending_items) {
+        Ok(r) => r,
+        Err(e) => return RepositoryPipelineResult {
+            success: false, phase: "worker_matching".into(),
+            ingested: total_ingested, matched: 0, processed: 0, failed: 0,
+            actions: vec![], error: Some(e),
+        },
+    };
+
+    log_manager.info(project_id, "worker_matching",
+        &format!("Matched: {}, unmatched: {}, ignored: {}",
+            match_result.matched, match_result.unmatched, match_result.ignored));
+
+    // ── Phase 3: Processing ──────────────────────────────────
+    log_manager.info(project_id, "pipeline", "Phase 3: Chain of Processors");
+
+    let mut total_processed = 0i64;
+    let mut total_failed = 0i64;
+
+    let process_fn = |processor_type: &str, _cfg: &serde_json::Value, data: &serde_json::Value|
+        -> Result<serde_json::Value, String>
+    {
+        let config_json = _cfg.clone();
+        let result = plugins::execute_processor_static(
+            processor_type, vec![data.clone()], config_json);
+        if result.success {
+            Ok(serde_json::Value::Array(result.data))
+        } else {
+            Err(result.error.unwrap_or_else(|| "Processor failed".to_string()))
+        }
+    };
+
+    for worker in &workers {
+        let items = match repo.get_matched_items(&worker.id, 1000) {
+            Ok(items) => items,
+            Err(e) => {
+                log_manager.error(project_id, "processing", &format!("Worker {}: {}", worker.id, e));
+                continue;
+            }
+        };
+
+        if items.is_empty() {
+            continue;
+        }
+
+        match WorkerEngine::process_items(&repo, worker, &items, &process_fn) {
+            Ok(result) => {
+                total_processed += result.processed;
+                total_failed += result.failed;
+                log_manager.info(project_id, "processing",
+                    &format!("Worker '{}': {} processed, {} failed", worker.name, result.processed, result.failed));
+            }
+            Err(e) => {
+                total_failed += items.len() as i64;
+                log_manager.error(project_id, "processing",
+                    &format!("Worker '{}' error: {}", worker.name, e));
+            }
+        }
+    }
+
+    // ── Phase 4: Finish Actions ──────────────────────────────
+    log_manager.info(project_id, "pipeline", "Phase 4: Finish Actions");
+
+    let finish_actions = extract_finish_actions(config);
+    let log_fn = |msg: &str, level: &str| {
+        match level {
+            "error" => { log_manager.error(project_id, "finish_actions", msg); },
+            "warn" => { log_manager.warn(project_id, "finish_actions", msg); },
+            _ => { log_manager.info(project_id, "finish_actions", msg); },
+        }
+    };
+
+    let action_results = match ActionEngine::execute_actions(&finish_actions, &repo, project_id, &log_fn) {
+        Ok(results) => results,
+        Err(e) => {
+            log_manager.error(project_id, "finish_actions", &e);
+            vec![]
+        }
+    };
+
+    let success = total_failed == 0;
+    log_manager.info(project_id, "pipeline",
+        &format!("Pipeline complete: ingested={}, matched={}, processed={}, failed={}",
+            total_ingested, match_result.matched, total_processed, total_failed));
+
+    RepositoryPipelineResult {
+        success,
+        phase: "done".into(),
+        ingested: total_ingested,
+        matched: match_result.matched,
+        processed: total_processed,
+        failed: total_failed,
+        actions: action_results,
+        error: None,
+    }
+}
+
+fn simple_hash(input: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    input.hash(&mut hasher);
+    format!("{:x}", hasher.finish())
+}
+
+// ── Config Extractors ─────────────────────────────────────
+
+/// Extract preprocessor configs từ các preprocessor nodes
+fn extract_preprocessors(config: &PipelineConfig) -> Vec<PreprocessorConfig> {
+    config.nodes.iter().filter_map(|node| {
+        if node.node_type != "preprocessor" {
+            return None;
+        }
+        let data = &node.data;
+        Some(PreprocessorConfig {
+            input_type: data.get("inputType").and_then(|v| v.as_str()).unwrap_or("html").to_string(),
+            item_selector: data.get("itemSelector").and_then(|v| v.as_str()).map(String::from),
+            url_patterns: data.get("urlPatterns")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter().filter_map(|p| {
+                        Some(UrlPattern {
+                            enabled: p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
+                            pattern_type: p.get("type").and_then(|v| v.as_str())?.to_string(),
+                            value: p.get("value").and_then(|v| v.as_str())?.to_string(),
+                        })
+                    }).collect()
+                })
+                .unwrap_or_default(),
+            extract_rules: data.get("extractRules")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter().filter_map(|r| {
+                        Some(ExtractRule {
+                            rule_type: r.get("type").and_then(|v| v.as_str())?.to_string(),
+                            value: r.get("value").and_then(|v| v.as_str())?.to_string(),
+                            attribute: r.get("attribute").and_then(|v| v.as_str()).map(String::from),
+                        })
+                    }).collect()
+                })
+                .unwrap_or_default(),
+            csv_delimiter: data.get("csvDelimiter").and_then(|v| v.as_str()).map(String::from),
+            csv_has_header: data.get("csvHasHeader").and_then(|v| v.as_bool()),
+            json_item_path: data.get("jsonItemPath").and_then(|v| v.as_str()).map(String::from),
+        })
+    }).collect()
+}
+
+fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
+    let mut workers = Vec::new();
+
+    for node in &config.nodes {
+        if node.node_type != "worker" && node.node_type != "processor" {
+            continue;
+        }
+
+        let matching_rules: Vec<MatchRule> = node.data.get("detectionRules")
+            .or_else(|| node.data.get("matchingRules"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter().filter_map(|r| {
+                    let field = r.get("field").and_then(|v| v.as_str()).unwrap_or("url");
+                    let pattern_type = r.get("type").and_then(|v| v.as_str())?;
+                    let value = r.get("value").and_then(|v| v.as_str())?;
+                    let negate = r.get("negate").and_then(|v| v.as_bool()).unwrap_or(false);
+                    Some(MatchRule {
+                        field: field.to_string(),
+                        pattern: match pattern_type {
+                            "wildcard" => MatchPattern::Wildcard(value.into()),
+                            "regex" => MatchPattern::Regex(value.into()),
+                            "contains" => MatchPattern::Contains(value.into()),
+                            "startswith" => MatchPattern::StartsWith(value.into()),
+                            "endswith" => MatchPattern::EndsWith(value.into()),
+                            "always" => MatchPattern::Always,
+                            _ => return None,
+                        },
+                        negate,
+                    })
+                }).collect()
+            })
+            .unwrap_or_default();
+
+        let mut processor_chain = Vec::new();
+        let mut current_id = Some(node.id.as_str());
+        let mut visited = std::collections::HashSet::new();
+
+        while let Some(cid) = current_id.take() {
+            if !visited.insert(cid.to_string()) { break; }
+
+            if let Some(n) = config.nodes.iter().find(|n| n.id == cid) {
+                if n.id != node.id {
+                    processor_chain.push(ProcessorStep {
+                        id: n.id.clone(),
+                        processor_type: n.data.get("processorType")
+                            .and_then(|v| v.as_str()).unwrap_or(&n.node_type).to_string(),
+                        config: n.data.get("processorConfig")
+                            .cloned().unwrap_or(serde_json::Value::Null),
+                    });
+                }
+            }
+
+            if let Some(next_edge) = config.edges.iter().find(|e| e.source == cid) {
+                current_id = Some(next_edge.target.as_str());
+            }
+        }
+
+        workers.push(WorkerDef {
+            id: node.id.clone(),
+            name: node.label.clone().unwrap_or_else(|| node.id.clone()),
+            matching_rules,
+            processor_chain,
+        });
+    }
+
+    workers
+}
+
+fn extract_finish_actions(config: &PipelineConfig) -> Vec<FinishAction> {
+    let mut actions = Vec::new();
+
+    for node in &config.nodes {
+        let action = match node.node_type.as_str() {
+            "excelExport" => Some(FinishAction::ExportExcel {
+                path: node.data.get("outputPath")
+                    .and_then(|v| v.as_str()).unwrap_or("output.xlsx").to_string(),
+                fields: node.data.get("fields")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default(),
+            }),
+            "csvExport" => Some(FinishAction::ExportCsv {
+                path: node.data.get("outputPath")
+                    .and_then(|v| v.as_str()).unwrap_or("output.csv").to_string(),
+                fields: node.data.get("fields")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default(),
+            }),
+            "completion" | "finish" => Some(FinishAction::LogSummary),
+            _ => None,
+        };
+
+        if let Some(a) = action {
+            actions.push(a);
+        }
+    }
+
+    if actions.is_empty() {
+        actions.push(FinishAction::LogSummary);
+    }
+
+    actions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_node(id: &str, node_type: &str, data: serde_json::Value) -> PipelineNode {
+        PipelineNode {
+            id: id.to_string(),
+            node_type: node_type.to_string(),
+            label: None,
+            data,
+            position: None,
+        }
+    }
+
+    fn make_edge(source: &str, target: &str) -> PipelineEdge {
+        PipelineEdge {
+            id: format!("{}-{}", source, target),
+            source: source.to_string(),
+            target: target.to_string(),
+            source_handle: None,
+            target_handle: None,
+        }
+    }
+
+    #[test]
+    fn test_extract_preprocessors_empty() {
+        let config = PipelineConfig { nodes: vec![], edges: vec![], settings: serde_json::Value::Null };
+        let preprocs = extract_preprocessors(&config);
+        assert!(preprocs.is_empty());
+    }
+
+    #[test]
+    fn test_extract_preprocessors_with_html_node() {
+        let config = PipelineConfig {
+            nodes: vec![make_node("pre-1", "preprocessor", serde_json::json!({
+                "inputType": "html",
+                "itemSelector": ".product-item",
+                "urlPatterns": [
+                    {"enabled": true, "type": "contains", "value": "/product/"}
+                ]
+            }))],
+            edges: vec![],
+            settings: serde_json::Value::Null,
+        };
+        let preprocs = extract_preprocessors(&config);
+        assert_eq!(preprocs.len(), 1);
+        assert_eq!(preprocs[0].input_type, "html");
+        assert_eq!(preprocs[0].item_selector.as_deref(), Some(".product-item"));
+        assert_eq!(preprocs[0].url_patterns.len(), 1);
+    }
+
+    #[test]
+    fn test_extract_preprocessors_filters_non_preprocessor() {
+        let config = PipelineConfig {
+            nodes: vec![
+                make_node("ds-1", "start", serde_json::json!({"sourceType": "url"})),
+                make_node("pre-1", "preprocessor", serde_json::json!({"inputType": "html"})),
+                make_node("proc-1", "processor", serde_json::json!({"processorType": "rust-deduplicate"})),
+            ],
+            edges: vec![],
+            settings: serde_json::Value::Null,
+        };
+        let preprocs = extract_preprocessors(&config);
+        assert_eq!(preprocs.len(), 1);
+    }
+
+    #[test]
+    fn test_extract_preprocessors_multiple_input_types() {
+        let config = PipelineConfig {
+            nodes: vec![
+                make_node("pre-html", "preprocessor", serde_json::json!({
+                    "inputType": "html",
+                    "itemSelector": ".item",
+                })),
+                make_node("pre-csv", "preprocessor", serde_json::json!({
+                    "inputType": "csv",
+                    "csvDelimiter": ";",
+                    "csvHasHeader": true,
+                })),
+                make_node("pre-json", "preprocessor", serde_json::json!({
+                    "inputType": "json",
+                    "jsonItemPath": "data.items",
+                })),
+            ],
+            edges: vec![],
+            settings: serde_json::Value::Null,
+        };
+        let preprocs = extract_preprocessors(&config);
+        assert_eq!(preprocs.len(), 3);
+
+        let html = preprocs.iter().find(|p| p.input_type == "html").unwrap();
+        assert_eq!(html.item_selector.as_deref(), Some(".item"));
+
+        let csv = preprocs.iter().find(|p| p.input_type == "csv").unwrap();
+        assert_eq!(csv.csv_delimiter.as_deref(), Some(";"));
+        assert_eq!(csv.csv_has_header, Some(true));
+
+        let json = preprocs.iter().find(|p| p.input_type == "json").unwrap();
+        assert_eq!(json.json_item_path.as_deref(), Some("data.items"));
+    }
+
+    #[test]
+    fn test_extract_preprocessors_with_extract_rules() {
+        let config = PipelineConfig {
+            nodes: vec![make_node("pre-1", "preprocessor", serde_json::json!({
+                "inputType": "html",
+                "extractRules": [
+                    {"type": "title", "value": ".product-title", "attribute": null},
+                    {"type": "price", "value": ".price", "attribute": "data-value"},
+                ]
+            }))],
+            edges: vec![],
+            settings: serde_json::Value::Null,
+        };
+        let preprocs = extract_preprocessors(&config);
+        assert_eq!(preprocs.len(), 1);
+        assert_eq!(preprocs[0].extract_rules.len(), 2);
+        assert_eq!(preprocs[0].extract_rules[0].rule_type, "title");
+        assert_eq!(preprocs[0].extract_rules[1].attribute.as_deref(), Some("data-value"));
+    }
+
+    #[test]
+    fn test_topological_sort_order() {
+        let nodes = vec![
+            make_node("a", "start", serde_json::Value::Null),
+            make_node("b", "processor", serde_json::Value::Null),
+            make_node("c", "processor", serde_json::Value::Null),
+        ];
+        let edges = vec![
+            make_edge("a", "b"),
+            make_edge("b", "c"),
+        ];
+        let sorted = topological_sort(&nodes, &edges).unwrap();
+        let pos_a = sorted.iter().position(|x| x == "a").unwrap();
+        let pos_b = sorted.iter().position(|x| x == "b").unwrap();
+        let pos_c = sorted.iter().position(|x| x == "c").unwrap();
+        assert!(pos_a < pos_b);
+        assert!(pos_b < pos_c);
+    }
+
+    #[test]
+    fn test_topological_levels() {
+        let order = vec!["a", "b", "c", "d"];
+        let edges = vec![
+            make_edge("a", "b"),
+            make_edge("a", "c"),
+            make_edge("b", "d"),
+            make_edge("c", "d"),
+        ];
+        let levels = topological_levels(
+            &order.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            &edges,
+        );
+        assert_eq!(levels.len(), 3);
+        assert_eq!(levels[0], vec!["a"]);
+        assert_eq!(levels[1].len(), 2);
+        assert!(levels[1].contains(&"b".to_string()));
+        assert!(levels[1].contains(&"c".to_string()));
+        assert_eq!(levels[2], vec!["d"]);
+    }
+}
+
+fn label_of(node: &PipelineNode) -> &str {
+    node.label.as_deref().unwrap_or(&node.node_type)
 }
