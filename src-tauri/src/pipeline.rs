@@ -566,7 +566,7 @@ pub struct RepositoryPipelineResult {
     pub error: Option<String>,
 }
 
-pub fn execute_repository_pipeline(
+pub async fn execute_repository_pipeline(
     config: &PipelineConfig,
     db_path: &std::path::Path,
     log_manager: &Arc<LogManager>,
@@ -604,23 +604,21 @@ pub fn execute_repository_pipeline(
 
         match source_type {
             "url" | "api" => {
-                let rt = match tokio::runtime::Runtime::new() {
-                    Ok(r) => r,
-                    Err(e) => {
-                        log_manager.error(project_id, "fetching", &format!("Runtime error: {}", e));
-                        continue;
-                    }
-                };
                 let url = source_value.to_string();
+                log_manager.info(project_id, "fetching",
+                    &format!("Fetching URL: {} ...", url));
                 let profile = extract_client_profile(&node.data);
-                let result = rt.block_on(async {
-                    let crawl_result = request_clients::fetch_with_client(&url, &profile, None).await;
-                    if crawl_result.error.is_some() {
-                        Err(crawl_result.error.unwrap())
-                    } else {
-                        Ok(crawl_result.html.unwrap_or_default())
-                    }
-                });
+                log_manager.info(project_id, "fetching",
+                    &format!("Client type: {}, timeout: {:?}, proxy: {:?}",
+                        profile.client_type, profile.timeout_secs, profile.proxy_url));
+                let crawl_result = request_clients::fetch_with_client(&url, &profile, None).await;
+                log_manager.info(project_id, "fetching",
+                    &format!("Fetch completed, error: {:?}, status: {}", crawl_result.error, crawl_result.status));
+                let result = if crawl_result.error.is_some() {
+                    Err(crawl_result.error.unwrap())
+                } else {
+                    Ok(crawl_result.html.unwrap_or_default())
+                };
                 match result {
                     Ok(html) => {
                         log_manager.info(project_id, "fetching",

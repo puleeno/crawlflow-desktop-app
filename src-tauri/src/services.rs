@@ -272,7 +272,7 @@ impl ServiceManager {
                 lm,
                 project_id,
                 None,
-            );
+            ).await;
 
             if result.success {
                 lm.info(project_id, "system",
