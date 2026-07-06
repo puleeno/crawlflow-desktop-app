@@ -627,6 +627,10 @@ pub fn start_project_service_cmd(
     edges: Vec<serde_json::Value>,
     settings: serde_json::Value,
 ) -> Result<String, String> {
+    log::info!("start_project_service_cmd: {} nodes, {} edges", nodes.len(), edges.len());
+    if let Some(first) = nodes.first() {
+        log::info!("start_project_service_cmd: first node keys: {:?}", first.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+    }
     state
         .service_manager
         .start_service(&project_id, nodes, edges, settings)

@@ -36,21 +36,23 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({ projectId, onOpenLogs
 
   // Subscribe to status changes
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
+    const unlistenRef: { current: (() => void) | null } = { current: null };
+    let cancelled = false;
     const setup = async () => {
       try {
         const { listen } = await import('@tauri-apps/api/event');
-        unlisten = await listen<any>(`service-status:${projectId}`, (event) => {
+        const unsub = await listen<any>(`service-status:${projectId}`, (event) => {
           const p = event.payload;
           setStatus(p.status || 'stopped');
           setCycleCount(p.cycle_count || 0);
           setLastRunAt(p.last_run_at || '');
           setLastError(p.last_error || null);
         });
+        if (cancelled) { unsub(); } else { unlistenRef.current = unsub; }
       } catch (e) { /* ignore */ }
     };
     setup();
-    return () => { if (unlisten) unlisten(); };
+    return () => { cancelled = true; unlistenRef.current?.(); };
   }, [projectId]);
 
   const start = useCallback(async () => {
