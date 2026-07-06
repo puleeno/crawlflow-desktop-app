@@ -3,8 +3,10 @@ import React, { useState, useRef, ChangeEvent, useEffect, useMemo } from 'react'
 import { Node, Edge } from 'reactflow';
 import { invoke } from '@tauri-apps/api/core';
 import { XMarkIcon, Cog6ToothIcon, ArrowUpTrayIcon, ArrowDownTrayIcon, TrashIcon, ChevronDownIcon, ChevronUpIcon, CursorArrowRaysIcon, CloudIcon } from './icons';
-import { NodeData, StartNodeData, ClickNodeData, ExtractionRule, FileInputMethod, MySQLConnection, ProjectSettings, LoopNodeData, WorkerNodeData, HTMLDataExtractorNodeData, ProcessorNodeData, WorkerRule, WorkerRuleType, URLFormatRule, HTMLContainsRule, DOMValueRule, TagAttributeRule, ExtractFrom, URLSourceSettings, APISourceSettings, APIKeyAuth, BearerTokenAuth, BasicAuth, XMLSourceSettings, JSONSourceSettings, PagePagination, OffsetLimitPagination, NextURLPagination, RuleCondition, SaveToDbSettings, SendToApiSettings, GenerateCsvSettings, GenerateExcelSettings, SendEmailSettings, CSVExtractorNodeData, ColumnMapping, JSONExtractorNodeData, PathMapping, XMLExtractorNodeData, MySQLExtractorNodeData, ShapeNodeData, DataSourceTypeRule } from '../types';
+import { NodeData, StartNodeData, ClickNodeData, ExtractionRule, FileInputMethod, MySQLConnection, ProjectSettings, LoopNodeData, WorkerNodeData, HTMLDataExtractorNodeData, ProcessorNodeData, PreprocessorNodeData, WorkerRule, WorkerRuleType, URLFormatRule, HTMLContainsRule, DOMValueRule, TagAttributeRule, ExtractFrom, URLSourceSettings, APISourceSettings, APIKeyAuth, BearerTokenAuth, BasicAuth, XMLSourceSettings, JSONSourceSettings, PagePagination, OffsetLimitPagination, NextURLPagination, RuleCondition, SaveToDbSettings, SendToApiSettings, GenerateCsvSettings, GenerateExcelSettings, SendEmailSettings, CSVExtractorNodeData, ColumnMapping, JSONExtractorNodeData, PathMapping, XMLExtractorNodeData, MySQLExtractorNodeData, ShapeNodeData, DataSourceTypeRule } from '../types';
 import { PRESETS, PROCESSORS } from '../presets';
+import { DynamicForm } from './settings/DynamicForm';
+import type { SettingsSchema, FieldDef } from '../types/settings';
 import ServiceControls from './ServiceControls';
 
 
@@ -1471,6 +1473,145 @@ const ShapeNodeSettings: React.FC<{ node: Node<ShapeNodeData>; onUpdate: (data: 
 };
 
 
+const PREPROCESSOR_SCHEMA: SettingsSchema = {
+  type: 'object',
+  properties: {
+    inputType: {
+      key: 'inputType',
+      title: 'Input Type',
+      type: 'select',
+      required: true,
+      order: 1,
+      options: [
+        { value: 'html', label: 'HTML' },
+        { value: 'csv', label: 'CSV' },
+        { value: 'json', label: 'JSON' },
+        { value: 'xml', label: 'XML' },
+        { value: 'text', label: 'Text' },
+      ],
+      default: 'html',
+    },
+    itemSelector: {
+      key: 'itemSelector',
+      title: 'CSS Item Selector',
+      type: 'string',
+      order: 2,
+      description: 'CSS selector for item elements (e.g., "div.product")',
+      placeholder: 'e.g., div.product',
+      conditions: [{ field: 'inputType', operator: 'eq', value: 'html' }],
+    },
+    csvDelimiter: {
+      key: 'csvDelimiter',
+      title: 'CSV Delimiter',
+      type: 'string',
+      order: 3,
+      default: ',',
+      placeholder: ',',
+      conditions: [{ field: 'inputType', operator: 'eq', value: 'csv' }],
+    },
+    csvHasHeader: {
+      key: 'csvHasHeader',
+      title: 'CSV Has Header',
+      type: 'boolean',
+      order: 4,
+      default: true,
+      conditions: [{ field: 'inputType', operator: 'eq', value: 'csv' }],
+    },
+    jsonItemPath: {
+      key: 'jsonItemPath',
+      title: 'JSON Item Path',
+      type: 'string',
+      order: 5,
+      description: 'JSON path to items array (e.g., "$.data.items")',
+      placeholder: 'e.g., $.data.items',
+      conditions: [{ field: 'inputType', operator: 'eq', value: 'json' }],
+    },
+    urlPatterns: {
+      key: 'urlPatterns',
+      title: 'URL Patterns',
+      type: 'array',
+      order: 6,
+      description: 'Patterns to match extracted URLs against',
+      item_field: {
+        key: 'urlPattern',
+        title: 'URL Pattern',
+        type: 'group',
+        order: 0,
+        fields: [
+          { key: 'enabled', title: 'Enabled', type: 'boolean', order: 1, default: true },
+          {
+            key: 'type', title: 'Pattern Type', type: 'select', order: 2, default: 'contains',
+            options: [
+              { value: 'wildcard', label: 'Wildcard' },
+              { value: 'regex', label: 'Regex' },
+              { value: 'contains', label: 'Contains' },
+              { value: 'startswith', label: 'Starts With' },
+              { value: 'endswith', label: 'Ends With' },
+              { value: 'always', label: 'Always Match' },
+            ],
+          },
+          { key: 'value', title: 'Pattern Value', type: 'string', order: 3, placeholder: 'e.g., https://example.com/*' },
+        ],
+      },
+    },
+    extractRules: {
+      key: 'extractRules',
+      title: 'Extract Rules',
+      type: 'array',
+      order: 7,
+      description: 'Rules for extracting specific fields from each item',
+      item_field: {
+        key: 'extractRule',
+        title: 'Extract Rule',
+        type: 'group',
+        order: 0,
+        fields: [
+          { key: 'type', title: 'Rule Type', type: 'string', order: 1, placeholder: 'e.g., attribute, text, html' },
+          { key: 'value', title: 'Selector / Value', type: 'string', order: 2, placeholder: 'CSS selector or attribute name' },
+          { key: 'attribute', title: 'Attribute', type: 'string', order: 3, placeholder: 'e.g., href, src (optional)' },
+        ],
+      },
+    },
+  },
+};
+
+const PreprocessorNodeSettings: React.FC<{ node: Node<PreprocessorNodeData>; onUpdate: (data: PreprocessorNodeData) => void }> = ({ node, onUpdate }) => {
+  const { data } = node;
+
+  const values = useMemo<Record<string, unknown>>(() => ({
+    inputType: data.inputType,
+    itemSelector: data.itemSelector ?? '',
+    csvDelimiter: data.csvDelimiter ?? ',',
+    csvHasHeader: data.csvHasHeader ?? true,
+    jsonItemPath: data.jsonItemPath ?? '',
+    urlPatterns: data.urlPatterns ?? [],
+    extractRules: data.extractRules ?? [],
+  }), [data]);
+
+  const handleChange = (newValues: Record<string, unknown>) => {
+    onUpdate({
+      inputType: newValues.inputType as PreprocessorNodeData['inputType'],
+      itemSelector: newValues.itemSelector as string | undefined,
+      csvDelimiter: newValues.csvDelimiter as string | undefined,
+      csvHasHeader: newValues.csvHasHeader as boolean | undefined,
+      jsonItemPath: newValues.jsonItemPath as string | undefined,
+      urlPatterns: (newValues.urlPatterns ?? []) as PreprocessorNodeData['urlPatterns'],
+      extractRules: (newValues.extractRules ?? []) as PreprocessorNodeData['extractRules'],
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <h3 className="text-lg font-bold text-gray-800 border-b pb-2">Preprocessor Settings</h3>
+      <DynamicForm
+        schema={PREPROCESSOR_SCHEMA}
+        values={values}
+        onChange={handleChange}
+      />
+    </div>
+  );
+};
+
 // --- Main Settings Panel Component ---
 const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
     const { node, onUpdateNode, onDeleteNode, onClose, projectSettings, onUpdateProjectSettings, onExport, onSave, onImport, isOpen, nodes = [], edges = [], isRunning } = props;
@@ -1501,6 +1642,8 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 return <MySQLExtractorSettings node={node as Node<MySQLExtractorNodeData>} onUpdate={handleUpdate as (data: MySQLExtractorNodeData) => void} />;
             case 'processor':
                 return <ProcessorNodeSettings node={node as Node<ProcessorNodeData>} onUpdate={handleUpdate as (data: ProcessorNodeData) => void} nodes={nodes} edges={edges} />;
+            case 'preprocessor':
+                return <PreprocessorNodeSettings node={node as Node<PreprocessorNodeData>} onUpdate={handleUpdate as (data: PreprocessorNodeData) => void} />;
             case 'shape':
                 return <ShapeNodeSettings node={node as Node<ShapeNodeData>} onUpdate={handleUpdate as (data: ShapeNodeData) => void} />;
             case 'repository':

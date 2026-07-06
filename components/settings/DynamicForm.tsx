@@ -182,6 +182,16 @@ function ArrayItemRenderer({ field, value, onChange, disabled }: {
   onChange: (v: unknown) => void;
   disabled?: boolean;
 }) {
+  if (field?.type === 'group') {
+    return (
+      <GroupField
+        field={field}
+        values={(value as SettingsValues) ?? {}}
+        onChange={(v) => onChange(v)}
+        disabled={disabled}
+      />
+    );
+  }
   const Renderer = FIELD_RENDERERS[field?.type ?? 'string'];
   if (Renderer) {
     return <Renderer field={field} value={value as never} onChange={onChange} disabled={disabled} />;
