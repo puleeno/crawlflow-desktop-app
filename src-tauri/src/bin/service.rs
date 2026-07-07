@@ -235,6 +235,33 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
     let lm = Arc::new(SimpleLogger::as_log_manager(master_db_path()));
     let self_pid = std::process::id() as i64;
     let mut cycle = 0u64;
+    
+    // Cancellation token for stopping pipeline mid-execution
+    let cancellation = Arc::new(AtomicBool::new(false));
+    let cancellation_clone = cancellation.clone();
+    let project_id_clone = project_id.clone();
+    let master_db_clone = master_db.clone();
+    
+    // Spawn background task to monitor service_control and update cancellation token
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
+        loop {
+            interval.tick().await;
+            if let Ok(conn) = rusqlite::Connection::open(&master_db_clone) {
+                let control: Result<String, _> = conn.query_row(
+                    "SELECT service_control FROM project_runtime WHERE project_id = ?1",
+                    rusqlite::params![&project_id_clone],
+                    |row| row.get(0),
+                );
+                if let Ok(control_str) = control {
+                    if control_str == "stop" {
+                        cancellation_clone.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                }
+            }
+        }
+    });
 
     lm.info(
         &project_id,
@@ -324,7 +351,16 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                     edges,
                     settings: serde_json::json!({}),
                 };
-                let result = crawlflow_lib::pipeline::execute_pipeline(&config, &lm, &project_id);
+                // Reset cancellation before execution
+                cancellation.store(false, Ordering::Relaxed);
+                let result = crawlflow_lib::pipeline::execute_repository_pipeline(
+                    &config,
+                    &db_path,
+                    &lm,
+                    &project_id,
+                    None,
+                    Some(&cancellation),
+                ).await;
                 let now = {
                     let secs = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -354,10 +390,12 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                             &project_id,
                             "service",
                             &format!(
-                                "Cycle #{}: {} steps, {} items",
+                                "Cycle #{}: ingested={}, matched={}, processed={}, failed={}",
                                 cycle,
-                                result.steps.len(),
-                                result.final_output.len()
+                                result.ingested,
+                                result.matched,
+                                result.processed,
+                                result.failed
                             ),
                         );
                     } else {
@@ -374,7 +412,7 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                         lm.error(
                             &project_id,
                             "service",
-                            &format!("Cycle #{} failed: {}", cycle, err),
+                            &format!("Cycle #{} failed ({}): {}", cycle, result.phase, err),
                         );
                     }
                 }

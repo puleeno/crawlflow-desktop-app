@@ -10,6 +10,7 @@ use crate::worker_engine::{WorkerDef, ProcessorStep, WorkerEngine};
 use crate::finish_actions::{FinishAction, ActionEngine};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -576,9 +577,15 @@ pub async fn execute_repository_pipeline(
     log_manager: &Arc<LogManager>,
     project_id: &str,
     mut python_engine: Option<&mut PythonPluginEngine>,
+    cancellation: Option<&Arc<AtomicBool>>,
 ) -> RepositoryPipelineResult {
     log_manager.info(project_id, "pipeline",
         &format!("Repository pipeline started: {} nodes", config.nodes.len()));
+
+    // Helper to check cancellation
+    let is_cancelled = || -> bool {
+        cancellation.map(|c| c.load(Ordering::Relaxed)).unwrap_or(false)
+    };
 
     let repo = match RawItemRepository::open(db_path) {
         Ok(r) => { r.ensure_tables().ok(); r }
@@ -598,8 +605,18 @@ pub async fn execute_repository_pipeline(
         input_type: String,
     }
 
+    let mut total_ingested = 0i64;
     let mut fetched_sources: Vec<FetchedData> = Vec::new();
     for node in &config.nodes {
+        if is_cancelled() {
+            log_manager.info(project_id, "pipeline", "Pipeline cancelled during data fetching");
+            return RepositoryPipelineResult {
+                success: false, phase: "fetching".into(),
+                ingested: total_ingested, matched: 0, processed: 0, failed: 0,
+                actions: vec![], error: Some("Cancelled by user".into()),
+            };
+        }
+
         if !matches!(node.node_type.as_str(), "start" | "dataSource" | "rssSource") {
             continue;
         }
@@ -651,9 +668,17 @@ pub async fn execute_repository_pipeline(
     log_manager.info(project_id, "pipeline", "Phase 1b: Data Preprocessing");
 
     let preprocessor_nodes = extract_preprocessors(config);
-    let mut total_ingested = 0i64;
 
     for fetched in &fetched_sources {
+        if is_cancelled() {
+            log_manager.info(project_id, "pipeline", "Pipeline cancelled during preprocessing");
+            return RepositoryPipelineResult {
+                success: false, phase: "preprocessing".into(),
+                ingested: total_ingested, matched: 0, processed: 0, failed: 0,
+                actions: vec![], error: Some("Cancelled by user".into()),
+            };
+        }
+
         // Tìm preprocessor node phù hợp cho source này (theo input_type)
         let preproc_config = preprocessor_nodes.iter()
             .find(|p| p.input_type == fetched.input_type)
@@ -696,6 +721,15 @@ pub async fn execute_repository_pipeline(
 
     // ── Phase 2: Worker Matching ─────────────────────────────
     log_manager.info(project_id, "pipeline", "Phase 2: Worker Matching");
+
+    if is_cancelled() {
+        log_manager.info(project_id, "pipeline", "Pipeline cancelled before worker matching");
+        return RepositoryPipelineResult {
+            success: false, phase: "worker_matching".into(),
+            ingested: total_ingested, matched: 0, processed: 0, failed: 0,
+            actions: vec![], error: Some("Cancelled by user".into()),
+        };
+    }
 
     let workers = extract_workers(config);
     let mut pending_items = match repo.get_pending_items(10000) {
@@ -740,6 +774,15 @@ pub async fn execute_repository_pipeline(
     };
 
     for worker in &workers {
+        if is_cancelled() {
+            log_manager.info(project_id, "pipeline", "Pipeline cancelled during processing");
+            return RepositoryPipelineResult {
+                success: false, phase: "processing".into(),
+                ingested: total_ingested, matched: match_result.matched, processed: total_processed, failed: total_failed,
+                actions: vec![], error: Some("Cancelled by user".into()),
+            };
+        }
+
         let items = match repo.get_matched_items(&worker.id, 1000) {
             Ok(items) => items,
             Err(e) => {
@@ -769,6 +812,15 @@ pub async fn execute_repository_pipeline(
 
     // ── Phase 4: Finish Actions ──────────────────────────────
     log_manager.info(project_id, "pipeline", "Phase 4: Finish Actions");
+
+    if is_cancelled() {
+        log_manager.info(project_id, "pipeline", "Pipeline cancelled before finish actions");
+        return RepositoryPipelineResult {
+            success: false, phase: "finish_actions".into(),
+            ingested: total_ingested, matched: match_result.matched, processed: total_processed, failed: total_failed,
+            actions: vec![], error: Some("Cancelled by user".into()),
+        };
+    }
 
     let finish_actions = extract_finish_actions(config);
     let log_fn = |msg: &str, level: &str| {
