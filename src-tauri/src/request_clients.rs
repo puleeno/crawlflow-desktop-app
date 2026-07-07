@@ -151,6 +151,27 @@ pub async fn fetch_reqwest(
     }
 }
 
+fn kill_chrome_process(pid: u32) {
+    // Try to kill the process and its children
+    #[cfg(unix)]
+    {
+        // Kill process group on Unix
+        let _ = Command::new("pkill")
+            .args(["-P", &pid.to_string()])
+            .output();
+        let _ = Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output();
+    }
+    #[cfg(windows)]
+    {
+        // Kill process tree on Windows
+        let _ = Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string(), "/T"])
+            .output();
+    }
+}
+
 pub fn fetch_chrome_sync(
     url: &str,
     profile: &ClientProfile,
@@ -194,14 +215,17 @@ pub fn fetch_chrome_sync(
         "--mute-audio",
         "--no-first-run",
         "--hide-scrollbars",
+        "--disable-blink-features=AutomationControlled",
     ]);
 
     if headless {
-        cmd.arg("--headless");
+        cmd.arg("--headless=new");
     }
 
-    // Limit virtual time so SPAs/Next.js pages don't hang --dump-dom forever
-    cmd.arg("--virtual-time-budget=10000");
+    // Use timeout instead of virtual-time-budget for better control
+    // virtual-time-budget can cause issues with some SPAs
+    let timeout_secs = profile.timeout_secs.unwrap_or(30);
+    cmd.arg(format!("--timeout={}", timeout_secs * 1000));
 
     if let Some(args) = &profile.chrome_args {
         for arg in args {
@@ -229,7 +253,7 @@ pub fn fetch_chrome_sync(
     cmd.arg("--dump-dom");
     cmd.arg(url);
 
-    let chrome_timeout = Duration::from_secs(profile.timeout_secs.unwrap_or(30));
+    let chrome_timeout = Duration::from_secs(timeout_secs);
     let child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -251,6 +275,7 @@ pub fn fetch_chrome_sync(
     let output = match rx.recv_timeout(chrome_timeout) {
         Ok(Ok(o)) => o,
         Ok(Err(e)) => {
+            kill_chrome_process(pid);
             return CrawlResult {
                 url: url.to_string(),
                 status: 0,
@@ -261,7 +286,7 @@ pub fn fetch_chrome_sync(
             };
         }
         Err(_) => {
-            let _ = Command::new("kill").arg(pid.to_string()).output();
+            kill_chrome_process(pid);
             return CrawlResult {
                 url: url.to_string(),
                 status: 0,

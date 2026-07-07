@@ -1,5 +1,7 @@
 use crate::item_matcher::{ItemMatcher, MatchPattern};
 use crate::repository::NewRawItem;
+use crate::models::ClientProfile;
+use crate::request_clients;
 use serde::{Deserialize, Serialize};
 
 // ── Preprocessor Config ───────────────────────────────────
@@ -39,6 +41,10 @@ pub struct PreprocessorConfig {
     pub csv_delimiter: Option<String>,
     pub csv_has_header: Option<bool>,
     pub json_item_path: Option<String>,
+    // Allow preprocessor to override client settings for re-fetching
+    pub client_type: Option<String>,
+    pub client_timeout_secs: Option<u64>,
+    pub client_headless: Option<bool>,
 }
 
 /// Preprocessor registration từ plugin — cho phép plugin đăng ký xử lý riêng
@@ -113,8 +119,62 @@ impl DataPreprocessor {
         Self::process(raw_data, source_url, config)
     }
 
+    /// Process with async support for re-fetching (used in pipeline)
+    pub async fn process_async(
+        raw_data: &str,
+        source_url: &str,
+        config: &PreprocessorConfig,
+    ) -> PreprocessorResult {
+        // If preprocessor has custom client settings, re-fetch with that client
+        if config.client_type.is_some() || config.client_timeout_secs.is_some() {
+            let profile = ClientProfile {
+                client_type: config.client_type.clone().unwrap_or_else(|| "reqwest".to_string()),
+                timeout_secs: config.client_timeout_secs,
+                headless: config.client_headless,
+                ..Default::default()
+            };
+            
+            let result = request_clients::fetch_with_client(source_url, &profile, None).await;
+            if let Some(refreshed_data) = result.html {
+                return Self::process_internal(&refreshed_data, source_url, config);
+            }
+        }
+        
+        Self::process_internal(raw_data, source_url, config)
+    }
+
     /// Process raw data từ data source theo config, trích xuất items
     pub fn process(
+        raw_data: &str,
+        source_url: &str,
+        config: &PreprocessorConfig,
+    ) -> PreprocessorResult {
+        // If preprocessor has custom client settings, re-fetch with that client
+        if config.client_type.is_some() || config.client_timeout_secs.is_some() {
+            if let Some(refreshed_data) = Self::refetch_with_client(source_url, config) {
+                return Self::process_internal(&refreshed_data, source_url, config);
+            }
+        }
+        
+        Self::process_internal(raw_data, source_url, config)
+    }
+
+    /// Re-fetch URL with custom client settings from preprocessor config
+    fn refetch_with_client(source_url: &str, config: &PreprocessorConfig) -> Option<String> {
+        let rt = tokio::runtime::Runtime::new().ok()?;
+        let profile = ClientProfile {
+            client_type: config.client_type.clone().unwrap_or_else(|| "reqwest".to_string()),
+            timeout_secs: config.client_timeout_secs,
+            headless: config.client_headless,
+            ..Default::default()
+        };
+        
+        let result = rt.block_on(request_clients::fetch_with_client(source_url, &profile, None));
+        result.html
+    }
+
+    /// Internal processing logic (used after potential re-fetch)
+    fn process_internal(
         raw_data: &str,
         source_url: &str,
         config: &PreprocessorConfig,

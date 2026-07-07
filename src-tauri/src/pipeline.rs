@@ -691,6 +691,9 @@ pub async fn execute_repository_pipeline(
                 csv_delimiter: None,
                 csv_has_header: None,
                 json_item_path: None,
+                client_type: None,
+                client_timeout_secs: None,
+                client_headless: None,
             });
 
         let result = if let Some(engine) = python_engine.as_deref_mut() {
@@ -701,11 +704,12 @@ pub async fn execute_repository_pipeline(
                 engine,
             )
         } else {
-            DataPreprocessor::process(
+            // Use async version to support re-fetching with custom client settings
+            DataPreprocessor::process_async(
                 &fetched.raw_data,
                 &fetched.source_url,
                 &preproc_config,
-            )
+            ).await
         };
 
         match repo.save_items(&result.items) {
@@ -902,6 +906,9 @@ fn extract_preprocessors(config: &PipelineConfig) -> Vec<PreprocessorConfig> {
             csv_delimiter: data.get("csvDelimiter").and_then(|v| v.as_str()).map(String::from),
             csv_has_header: data.get("csvHasHeader").and_then(|v| v.as_bool()),
             json_item_path: data.get("jsonItemPath").and_then(|v| v.as_str()).map(String::from),
+            client_type: data.get("clientType").and_then(|v| v.as_str()).map(String::from),
+            client_timeout_secs: data.get("clientTimeoutSecs").and_then(|v| v.as_u64()),
+            client_headless: data.get("clientHeadless").and_then(|v| v.as_bool()),
         })
     }).collect()
 }
