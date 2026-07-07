@@ -38,8 +38,30 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
   const [serviceStatus, setServiceStatus] = useState<string>('stopped');
   const [serviceInfo, setServiceInfo] = useState<any>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const maxIdRef = useRef<number>(0);
 
-  // Subscribe to live log events
+  // Fetch existing logs from DB on mount (captures background service logs)
+  useEffect(() => {
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const existing = await invoke<LogEntry[]>('get_project_logs_cmd', {
+          projectId,
+          sinceId: null,
+          levelFilter: null,
+          limit: 500,
+        });
+        if (existing.length > 0) {
+          setLogs(existing);
+          maxIdRef.current = Math.max(...existing.map(l => l.id));
+        }
+      } catch (e) {
+        // Not in Tauri or DB not available
+      }
+    })();
+  }, [projectId]);
+
+  // Subscribe to live log events (new logs from in-process execution)
   useEffect(() => {
     const logEvent = `project-log:${projectId}`;
     const statusEvent = `service-status:${projectId}`;
@@ -54,6 +76,9 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
 
         const unsub1 = await listen<LogEntry>(logEvent, (event) => {
           setLogs(prev => {
+            // Avoid duplicates from overlapping DB fetch
+            if (event.payload.id <= maxIdRef.current) return prev;
+            maxIdRef.current = event.payload.id;
             const next = [...prev, event.payload];
             if (next.length > 500) next.splice(0, next.length - 500);
             return next;

@@ -120,6 +120,21 @@ pub fn get_master_migrations() -> Vec<Migration> {
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS project_runtime (
+                    project_id TEXT PRIMARY KEY,
+                    runner_status TEXT NOT NULL DEFAULT 'stopped',
+                    runner_pid INTEGER,
+                    runner_type TEXT DEFAULT 'service',
+                    edit_pid INTEGER,
+                    service_control TEXT NOT NULL DEFAULT 'run',
+                    cycle_count INTEGER NOT NULL DEFAULT 0,
+                    last_run_at TEXT,
+                    last_error TEXT,
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_project_runtime_status ON project_runtime(runner_status);
             ",
             kind: MigrationKind::Up,
         },

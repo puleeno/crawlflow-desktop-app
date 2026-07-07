@@ -19,34 +19,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 struct SimpleLogger;
 
 impl SimpleLogger {
-    fn log_msg(project_id: &str, level: &str, source: &str, message: &str) {
-        let now = {
-            let d = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default();
-            let s = d.as_secs();
-            let ms = d.subsec_millis();
-            format!(
-                "{:02}:{:02}:{:02}.{:03}",
-                (s % 86400) / 3600,
-                (s % 3600) / 60,
-                s % 60,
-                ms
-            )
-        };
-        println!(
-            "[{}] [{}] [{}] [{}] {}",
-            now,
-            level.to_uppercase(),
-            project_id,
-            source,
-            message
-        );
-    }
-
     // Bridge to pass to pipeline::execute_pipeline which expects LogManager
-    fn as_log_manager() -> crawlflow_lib::logs::LogManager {
-        crawlflow_lib::logs::LogManager::new() // no AppHandle → no Tauri emit, just in-memory buffer
+    fn as_log_manager(db_path: PathBuf) -> crawlflow_lib::logs::LogManager {
+        let lm = crawlflow_lib::logs::LogManager::new();
+        lm.set_master_db_path(db_path);
+        lm
     }
 }
 
@@ -250,9 +227,17 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
     let db_path = project_db_path(&proj.db_path);
     let master_db = master_db_path();
 
-    SimpleLogger::log_msg(
+    // Ensure project_runtime table exists
+    if let Ok(conn) = rusqlite::Connection::open(&master_db) {
+        ensure_runtime_table(&conn);
+    }
+
+    let lm = Arc::new(SimpleLogger::as_log_manager(master_db_path()));
+    let self_pid = std::process::id() as i64;
+    let mut cycle = 0u64;
+
+    lm.info(
         &project_id,
-        "info",
         "service",
         &format!(
             "Loop started for '{}' (every {}s)",
@@ -260,20 +245,10 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
         ),
     );
 
-    // Ensure project_runtime table exists
-    if let Ok(conn) = rusqlite::Connection::open(&master_db) {
-        ensure_runtime_table(&conn);
-    }
-
-    let lm = Arc::new(SimpleLogger::as_log_manager());
-    let self_pid = std::process::id() as i64;
-    let mut cycle = 0u64;
-
     while !shutdown.load(Ordering::Relaxed) {
         cycle += 1;
-        SimpleLogger::log_msg(
+        lm.info(
             &project_id,
-            "info",
             "service",
             &format!("--- Cycle #{} ---", cycle),
         );
@@ -286,7 +261,7 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
             .unwrap_or(false);
 
         // Check if user requested a stop/pause via the desktop app UI
-        let is_paused_by_user = conn_result
+        let service_control = conn_result
             .as_ref()
             .map(|conn| {
                 conn.query_row(
@@ -295,22 +270,26 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                     |row| row.get::<_, String>(0),
                 )
                 .unwrap_or_else(|_| "run".to_string())
-                    == "paused"
             })
-            .unwrap_or(false);
+            .unwrap_or_else(|_| "run".to_string());
 
-        if is_editing || is_paused_by_user {
+        if is_editing || service_control == "paused" || service_control == "stop" {
             let reason = if is_editing {
                 "open in desktop app"
-            } else {
+            } else if service_control == "paused" {
                 "paused by user"
+            } else {
+                "stopped by user"
             };
-            SimpleLogger::log_msg(
+            lm.info(
                 &project_id,
-                "info",
                 "service",
                 &format!("Project '{}' is {}. Skipping cycle.", proj.name, reason),
             );
+            // If stopped, exit the loop entirely
+            if service_control == "stop" {
+                break;
+            }
             for _ in 0..interval_secs {
                 if shutdown.load(Ordering::Relaxed) {
                     break;
@@ -320,7 +299,7 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
             continue;
         }
 
-        // Mark as running in shared SQLite
+        // Mark as running in shared SQLite and reset service_control
         if let Ok(conn) = rusqlite::Connection::open(&master_db) {
             set_runner_status(
                 &conn,
@@ -330,6 +309,11 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                 Some(cycle as i64),
                 None,
                 None,
+            );
+            // Reset service_control to "run" so it continues unless explicitly stopped
+            let _ = conn.execute(
+                "UPDATE project_runtime SET service_control = 'run' WHERE project_id = ?1",
+                rusqlite::params![&project_id],
             );
         }
 
@@ -366,9 +350,8 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                             Some(&now),
                             None,
                         );
-                        SimpleLogger::log_msg(
+                        lm.info(
                             &project_id,
-                            "info",
                             "service",
                             &format!(
                                 "Cycle #{}: {} steps, {} items",
@@ -388,9 +371,8 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                             Some(&now),
                             Some(&err),
                         );
-                        SimpleLogger::log_msg(
+                        lm.error(
                             &project_id,
-                            "error",
                             "service",
                             &format!("Cycle #{} failed: {}", cycle, err),
                         );
@@ -409,9 +391,8 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                         Some(&e),
                     );
                 }
-                SimpleLogger::log_msg(
+                lm.error(
                     &project_id,
-                    "error",
                     "service",
                     &format!("Load pipeline failed: {}", e),
                 );
@@ -431,7 +412,7 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
     if let Ok(conn) = rusqlite::Connection::open(&master_db) {
         set_runner_status(&conn, &project_id, "stopped", None, None, None, None);
     }
-    SimpleLogger::log_msg(&project_id, "info", "service", "Loop stopped.");
+    lm.info(&project_id, "service", "Loop stopped.");
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────────

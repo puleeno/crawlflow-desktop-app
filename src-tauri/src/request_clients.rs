@@ -200,6 +200,9 @@ pub fn fetch_chrome_sync(
         cmd.arg("--headless");
     }
 
+    // Limit virtual time so SPAs/Next.js pages don't hang --dump-dom forever
+    cmd.arg("--virtual-time-budget=10000");
+
     if let Some(args) = &profile.chrome_args {
         for arg in args {
             cmd.arg(arg);

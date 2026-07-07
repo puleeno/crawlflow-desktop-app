@@ -1,5 +1,7 @@
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::{AppHandle, Emitter};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -31,6 +33,7 @@ pub struct LogManager {
     buffers: Arc<RwLock<HashMap<String, VecDeque<LogEntry>>>>,
     next_id: Arc<RwLock<u64>>,
     app_handle: Mutex<Option<AppHandle>>,
+    master_db_path: Mutex<Option<PathBuf>>,
 }
 
 impl LogManager {
@@ -39,6 +42,32 @@ impl LogManager {
             buffers: Arc::new(RwLock::new(HashMap::new())),
             next_id: Arc::new(RwLock::new(1)),
             app_handle: Mutex::new(None),
+            master_db_path: Mutex::new(None),
+        }
+    }
+
+    /// Set the master DB path so logs are persisted to SQLite.
+    /// Creates the `logs` table if it does not exist.
+    pub fn set_master_db_path(&self, path: PathBuf) {
+        *self.master_db_path.lock().unwrap() = Some(path.clone());
+        self.ensure_logs_table(&path);
+    }
+
+    fn ensure_logs_table(&self, path: &PathBuf) {
+        if let Ok(conn) = rusqlite::Connection::open(path) {
+            let _ = conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    level TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    details TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_logs_project_id ON logs(project_id);
+                CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);",
+            );
         }
     }
 
@@ -98,6 +127,7 @@ impl LogManager {
             details,
         };
 
+        // Write to in-memory ring buffer
         {
             let mut buffers = self.buffers.write().unwrap();
             let buffer = buffers
@@ -109,9 +139,20 @@ impl LogManager {
             buffer.push_back(entry.clone());
         }
 
+        // Emit Tauri event for live feed (desktop app)
         if let Some(ref handle) = *self.app_handle.lock().unwrap() {
             let event_name = format!("project-log:{}", project_id);
             let _ = handle.emit(&event_name, &entry);
+        }
+
+        // Persist to SQLite so the service's logs are visible from the desktop app
+        if let Some(ref db_path) = *self.master_db_path.lock().unwrap() {
+            if let Ok(conn) = rusqlite::Connection::open(db_path) {
+                let _ = conn.execute(
+                    "INSERT INTO logs (project_id, timestamp, level, source, message, details) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![entry.project_id, entry.timestamp, entry.level, entry.source, entry.message, entry.details],
+                );
+            }
         }
 
         entry
@@ -140,6 +181,13 @@ impl LogManager {
         level_filter: Option<&str>,
         limit: Option<usize>,
     ) -> Vec<LogEntry> {
+        // When a master DB path is configured, read from SQLite
+        // (this captures logs from both the desktop app and the background service)
+        if self.master_db_path.lock().unwrap().is_some() {
+            return self.get_logs_from_db(project_id, since_id, level_filter, limit);
+        }
+
+        // Fallback: read from in-memory buffer (used in tests and before DB is set)
         let limit = limit.unwrap_or(200);
         let buffers = self.buffers.read().unwrap();
         if let Some(buffer) = buffers.get(project_id) {
@@ -171,10 +219,78 @@ impl LogManager {
         }
     }
 
+    fn get_logs_from_db(
+        &self,
+        project_id: &str,
+        since_id: Option<u64>,
+        level_filter: Option<&str>,
+        limit: Option<usize>,
+    ) -> Vec<LogEntry> {
+        let limit = limit.unwrap_or(200);
+        let db_path = match *self.master_db_path.lock().unwrap() {
+            Some(ref p) => p.clone(),
+            None => return vec![],
+        };
+        let conn = match rusqlite::Connection::open(&db_path) {
+            Ok(c) => c,
+            Err(_) => return vec![],
+        };
+        let mut stmt = match conn.prepare(
+            "SELECT id, project_id, timestamp, level, source, message, details FROM logs WHERE project_id = ?1 ORDER BY id DESC",
+        ) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+        let rows = match stmt.query_map(params![project_id], |row| {
+            Ok(LogEntry {
+                id: row.get::<_, i64>(0)? as u64,
+                project_id: row.get(1)?,
+                timestamp: row.get(2)?,
+                level: row.get(3)?,
+                source: row.get(4)?,
+                message: row.get(5)?,
+                details: row.get(6)?,
+            })
+        }) {
+            Ok(r) => r,
+            Err(_) => return vec![],
+        };
+        let mut all: Vec<LogEntry> = rows.filter_map(|r| r.ok()).collect();
+        // Apply Rust-side filters, then reverse back to chronological order
+        all.reverse();
+        all.into_iter()
+            .filter(|e| {
+                if let Some(since) = since_id {
+                    e.id > since
+                } else {
+                    true
+                }
+            })
+            .filter(|e| {
+                if let Some(lvl) = level_filter {
+                    e.level == lvl
+                } else {
+                    true
+                }
+            })
+            .take(limit)
+            .collect()
+    }
+
     pub fn clear(&self, project_id: &str) {
+        // Clear in-memory buffer
         let mut buffers = self.buffers.write().unwrap();
         if let Some(buffer) = buffers.get_mut(project_id) {
             buffer.clear();
+        }
+        // Clear from SQLite
+        if let Some(ref db_path) = *self.master_db_path.lock().unwrap() {
+            if let Ok(conn) = rusqlite::Connection::open(db_path) {
+                let _ = conn.execute(
+                    "DELETE FROM logs WHERE project_id = ?1",
+                    params![project_id],
+                );
+            }
         }
     }
 }

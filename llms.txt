@@ -203,27 +203,33 @@ processor  → processor     (optional chain)
 
 ## 7. Pipeline Execution (Rust Backend)
 
-Two execution paths exist:
+**Unified Architecture:** All pipeline execution happens in the background service (`crawlflow-service`). The desktop GUI only manages project editing and views logs. State synchronization is via SQLite.
 
-### 7a. Legacy Pipeline (`execute_pipeline` / `execute_pipeline_with_mode`)
+### 7. Execution Architecture
 
-File: `src-tauri/src/pipeline.rs`. Topologically sorted (Kahn's algorithm), nodes execute in dependency order with Queue or Parallel mode.
+```
+┌─────────────────┐
+│   Desktop GUI   │  ← Edit project, view logs (read SQLite)
+│  (read SQLite)  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   SQLite DB     │  ← Single source of truth
+│  (state/logs)   │  - project_runtime table (service state)
+│                 │  - logs table (execution logs)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Background      │  ← Execute pipeline, write state/logs
+│   Service       │  - crawlflow-service binary
+└─────────────────┘
+```
 
-| Node type string (Rust) | Behavior |
-|-------------------------|----------|
-| `"start"` / `"dataSource"` / `"rssSource"` | Returns sample data (stub; real fetch is done before pipeline call) |
-| `"repository"` | Passes input data through unchanged |
-| `"processor"` | Runs `processorType` sub-handler (see §4) |
-| `"htmlExtractor"` | Passes data through (stub — real extraction done in frontend) |
-| `"excelExport"` | Exports data via `rust-excel-export` plugin |
-| `"csvExport"` / `"databaseExport"` | Logs and passes data through |
-| `_` (any other) | Logs a debug warning, passes data through |
+### 7a. Repository-based Pipeline (`execute_repository_pipeline`)
 
-> ⚠️ **Type mismatch note:** Frontend node types use kebab-case (e.g., `html-data-extractor`), while `pipeline.rs` uses camelCase aliases (e.g., `htmlExtractor`). All unknown types fall through to the passthrough handler without error.
-
-### 7b. Repository-based Pipeline (`execute_repository_pipeline`)
-
-New architecture with 4 phases using `raw_items` + `processing_log` SQLite tables per project:
+File: `src-tauri/src/pipeline.rs`. Executed by background service with 4 phases using `raw_items` + `processing_log` SQLite tables per project:
 
 #### Phase 1a: Data Fetching
 Iterates `start`/`dataSource`/`rssSource` nodes, fetches raw data:
@@ -272,6 +278,39 @@ pub fn execute_repository_pipeline(
 ```
 `python_engine` is optional — if `None`, only built-in processing is used.
 
+### 7b. State Synchronization via SQLite
+
+The `project_runtime` table in the master DB (`crawlflow.db`) serves as the single source of truth for service state:
+
+| Column | Purpose |
+|--------|---------|
+| `project_id` | Primary key |
+| `runner_status` | Current status: `stopped`, `running`, `idle`, `paused` |
+| `runner_pid` | Process ID of background service |
+| `runner_type` | `service` (background) or `in-process` (deprecated) |
+| `edit_pid` | Process ID of desktop app (for edit lock) |
+| `service_control` | Control signal from GUI: `run`, `pause`, `stop` |
+| `cycle_count` | Number of completed cycles |
+| `last_run_at` | Timestamp of last execution |
+| `last_error` | Last error message (if any) |
+| `updated_at` | Last update timestamp |
+
+**Control Flow:**
+1. GUI writes `service_control` to SQLite (`run`/`pause`/`stop`)
+2. Background service reads `service_control` each cycle
+3. Background service writes `runner_status`, `cycle_count`, `last_run_at` to SQLite
+4. GUI reads `runner_status` to display current state
+5. All logs are persisted to `logs` table via `LogManager`
+
+### 7c. ServiceManager (Desktop App)
+
+**Simplified Role:** The desktop app's `ServiceManager` no longer executes pipelines in-process. It only:
+- Writes `service_control` to SQLite when user clicks start/stop/pause
+- Reads `runner_status` from SQLite to display current state
+- Emits Tauri events for UI updates
+
+**Removed:** All in-process execution logic (run_loop, ServiceState, async tasks, etc.)
+
 ---
 
 ## 8. Fixed / Special Node IDs
@@ -300,12 +339,21 @@ interface ProjectSettings {
 
 ## 10. Headless Service Binary
 
-The `crawlflow-service` binary (`src-tauri/src/bin/service.rs`) executes pipelines without the Tauri/GUI runtime.
+The `crawlflow-service` binary (`src-tauri/src/bin/service.rs`) is the **sole execution engine** for all pipeline runs. It executes without the Tauri/GUI runtime.
 
 - **CLI flags:** `--project <id>` or `--all`
-- **Database:** Reads directly from `crawlflow.db` (master) and `project_<id>.db`
-- **Logging:** stdout/stderr (captured by system service manager)
-- **Not available:** Tauri events, frontend invoke, Python plugins (requires GUI app for PyO3)
+- **Database:** Reads/writes to `crawlflow.db` (master) for state control and `project_<id>.db` for data/logs
+- **Logging:** Persists logs to SQLite `logs` table via `LogManager` (readable by GUI)
+- **State Control:** Reads `service_control` from `project_runtime` table each cycle
+- **Python plugins:** Available (uses PyO3, no GUI required)
+
+**Control Flow:**
+1. Service reads `service_control` from SQLite each cycle
+2. If `service_control = "stop"` → exits loop
+3. If `service_control = "paused"` → skips cycle
+4. If `service_control = "run"` → executes pipeline
+5. After execution, writes `runner_status`, `cycle_count`, `last_run_at` to SQLite
+6. Resets `service_control = "run"` for next cycle
 
 System service integration:
 - **macOS:** launchd (`~/Library/LaunchAgents/com.crawlflow.service.plist`)
