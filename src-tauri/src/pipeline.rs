@@ -627,9 +627,20 @@ pub async fn execute_repository_pipeline(
             "url" | "api" => {
                 let url = source_value.to_string();
                 let profile = extract_client_profile(&node.data);
+                let wait_for_selector = node.data.get("waitForSelector").and_then(|v| v.as_str());
+                let wait_for_content = node.data.get("waitForContent").and_then(|v| v.as_str());
+                let wait_timeout_ms = node.data.get("waitTimeoutMs").and_then(|v| v.as_u64());
+                
                 log_manager.info(project_id, "fetching",
                     &format!("Fetching: {} (client: {})", url, profile.client_type));
-                let crawl_result = request_clients::fetch_with_client(&url, &profile, None).await;
+                let crawl_result = request_clients::fetch_with_client(
+                    &url, 
+                    &profile, 
+                    None,
+                    wait_for_selector,
+                    wait_for_content,
+                    wait_timeout_ms,
+                ).await;
                 let result = if crawl_result.error.is_some() {
                     Err(crawl_result.error.unwrap())
                 } else {
@@ -694,6 +705,9 @@ pub async fn execute_repository_pipeline(
                 client_type: None,
                 client_timeout_secs: None,
                 client_headless: None,
+                wait_for_selector: None,
+                wait_for_content: None,
+                wait_timeout_ms: None,
             });
 
         let result = if let Some(engine) = python_engine.as_deref_mut() {
@@ -909,6 +923,9 @@ fn extract_preprocessors(config: &PipelineConfig) -> Vec<PreprocessorConfig> {
             client_type: data.get("clientType").and_then(|v| v.as_str()).map(String::from),
             client_timeout_secs: data.get("clientTimeoutSecs").and_then(|v| v.as_u64()),
             client_headless: data.get("clientHeadless").and_then(|v| v.as_bool()),
+            wait_for_selector: data.get("waitForSelector").and_then(|v| v.as_str()).map(String::from),
+            wait_for_content: data.get("waitForContent").and_then(|v| v.as_str()).map(String::from),
+            wait_timeout_ms: data.get("waitTimeoutMs").and_then(|v| v.as_u64()),
         })
     }).collect()
 }

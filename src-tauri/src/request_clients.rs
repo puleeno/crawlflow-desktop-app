@@ -2,6 +2,7 @@ use crate::models::*;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
+use std::fs;
 
 fn find_chrome() -> Option<PathBuf> {
     // Check configured path from app settings first
@@ -175,6 +176,9 @@ fn kill_chrome_process(pid: u32) {
 pub fn fetch_chrome_sync(
     url: &str,
     profile: &ClientProfile,
+    wait_for_selector: Option<&str>,
+    wait_for_content: Option<&str>,
+    wait_timeout_ms: Option<u64>,
 ) -> CrawlResult {
     let chrome = match find_chrome() {
         Some(c) => c,
@@ -201,6 +205,49 @@ pub fn fetch_chrome_sync(
 
     let _ = std::fs::create_dir_all(&profile_dir);
 
+    // Create temporary JS file for wait logic
+    let wait_script = if wait_for_selector.is_some() || wait_for_content.is_some() {
+        let selector = wait_for_selector.unwrap_or("");
+        let content = wait_for_content.unwrap_or("");
+        let timeout = wait_timeout_ms.unwrap_or(10000);
+        
+        Some(format!(r#"
+const url = "{}";
+const waitForSelector = "{}";
+const waitForContent = "{}";
+const timeout = {};
+
+(async () => {{
+    const page = await browser.newPage();
+    await page.goto(url, {{ waitUntil: 'domcontentloaded', timeout: timeout }});
+    
+    if (waitForSelector) {{
+        try {{
+            await page.waitForSelector(waitForSelector, {{ timeout: timeout }});
+        }} catch (e) {{
+            console.error('Selector timeout:', e);
+        }}
+    }}
+    
+    if (waitForContent) {{
+        try {{
+            await page.waitForFunction((content) => {{
+                return document.body.innerText.includes(content);
+            }}, {{}}, waitForContent, {{ timeout: timeout }});
+        }} catch (e) {{
+            console.error('Content timeout:', e);
+        }}
+    }}
+    
+    const html = await page.content();
+    console.log(html);
+    await browser.close();
+}})();
+"#, url, selector, content, timeout))
+    } else {
+        None
+    };
+
     let mut cmd = Command::new(&chrome);
     let headless = profile.headless.unwrap_or(true);
     cmd.args([
@@ -222,8 +269,6 @@ pub fn fetch_chrome_sync(
         cmd.arg("--headless=new");
     }
 
-    // Use timeout instead of virtual-time-budget for better control
-    // virtual-time-budget can cause issues with some SPAs
     let timeout_secs = profile.timeout_secs.unwrap_or(30);
     cmd.arg(format!("--timeout={}", timeout_secs * 1000));
 
@@ -248,6 +293,38 @@ pub fn fetch_chrome_sync(
         for arg in extra {
             cmd.arg(arg);
         }
+    }
+
+    if let Some(script) = &wait_script {
+        // Use Node.js with puppeteer if available, otherwise fallback to simple fetch
+        let script_path = std::env::temp_dir()
+            .join("crawlflow-chrome-scripts")
+            .join(format!("{}.js", simple_hash(url)));
+        let _ = std::fs::create_dir_all(script_path.parent().unwrap());
+        let _ = fs::write(&script_path, script);
+        
+        // Try to use Node.js with puppeteer
+        if let Ok(node_output) = Command::new("node")
+            .arg(&script_path)
+            .output()
+        {
+            let _ = fs::remove_file(&script_path);
+            if node_output.status.success() {
+                let html = String::from_utf8_lossy(&node_output.stdout).to_string();
+                let text = crate::crawler::strip_html_tags(&html);
+                return CrawlResult {
+                    url: url.to_string(),
+                    status: 200,
+                    html: Some(html),
+                    text: Some(text),
+                    extracted: None,
+                    error: None,
+                };
+            }
+        }
+        
+        // Fallback to simple chrome dump-dom if Node.js fails
+        let _ = fs::remove_file(&script_path);
     }
 
     cmd.arg("--dump-dom");
@@ -456,12 +533,17 @@ pub async fn fetch_with_client(
     url: &str,
     profile: &ClientProfile,
     extract_rules: Option<Vec<ExtractRule>>,
+    wait_for_selector: Option<&str>,
+    wait_for_content: Option<&str>,
+    wait_timeout_ms: Option<u64>,
 ) -> CrawlResult {
     let result = match profile.client_type.as_str() {
         "chrome" => tokio::task::spawn_blocking({
             let url = url.to_string();
             let profile = profile.clone();
-            move || fetch_chrome_sync(&url, &profile)
+            let selector = wait_for_selector.map(|s| s.to_string());
+            let content = wait_for_content.map(|c| c.to_string());
+            move || fetch_chrome_sync(&url, &profile, selector.as_deref(), content.as_deref(), wait_timeout_ms)
         })
         .await
         .unwrap_or_else(|e| CrawlResult {

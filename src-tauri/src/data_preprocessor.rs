@@ -45,6 +45,10 @@ pub struct PreprocessorConfig {
     pub client_type: Option<String>,
     pub client_timeout_secs: Option<u64>,
     pub client_headless: Option<bool>,
+    // Wait options for chrome client (AJAX loading)
+    pub wait_for_selector: Option<String>,
+    pub wait_for_content: Option<String>,
+    pub wait_timeout_ms: Option<u64>,
 }
 
 /// Preprocessor registration từ plugin — cho phép plugin đăng ký xử lý riêng
@@ -126,7 +130,7 @@ impl DataPreprocessor {
         config: &PreprocessorConfig,
     ) -> PreprocessorResult {
         // If preprocessor has custom client settings, re-fetch with that client
-        if config.client_type.is_some() || config.client_timeout_secs.is_some() {
+        if config.client_type.is_some() || config.client_timeout_secs.is_some() || config.wait_for_selector.is_some() || config.wait_for_content.is_some() {
             let profile = ClientProfile {
                 client_type: config.client_type.clone().unwrap_or_else(|| "reqwest".to_string()),
                 timeout_secs: config.client_timeout_secs,
@@ -134,7 +138,14 @@ impl DataPreprocessor {
                 ..Default::default()
             };
             
-            let result = request_clients::fetch_with_client(source_url, &profile, None).await;
+            let result = request_clients::fetch_with_client(
+                source_url, 
+                &profile, 
+                None,
+                config.wait_for_selector.as_deref(),
+                config.wait_for_content.as_deref(),
+                config.wait_timeout_ms,
+            ).await;
             if let Some(refreshed_data) = result.html {
                 return Self::process_internal(&refreshed_data, source_url, config);
             }
@@ -169,7 +180,7 @@ impl DataPreprocessor {
             ..Default::default()
         };
         
-        let result = rt.block_on(request_clients::fetch_with_client(source_url, &profile, None));
+        let result = rt.block_on(request_clients::fetch_with_client(source_url, &profile, None, None, None, None));
         result.html
     }
 

@@ -749,7 +749,7 @@ pub async fn fetch_with_client_cmd(
     profile: crate::models::ClientProfile,
     extract_rules: Option<Vec<ExtractRule>>,
 ) -> CrawlResult {
-    crate::request_clients::fetch_with_client(&url, &profile, extract_rules).await
+    crate::request_clients::fetch_with_client(&url, &profile, extract_rules, None, None, None).await
 }
 
 // ── System Service commands ────────────────────────────────────────────

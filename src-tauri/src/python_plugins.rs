@@ -641,7 +641,7 @@ fn py_fetch_with_client(
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
     rt.block_on(async {
-        let result = crate::request_clients::fetch_with_client(&url, &profile, None).await;
+        let result = crate::request_clients::fetch_with_client(&url, &profile, None, None, None, None).await;
         let json = serde_json::json!({
             "status": result.status,
             "html": result.html,

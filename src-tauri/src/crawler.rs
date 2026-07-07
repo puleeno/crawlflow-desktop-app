@@ -235,10 +235,10 @@ pub async fn fetch_url(request: CrawlRequest) -> CrawlResult {
             extra_nav_args: profile.extra_nav_args,
             headless: profile.headless,
         };
-        return request_clients::fetch_with_client(&request.url, &chrome_profile, request.extract_rules).await;
+        return request_clients::fetch_with_client(&request.url, &chrome_profile, request.extract_rules, None, None, None).await;
     }
 
-    request_clients::fetch_with_client(&request.url, &profile, request.extract_rules).await
+    request_clients::fetch_with_client(&request.url, &profile, request.extract_rules, None, None, None).await
 }
 
 pub fn extract_from_html(html: &str, rules: &[ExtractRule]) -> Vec<ExtractedField> {
