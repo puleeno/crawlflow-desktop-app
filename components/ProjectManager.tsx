@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { GlobeAltIcon, ArrowUpTrayIcon, PlusIcon, Cog6ToothIcon } from './icons';
+import { GlobeAltIcon, ArrowUpTrayIcon, PlusIcon, Cog6ToothIcon, XMarkIcon } from './icons';
 import { CreateProjectForm } from './CreateProjectForm';
 import { ProjectCard } from './ProjectCard';
 import { EmptyState } from './EmptyState';
+import { RawItemsBrowser } from './RawItemsBrowser';
+import LiveLogs from './LiveLogs';
 import { listProjects, createProject, createProjectFromPreset, deleteProject } from '../lib/db';
 import type { Preset } from '../types';
 
@@ -27,6 +29,8 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
     const [loading, setLoading] = useState(true);
     const [showCreate, setShowCreate] = useState(false);
     const [creating, setCreating] = useState(false);
+    const [browseRawProjectId, setBrowseRawProjectId] = useState<string | null>(null);
+    const [viewLogsProjectId, setViewLogsProjectId] = useState<string | null>(null);
 
     const loadProjects = useCallback(async () => {
         setLoading(true);
@@ -166,9 +170,21 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
                                 project={project}
                                 onOpen={onOpenProject}
                                 onDelete={handleDelete}
+                                onBrowseRawItems={setBrowseRawProjectId}
+                                onViewLogs={setViewLogsProjectId}
                             />
                         ))}
                     </div>
+                )}
+
+                {/* Browse Raw Items Modal */}
+                {browseRawProjectId && (
+                    <RawItemsBrowser projectId={browseRawProjectId} onClose={() => setBrowseRawProjectId(null)} />
+                )}
+
+                {/* View Logs Modal */}
+                {viewLogsProjectId && (
+                    <LiveLogs projectId={viewLogsProjectId} onClose={() => setViewLogsProjectId(null)} />
                 )}
             </div>
         </div>

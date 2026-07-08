@@ -1,5 +1,5 @@
 import React from 'react';
-import { FolderIcon, TrashIcon } from './icons';
+import { FolderIcon, TrashIcon, TableCellsIcon, DocumentTextIcon } from './icons';
 
 interface ProjectRecord {
     id: string;
@@ -13,6 +13,8 @@ interface ProjectCardProps {
     project: ProjectRecord;
     onOpen: (id: string) => void;
     onDelete: (id: string, name: string) => void;
+    onBrowseRawItems: (id: string) => void;
+    onViewLogs: (id: string) => void;
 }
 
 const getStatusColor = (status: string) => {
@@ -38,7 +40,7 @@ const formatDate = (dateStr: string) => {
     }
 };
 
-export const ProjectCard: React.FC<ProjectCardProps> = ({ project, onOpen, onDelete }) => {
+export const ProjectCard: React.FC<ProjectCardProps> = ({ project, onOpen, onDelete, onBrowseRawItems, onViewLogs }) => {
     return (
         <div
             onClick={() => onOpen(project.id)}
@@ -63,13 +65,29 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ project, onOpen, onDel
                     Updated {formatDate(project.updated_at)}
                 </p>
             </div>
-            <button
-                onClick={(e) => { e.stopPropagation(); onDelete(project.id, project.name); }}
-                className="flex-shrink-0 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-                title="Delete project"
-            >
-                <TrashIcon />
-            </button>
+            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                <button
+                    onClick={(e) => { e.stopPropagation(); onBrowseRawItems(project.id); }}
+                    className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                    title="Browse raw items"
+                >
+                    <TableCellsIcon />
+                </button>
+                <button
+                    onClick={(e) => { e.stopPropagation(); onViewLogs(project.id); }}
+                    className="p-2 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors"
+                    title="View logs"
+                >
+                    <DocumentTextIcon />
+                </button>
+                <button
+                    onClick={(e) => { e.stopPropagation(); onDelete(project.id, project.name); }}
+                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Delete project"
+                >
+                    <TrashIcon />
+                </button>
+            </div>
         </div>
     );
 };

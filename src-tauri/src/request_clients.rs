@@ -1007,8 +1007,39 @@ pub fn fetch_via_cdp(
 
     // Don't close Chrome — pass session to preprocessor
     let text = crate::crawler::strip_html_tags(&html);
+    let page_id_str = page_id.clone().unwrap_or_default();
+
+    // Spawn background helper to close the tab after 10 seconds
+    let port = session.debug_port;
+    if let Some(ref pid_str) = page_id {
+        let pid_str = pid_str.clone();
+        std::thread::spawn(move || {
+            debug_log!(
+                "[fetch_via_cdp] Delayed tab close thread: sleeping 10s before closing tab {}",
+                pid_str
+            );
+            std::thread::sleep(Duration::from_secs(10));
+            debug_log!("[fetch_via_cdp] Closing tab: {} (port: {})", pid_str, port);
+            let client = reqwest::blocking::Client::new();
+            if let Err(e) = client
+                .get(format!("http://127.0.0.1:{}/json/close/{}", port, pid_str))
+                .send()
+            {
+                log::error!(
+                    "[fetch_via_cdp] Failed to close tab via JSON HTTP API: {}",
+                    e
+                );
+            } else {
+                debug_log!(
+                    "[fetch_via_cdp] Tab close signal sent successfully for {}",
+                    pid_str
+                );
+            }
+        });
+    }
+
     let session = ChromeSession {
-        page_id: Some(page_id.unwrap_or_default()),
+        page_id: Some(page_id_str),
         ..session
     };
 
