@@ -161,41 +161,84 @@ export function RawItemsBrowser({ projectId, onClose }: Props) {
               </thead>
               <tbody>
                 {items.map(item => (
-                  <tr key={item.id}
-                    onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
-                    style={{
-                      borderBottom: '1px solid #252540', cursor: 'pointer',
-                      background: expandedId === item.id ? 'rgba(59,130,246,0.08)' : undefined,
-                    }}
-                  >
-                    <td style={{ padding: '10px 16px', color: '#64748b' }}>{item.id}</td>
-                    <td style={{
-                      padding: '10px 16px', color: '#e2e8f0', maxWidth: 350,
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>
-                      {item.extracted_url || item.source_url}
-                    </td>
-                    <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{item.item_type}</td>
-                    <td style={{ padding: '10px 16px' }}>
-                      <span style={{
-                        display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontSize: 11,
-                        fontWeight: 500, color: '#fff',
-                        background: STATUS_COLORS[item.status] || '#6b7280',
+                  <React.Fragment key={item.id}>
+                    <tr 
+                      onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
+                      style={{
+                        borderBottom: '1px solid #252540', cursor: 'pointer',
+                        background: expandedId === item.id ? 'rgba(59,130,246,0.08)' : undefined,
+                      }}
+                    >
+                      <td style={{ padding: '10px 16px', color: '#64748b' }}>{item.id}</td>
+                      <td style={{
+                        padding: '10px 16px', color: '#e2e8f0', maxWidth: 350,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       }}>
-                        {item.status}
-                      </span>
-                    </td>
-                    <td style={{ padding: '10px 16px', color: '#94a3b8' }}>
-                      {item.matched === 1 ? '✓' : item.matched === -1 ? '✗' : '—'}
-                    </td>
-                    <td style={{ padding: '10px 16px', color: '#94a3b8', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {item.worker_id || '—'}
-                    </td>
-                    <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{item.dup_count}</td>
-                    <td style={{ padding: '10px 16px', color: '#64748b', fontSize: 12 }}>
-                      {item.created_at ? item.created_at.replace('T', ' ').substring(0, 19) : '—'}
-                    </td>
-                  </tr>
+                        {item.extracted_url || item.source_url}
+                      </td>
+                      <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{item.item_type}</td>
+                      <td style={{ padding: '10px 16px' }}>
+                        <span style={{
+                          display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontSize: 11,
+                          fontWeight: 500, color: '#fff',
+                          background: STATUS_COLORS[item.status] || '#6b7280',
+                        }}>
+                          {item.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 16px', color: '#94a3b8' }}>
+                        {item.matched === 1 ? '✓' : item.matched === -1 ? '✗' : '—'}
+                      </td>
+                      <td style={{ padding: '10px 16px', color: '#94a3b8', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {item.worker_id || '—'}
+                      </td>
+                      <td style={{ padding: '10px 16px', color: '#94a3b8' }}>{item.dup_count}</td>
+                      <td style={{ padding: '10px 16px', color: '#64748b', fontSize: 12 }}>
+                        {item.created_at ? item.created_at.replace('T', ' ').substring(0, 19) : '—'}
+                      </td>
+                    </tr>
+                    {expandedId === item.id && (
+                      <tr>
+                        <td colSpan={8} style={{ 
+                          padding: '16px 24px', 
+                          background: 'rgba(0,0,0,0.2)',
+                          borderBottom: '1px solid #252540',
+                        }}>
+                          {item.raw_content ? (
+                            <div>
+                              <div style={{ 
+                                color: '#94a3b8', 
+                                fontSize: 12, 
+                                marginBottom: 8,
+                                fontWeight: 500,
+                              }}>
+                                Raw Content ({item.raw_content.length} chars)
+                              </div>
+                              <pre style={{
+                                background: '#0f0f1a',
+                                color: '#cbd5e1',
+                                padding: '12px 16px',
+                                borderRadius: 6,
+                                fontSize: 12,
+                                overflow: 'auto',
+                                maxHeight: 400,
+                                margin: 0,
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-all',
+                                border: '1px solid #3b3b5c',
+                              }}>
+                                {item.raw_content}
+                              </pre>
+                            </div>
+                          ) : (
+                            <div style={{ color: '#64748b', fontSize: 13 }}>
+                              No raw content available for this item
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>

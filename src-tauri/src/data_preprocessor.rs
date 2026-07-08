@@ -446,14 +446,14 @@ impl DataPreprocessor {
 
     // ── Helpers ───────────────────────────────────────────────
 
-    /// Simple CSS selector → extract inner HTML fragments
+    /// Simple CSS selector → extract outer HTML (full element including tags)
     fn extract_by_selector(html: &str, selector: &str) -> Vec<String> {
         use scraper::{Html, Selector};
 
         let document = Html::parse_fragment(html);
         if let Ok(sel) = Selector::parse(selector) {
             document.select(&sel)
-                .map(|el| el.inner_html())
+                .map(|el| el.html())
                 .collect()
         } else {
             vec![]

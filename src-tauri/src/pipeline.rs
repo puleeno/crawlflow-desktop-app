@@ -695,6 +695,18 @@ pub async fn execute_repository_pipeline(
                 let wait_for_content = node.data.get("waitForContent").and_then(|v| v.as_str());
                 let wait_timeout_ms = node.data.get("waitTimeoutMs").and_then(|v| v.as_u64());
 
+                // Check for pagination config
+                let pagination_config = extract_pagination_config(&node.data);
+                let has_pagination = pagination_config.is_some();
+
+                if has_pagination {
+                    log_manager.info(
+                        project_id,
+                        "fetching",
+                        &format!("[node={}] Pagination enabled", node_label),
+                    );
+                }
+
                 log_manager.info(
                     project_id,
                     "fetching",
@@ -704,34 +716,38 @@ pub async fn execute_repository_pipeline(
                     ),
                 );
 
-                let use_cdp = profile.client_type == "chrome";
                 let fetch_start = std::time::Instant::now();
-                let (crawl_result, chrome_session) = if use_cdp {
-                    log_manager.info(
+                
+                // Execute pagination if configured, otherwise single fetch
+                let htmls = if let Some(pag_config) = pagination_config {
+                    match execute_pagination_in_pipeline(
+                        &url,
+                        &pag_config,
+                        &profile,
                         project_id,
-                        "fetching",
-                        &format!("[node={}] Launching Chrome CDP...", node_label),
-                    );
-                    request_clients::fetch_with_client_cdp(
-                        &url,
-                        &profile,
-                        None,
-                        wait_for_selector,
-                        wait_timeout_ms,
-                    )
-                    .await
+                        &log_manager,
+                        node_label,
+                    ).await {
+                        Ok(htmls) => {
+                            log_manager.info(
+                                project_id,
+                                "fetching",
+                                &format!("[node={}] Pagination completed: {} pages fetched", node_label, htmls.len()),
+                            );
+                            htmls
+                        }
+                        Err(e) => {
+                            log_manager.error(project_id, "fetching", &format!("Pagination failed: {}, falling back to single fetch", e));
+                            // Fallback to single fetch
+                            let (result, _) = fetch_single_page(&url, &profile, wait_for_selector, wait_for_content, wait_timeout_ms, project_id, &log_manager, node_label).await;
+                            vec![result.unwrap_or_default()]
+                        }
+                    }
                 } else {
-                    let result = request_clients::fetch_with_client(
-                        &url,
-                        &profile,
-                        None,
-                        wait_for_selector,
-                        wait_for_content,
-                        wait_timeout_ms,
-                    )
-                    .await;
-                    (result, None)
+                    let (result, _) = fetch_single_page(&url, &profile, wait_for_selector, wait_for_content, wait_timeout_ms, project_id, &log_manager, node_label).await;
+                    vec![result.unwrap_or_default()]
                 };
+
                 let fetch_elapsed = fetch_start.elapsed();
 
                 log_manager.info(
@@ -744,36 +760,21 @@ pub async fn execute_repository_pipeline(
                     ),
                 );
 
-                if let Some(session) = &chrome_session {
+                // Combine all HTMLs from pagination into single data for preprocessing
+                let combined_html = htmls.join("\n");
+
+                if !combined_html.is_empty() {
                     log_manager.info(
                         project_id,
                         "fetching",
-                        &format!(
-                            "[node={}] Chrome session active (pid={}, port={})",
-                            node_label, session.pid, session.debug_port
-                        ),
+                        &format!("Fetched {} ({} bytes)", source_value, combined_html.len()),
                     );
-                }
-
-                match crawl_result.error {
-                    None => {
-                        let html = crawl_result.html.unwrap_or_default();
-                        log_manager.info(
-                            project_id,
-                            "fetching",
-                            &format!("Fetched {} ({} bytes)", source_value, html.len()),
-                        );
-                        fetched_sources.push(FetchedData {
-                            source_url: source_value.to_string(),
-                            raw_data: html,
-                            input_type: "html".into(),
-                            chrome_session,
-                        });
-                    }
-                    Some(e) => {
-                        log_manager.error(project_id, "fetching", &e);
-                        // Keep Chrome alive even on error — it will be reused or garbage-collected
-                    }
+                    fetched_sources.push(FetchedData {
+                        source_url: source_value.to_string(),
+                        raw_data: combined_html,
+                        input_type: "html".into(),
+                        chrome_session: None,
+                    });
                 }
             }
             "csv" | "json" | "xml" | "text" => {
@@ -1116,6 +1117,97 @@ fn simple_hash(input: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     input.hash(&mut hasher);
     format!("{:x}", hasher.finish())
+}
+
+// ── Pagination Helpers ─────────────────────────────────────
+
+fn extract_pagination_config(data: &serde_json::Value) -> Option<crate::models::PaginationConfig> {
+    let pag_data = data.get("pagination")?;
+    Some(serde_json::from_value(pag_data.clone()).ok()?)
+}
+
+async fn fetch_single_page(
+    url: &str,
+    profile: &crate::models::ClientProfile,
+    wait_for_selector: Option<&str>,
+    wait_for_content: Option<&str>,
+    wait_timeout_ms: Option<u64>,
+    project_id: &str,
+    log_manager: &crate::logs::LogManager,
+    node_label: &str,
+) -> (Option<String>, Option<crate::models::ChromeSession>) {
+    let mut crawl_result = request_clients::fetch_with_client(
+        url,
+        profile,
+        None,
+        wait_for_selector,
+        wait_for_content,
+        wait_timeout_ms,
+    ).await;
+
+    // Fallback to HTTP client if chrome fails
+    if crawl_result.error.is_some() && profile.client_type == "chrome" {
+        log_manager.warn(project_id, "fetching",
+            &format!("[node={}] Chrome failed: {}, trying HTTP client", node_label, crawl_result.error.as_ref().unwrap()));
+        let http_profile = crate::models::ClientProfile {
+            client_type: "reqwest".to_string(),
+            timeout_secs: profile.timeout_secs,
+            user_agent: profile.user_agent.clone(),
+            proxy_url: profile.proxy_url.clone(),
+            headers: profile.headers.clone(),
+            ..Default::default()
+        };
+        crawl_result = request_clients::fetch_with_client(
+            url,
+            &http_profile,
+            None,
+            None,
+            None,
+            None,
+        ).await;
+    }
+
+    let html = if crawl_result.error.is_some() {
+        log_manager.error(project_id, "fetching",
+            &format!("[node={}] Fetch failed: {}", node_label, crawl_result.error.as_ref().unwrap()));
+        None
+    } else {
+        let html = crawl_result.html.unwrap_or_default();
+        log_manager.info(project_id, "fetching",
+            &format!("[node={}] Fetched {} ({} bytes)", node_label, url, html.len()));
+        // Log HTML snippet (first 500 chars)
+        let html_snippet = html.chars().take(500).collect::<String>();
+        log_manager.debug(project_id, "fetching",
+            &format!("[node={}] HTML snippet: {}", node_label, html_snippet));
+        Some(html)
+    };
+
+    (html, None)
+}
+
+async fn execute_pagination_in_pipeline(
+    base_url: &str,
+    config: &crate::models::PaginationConfig,
+    profile: &crate::models::ClientProfile,
+    project_id: &str,
+    log_manager: &crate::logs::LogManager,
+    node_label: &str,
+) -> Result<Vec<String>, String> {
+    use crate::pagination::{PaginationStrategy, UrlParameterPagination, execute_pagination};
+    
+    let strategy: Box<dyn PaginationStrategy> = match config.pagination_type {
+        crate::models::PaginationType::UrlParameter => {
+            Box::new(UrlParameterPagination::new(config.clone()))
+        }
+        _ => {
+            return Err("Pagination type not yet implemented".to_string());
+        }
+    };
+
+    log_manager.info(project_id, "fetching",
+        &format!("[node={}] Starting pagination with type: {:?}", node_label, config.pagination_type));
+
+    execute_pagination(base_url, config, profile, strategy.as_ref()).await
 }
 
 // ── Config Extractors ─────────────────────────────────────

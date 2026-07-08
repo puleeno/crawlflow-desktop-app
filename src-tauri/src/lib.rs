@@ -6,6 +6,7 @@ mod item_matcher;
 pub mod logs;
 mod migrations;
 mod models;
+pub mod pagination;
 pub mod pipeline;
 mod plugins;
 mod progress;

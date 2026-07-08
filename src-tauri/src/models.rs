@@ -190,6 +190,43 @@ pub struct ChromeSession {
     pub page_id: Option<String>,
 }
 
+// ── Pagination Config ───────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaginationType {
+    UrlParameter,
+    ClickSelector,
+    Scroll,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StopCondition {
+    NoNewData,
+    MaxPages { max_pages: u32 },
+    SelectorMissing { selector: String },
+    NoDuplicatesAfter { count: u32 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaginationConfig {
+    pub pagination_type: PaginationType,
+    pub stop_condition: StopCondition,
+    // URL parameter specific
+    pub param: Option<String>,
+    pub start: Option<u32>,
+    pub step: Option<u32>,
+    // Click selector specific
+    pub selector: Option<String>,
+    pub wait_ms: Option<u64>,
+    pub max_clicks: Option<u32>,
+    // Scroll specific
+    pub scroll_step: Option<u32>,
+    pub max_scrolls: Option<u32>,
+    pub no_new_items_after: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlRequest {
     pub url: String,
