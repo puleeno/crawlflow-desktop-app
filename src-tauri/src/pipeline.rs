@@ -796,6 +796,20 @@ pub async fn execute_repository_pipeline(
         }
     }
 
+    // ── Save raw HTML to DB for debug ────────────────────────
+    for f in &fetched_sources {
+        if !f.raw_data.is_empty() {
+            log_manager.info(
+                project_id,
+                "fetching",
+                &format!("Saving raw source HTML ({} bytes) to DB", f.raw_data.len()),
+            );
+            if let Err(e) = repo.save_raw_source(&f.source_url, &f.raw_data) {
+                log_manager.warn(project_id, "fetching", &format!("Failed to save raw source: {}", e));
+            }
+        }
+    }
+
     // ── Phase 1b: Data Preprocessing ────────────────────────
     log_manager.info(project_id, "pipeline", "Phase 1b: Data Preprocessing");
 

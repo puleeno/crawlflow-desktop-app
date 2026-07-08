@@ -143,6 +143,34 @@ impl RawItemRepository {
         Ok(RawItemSaveResult { inserted, duplicated, skipped })
     }
 
+    /// Save raw HTML fetched from a data source (debug / audit trail).
+    /// Inserts with item_type='raw', status='crawled' so it is skipped by `get_pending_items`.
+    pub fn save_raw_source(&self, source_url: &str, raw_html: &str) -> Result<(), String> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let hash_input = format!("{}:{}", source_url, raw_html);
+        hash_input.hash(&mut hasher);
+        let item_hash = format!("{:x}", hasher.finish());
+
+        let existing: Option<i64> = self.conn
+            .query_row(
+                "SELECT id FROM raw_items WHERE item_hash = ?1",
+                params![item_hash],
+                |row| row.get(0),
+            )
+            .ok();
+
+        if existing.is_none() {
+            self.conn.execute(
+                "INSERT INTO raw_items (source_url, item_type, item_hash, raw_content, status, priority)
+                 VALUES (?1, 'raw', ?2, ?3, 'crawled', 1)",
+                params![source_url, item_hash, raw_html],
+            ).map_err(|e| format!("Failed to save raw source: {}", e))?;
+        }
+
+        Ok(())
+    }
+
     /// Lấy các items pending (chưa xử lý)
     pub fn get_pending_items(&self, limit: i64) -> Result<Vec<RawItem>, String> {
         let mut stmt = self.conn.prepare(
