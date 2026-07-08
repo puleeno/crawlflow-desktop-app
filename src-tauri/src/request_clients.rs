@@ -11,7 +11,10 @@ type WsStream = tungstenite::WebSocket<MaybeTlsStream<TcpStream>>;
 
 macro_rules! debug_log {
     ($($arg:tt)*) => {
-        eprintln!("[chrome] {}", format!($($arg)*))
+        let _ = std::io::Write::write(
+            &mut std::io::stderr(),
+            format!("[chrome] {}\n", format!($($arg)*)).as_bytes(),
+        );
     };
 }
 
