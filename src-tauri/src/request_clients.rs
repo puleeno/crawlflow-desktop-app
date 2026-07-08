@@ -1,10 +1,10 @@
 use crate::models::*;
+use std::fs;
+use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
-use std::fs;
 use tungstenite::stream::MaybeTlsStream;
-use std::net::TcpStream;
 
 type WsStream = tungstenite::WebSocket<MaybeTlsStream<TcpStream>>;
 
@@ -20,7 +20,9 @@ fn find_chrome() -> Option<PathBuf> {
         let master_db = data_dir.join("crawlflow").join("crawlflow.db");
         if master_db.exists() {
             if let Ok(conn) = rusqlite::Connection::open(&master_db) {
-                if let Ok(mut stmt) = conn.prepare("SELECT value FROM app_settings WHERE key = 'chrome_path'") {
+                if let Ok(mut stmt) =
+                    conn.prepare("SELECT value FROM app_settings WHERE key = 'chrome_path'")
+                {
                     if let Ok(row) = stmt.query_row([], |r| r.get::<_, String>(0)) {
                         let p = PathBuf::from(&row);
                         if p.exists() {
@@ -64,7 +66,13 @@ fn find_chrome() -> Option<PathBuf> {
     }
 
     // Fall back to PATH lookup via Command
-    for name in &["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"] {
+    for name in &[
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+        "chrome",
+    ] {
         if let Ok(output) = std::process::Command::new("which").arg(name).output() {
             if output.status.success() {
                 let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -88,18 +96,16 @@ fn build_reqwest_client(profile: &ClientProfile) -> Result<reqwest::Client, Stri
     }
 
     if let Some(proxy) = &profile.proxy_url {
-        let proxy = reqwest::Proxy::all(proxy)
-            .map_err(|e| format!("Invalid proxy: {}", e))?;
+        let proxy = reqwest::Proxy::all(proxy).map_err(|e| format!("Invalid proxy: {}", e))?;
         builder = builder.proxy(proxy);
     }
 
-    builder.build().map_err(|e| format!("Failed to build reqwest client: {}", e))
+    builder
+        .build()
+        .map_err(|e| format!("Failed to build reqwest client: {}", e))
 }
 
-pub async fn fetch_reqwest(
-    url: &str,
-    profile: &ClientProfile,
-) -> CrawlResult {
+pub async fn fetch_reqwest(url: &str, profile: &ClientProfile) -> CrawlResult {
     let client = match build_reqwest_client(profile) {
         Ok(c) => c,
         Err(e) => {
@@ -170,9 +176,7 @@ fn kill_chrome_process(pid: u32) {
         let _ = Command::new("pkill")
             .args(["-P", &pid.to_string()])
             .output();
-        let _ = Command::new("kill")
-            .args(["-9", &pid.to_string()])
-            .output();
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
     }
     #[cfg(windows)]
     {
@@ -214,14 +218,19 @@ pub fn fetch_chrome_sync(
     });
 
     let _ = std::fs::create_dir_all(&profile_dir);
+    let lock_file = std::path::Path::new(&profile_dir).join("SingletonLock");
+    if lock_file.exists() {
+        let _ = std::fs::remove_file(lock_file);
+    }
 
     // Create temporary JS file for wait logic
     let wait_script = if wait_for_selector.is_some() || wait_for_content.is_some() {
         let selector = wait_for_selector.unwrap_or("");
         let content = wait_for_content.unwrap_or("");
         let timeout = wait_timeout_ms.unwrap_or(10000);
-        
-        Some(format!(r#"
+
+        Some(format!(
+            r#"
 const url = "{}";
 const waitForSelector = "{}";
 const waitForContent = "{}";
@@ -253,7 +262,9 @@ const timeout = {};
     console.log(html);
     await browser.close();
 }})();
-"#, url, selector, content, timeout))
+"#,
+            url, selector, content, timeout
+        ))
     } else {
         None
     };
@@ -312,12 +323,9 @@ const timeout = {};
             .join(format!("{}.js", simple_hash(url)));
         let _ = std::fs::create_dir_all(script_path.parent().unwrap());
         let _ = fs::write(&script_path, script);
-        
+
         // Try to use Node.js with puppeteer
-        if let Ok(node_output) = Command::new("node")
-            .arg(&script_path)
-            .output()
-        {
+        if let Ok(node_output) = Command::new("node").arg(&script_path).output() {
             let _ = fs::remove_file(&script_path);
             if node_output.status.success() {
                 let html = String::from_utf8_lossy(&node_output.stdout).to_string();
@@ -332,7 +340,7 @@ const timeout = {};
                 };
             }
         }
-        
+
         // Fallback to simple chrome dump-dom if Node.js fails
         let _ = fs::remove_file(&script_path);
     }
@@ -380,7 +388,10 @@ const timeout = {};
                 html: None,
                 text: None,
                 extracted: None,
-                error: Some(format!("Chrome timed out after {}s", chrome_timeout.as_secs())),
+                error: Some(format!(
+                    "Chrome timed out after {}s",
+                    chrome_timeout.as_secs()
+                )),
             };
         }
     };
@@ -426,14 +437,21 @@ fn wait_for_chrome_ready(port: u16, timeout_secs: u64) -> Result<(), String> {
     let mut attempts = 0;
     loop {
         if std::time::Instant::now().duration_since(start) > timeout {
-            return Err(format!("Chrome did not start on port {} after {}s", port, timeout_secs));
+            return Err(format!(
+                "Chrome did not start on port {} after {}s",
+                port, timeout_secs
+            ));
         }
         if reqwest::blocking::get(format!("http://127.0.0.1:{}/json/version", port))
             .ok()
             .and_then(|r| r.status().is_success().then_some(()))
             .is_some()
         {
-            debug_log!("Chrome ready on port {} (after ~{}ms)", port, attempts * 200);
+            debug_log!(
+                "Chrome ready on port {} (after ~{}ms)",
+                port,
+                attempts * 200
+            );
             return Ok(());
         }
         attempts += 1;
@@ -457,6 +475,11 @@ pub fn launch_chrome_cdp(
         dir.to_string_lossy().to_string()
     });
     let _ = std::fs::create_dir_all(&profile_dir);
+    // Ensure no SingletonLock prevents Chrome from starting
+    let lock_file = std::path::Path::new(&profile_dir).join("SingletonLock");
+    if lock_file.exists() {
+        let _ = std::fs::remove_file(lock_file);
+    }
     debug_log!("Profile dir: {}", profile_dir);
 
     let mut cmd = Command::new(&chrome_path);
@@ -478,7 +501,7 @@ pub fn launch_chrome_cdp(
         "--disable-features=TranslateUI,ChromeWhatsNewUI",
     ]);
 
-    cmd.arg("--headless");
+    cmd.arg("--headless=new");
 
     if let Some(args) = &profile.chrome_args {
         for arg in args {
@@ -507,7 +530,9 @@ pub fn launch_chrome_cdp(
     cmd.stderr(std::process::Stdio::piped());
 
     debug_log!("Spawning Chrome...");
-    let mut child = cmd.spawn().map_err(|e| format!("Chrome launch failed: {}", e))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Chrome launch failed: {}", e))?;
     let pid = child.id();
     debug_log!("Chrome spawned with pid={}", pid);
 
@@ -534,7 +559,9 @@ pub fn launch_chrome_cdp(
         }
         Err(e) => {
             // Ensure stderr thread finishes collecting output before we kill
-            if let Some(h) = stderr_handle { let _ = h.join(); }
+            if let Some(h) = stderr_handle {
+                let _ = h.join();
+            }
             kill_chrome_process(pid);
             return Err(format!("{}", e));
         }
@@ -594,10 +621,7 @@ fn set_ws_read_timeout(ws: &mut WsStream, timeout_secs: u64) {
     }
 }
 
-fn send_cdp_msg(
-    ws: &mut WsStream,
-    msg: &serde_json::Value,
-) -> Result<serde_json::Value, String> {
+fn send_cdp_msg(ws: &mut WsStream, msg: &serde_json::Value) -> Result<serde_json::Value, String> {
     let raw = serde_json::to_string(msg).map_err(|e| format!("CDP serialize: {}", e))?;
     set_ws_read_timeout(ws, 15);
     ws.write(tungstenite::Message::Text(raw))
@@ -605,8 +629,7 @@ fn send_cdp_msg(
 
     // Read responses until we get one matching our id
     loop {
-        let resp = ws
-            .read();
+        let resp = ws.read();
         match resp {
             Ok(tungstenite::Message::Text(text)) => {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -630,10 +653,7 @@ fn send_cdp_msg(
     }
 }
 
-fn cdp_evaluate_js(
-    ws: &mut WsStream,
-    expression: &str,
-) -> Result<String, String> {
+fn cdp_evaluate_js(ws: &mut WsStream, expression: &str) -> Result<String, String> {
     let msg = serde_json::json!({
         "id": 1,
         "method": "Runtime.evaluate",
@@ -678,7 +698,11 @@ pub fn fetch_via_cdp(
             );
         }
     };
-    debug_log!("[fetch_via_cdp] Chrome launched (pid={}, port={})", session.pid, session.debug_port);
+    debug_log!(
+        "[fetch_via_cdp] Chrome launched (pid={}, port={})",
+        session.pid,
+        session.debug_port
+    );
 
     // Get browser WebSocket URL
     debug_log!("[fetch_via_cdp] Getting CDP WebSocket URL...");
@@ -702,9 +726,9 @@ pub fn fetch_via_cdp(
     };
     debug_log!("[fetch_via_cdp] Browser WS URL: {}", browser_ws_url);
 
-    // Create new page/tab
+    // Create new page/tab with about:blank
     debug_log!("[fetch_via_cdp] Creating new page via CDP...");
-    let page_info = match create_cdp_page(session.debug_port, url) {
+    let page_info = match create_cdp_page(session.debug_port, "about:blank") {
         Ok(p) => p,
         Err(e) => {
             log::error!("[fetch_via_cdp] Failed to create CDP page: {}", e);
@@ -722,7 +746,10 @@ pub fn fetch_via_cdp(
             );
         }
     };
-    debug_log!("[fetch_via_cdp] Page created: id={:?}", page_info.get("id").and_then(|v| v.as_str()));
+    debug_log!(
+        "[fetch_via_cdp] Page created: id={:?}",
+        page_info.get("id").and_then(|v| v.as_str())
+    );
 
     let page_ws_url = page_info["webSocketDebuggerUrl"]
         .as_str()
@@ -731,7 +758,10 @@ pub fn fetch_via_cdp(
 
     // Connect to page WebSocket
     let ws_url = page_ws_url.as_deref().unwrap_or(&browser_ws_url);
-    debug_log!("[fetch_via_cdp] Connecting to page WebSocket: {}...", ws_url);
+    debug_log!(
+        "[fetch_via_cdp] Connecting to page WebSocket: {}...",
+        ws_url
+    );
     let mut ws = match tungstenite::connect(ws_url) {
         Ok((ws_conn, _)) => ws_conn,
         Err(e) => {
@@ -752,8 +782,6 @@ pub fn fetch_via_cdp(
     };
     debug_log!("[fetch_via_cdp] WebSocket connected");
 
-    // Page already created + navigated via PUT /json/new?url=<url> above.
-    // Just enable Page events and poll for document readyState.
     debug_log!("[fetch_via_cdp] Sending Page.enable...");
     let enable_msg = serde_json::json!({
         "id": 1,
@@ -775,6 +803,31 @@ pub fn fetch_via_cdp(
         );
     }
     debug_log!("[fetch_via_cdp] Page.enable OK");
+
+    debug_log!("[fetch_via_cdp] Navigating to URL via CDP...");
+    let nav_msg = serde_json::json!({
+        "id": 2,
+        "method": "Page.navigate",
+        "params": {
+            "url": url
+        }
+    });
+    if let Err(e) = send_cdp_msg(&mut ws, &nav_msg) {
+        log::error!("[fetch_via_cdp] Page.navigate failed: {}", e);
+        kill_chrome_process(session.pid);
+        return (
+            CrawlResult {
+                url: url.to_string(),
+                status: 0,
+                html: None,
+                text: None,
+                extracted: None,
+                error: Some(format!("CDP Page.navigate failed: {}", e)),
+            },
+            None,
+        );
+    }
+    debug_log!("[fetch_via_cdp] Navigate sent OK");
 
     // Poll document.readyState (avoids race with CDP events consumed by send_cdp_msg)
     debug_log!("[fetch_via_cdp] Waiting for document readyState...");
@@ -853,7 +906,11 @@ pub fn fetch_via_cdp(
         ..session
     };
 
-    debug_log!("[fetch_via_cdp] Done, returning ChromeSession (pid={}, port={})", session.pid, session.debug_port);
+    debug_log!(
+        "[fetch_via_cdp] Done, returning ChromeSession (pid={}, port={})",
+        session.pid,
+        session.debug_port
+    );
     (
         CrawlResult {
             url: url.to_string(),
@@ -869,10 +926,17 @@ pub fn fetch_via_cdp(
 
 /// Close Chrome gracefully via CDP Browser.close, fallback to kill
 pub fn close_chrome_session(session: &ChromeSession) {
-    debug_log!("[close_chrome] Closing Chrome session (pid={}, port={})", session.pid, session.debug_port);
+    debug_log!(
+        "[close_chrome] Closing Chrome session (pid={}, port={})",
+        session.pid,
+        session.debug_port
+    );
 
     // Try graceful shutdown via CDP Browser.close
-    let ws_url = format!("ws://127.0.0.1:{}/devtools/browser/{}", session.debug_port, session.pid);
+    let ws_url = format!(
+        "ws://127.0.0.1:{}/devtools/browser/{}",
+        session.debug_port, session.pid
+    );
     debug_log!("[close_chrome] Sending Browser.close via CDP...");
     if let Ok((mut ws, _)) = tungstenite::connect(ws_url.as_str()) {
         let msg = serde_json::json!({
@@ -889,7 +953,10 @@ pub fn close_chrome_session(session: &ChromeSession) {
     }
 
     // Fallback: force kill
-    debug_log!("[close_chrome] CDP close failed, force killing pid={}", session.pid);
+    debug_log!(
+        "[close_chrome] CDP close failed, force killing pid={}",
+        session.pid
+    );
     kill_chrome_process(session.pid);
     debug_log!("[close_chrome] Force kill done");
 }
@@ -991,7 +1058,14 @@ mod tests {
             client_type: "unknown-xxx".into(),
             ..Default::default()
         };
-        let result = rt.block_on(fetch_with_client("http://0.0.0.0:1", &profile, None));
+        let result = rt.block_on(fetch_with_client(
+            "http://0.0.0.0:1",
+            &profile,
+            None,
+            None,
+            None,
+            None,
+        ));
         assert_eq!(result.url, "http://0.0.0.0:1");
         assert!(result.error.is_some() || result.status == 0);
     }
@@ -1004,7 +1078,14 @@ mod tests {
             client_type: "chrome".into(),
             ..Default::default()
         };
-        let result = rt.block_on(fetch_with_client("http://0.0.0.0:1", &profile, None));
+        let result = rt.block_on(fetch_with_client(
+            "http://0.0.0.0:1",
+            &profile,
+            None,
+            None,
+            None,
+            None,
+        ));
         assert_eq!(result.url, "http://0.0.0.0:1");
     }
 
@@ -1018,7 +1099,14 @@ mod tests {
             attribute: None,
             extract_multiple: None,
         }];
-        let result = rt.block_on(fetch_with_client("http://0.0.0.0:1", &profile, Some(rules)));
+        let result = rt.block_on(fetch_with_client(
+            "http://0.0.0.0:1",
+            &profile,
+            Some(rules),
+            None,
+            None,
+            None,
+        ));
         assert_eq!(result.url, "http://0.0.0.0:1");
     }
 }
@@ -1037,7 +1125,15 @@ pub async fn fetch_with_client(
             let profile = profile.clone();
             let selector = wait_for_selector.map(|s| s.to_string());
             let content = wait_for_content.map(|c| c.to_string());
-            move || fetch_chrome_sync(&url, &profile, selector.as_deref(), content.as_deref(), wait_timeout_ms)
+            move || {
+                fetch_chrome_sync(
+                    &url,
+                    &profile,
+                    selector.as_deref(),
+                    content.as_deref(),
+                    wait_timeout_ms,
+                )
+            }
         })
         .await
         .unwrap_or_else(|e| CrawlResult {
