@@ -3,6 +3,7 @@ use std::fs;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::Duration;
 use tungstenite::stream::MaybeTlsStream;
 
@@ -12,6 +13,74 @@ macro_rules! debug_log {
     ($($arg:tt)*) => {
         eprintln!("[chrome] {}", format!($($arg)*))
     };
+}
+
+// ── Global Chrome session singleton ──────────────────────────────────────────
+// Keeps a single Chrome process alive and reuses it across all fetch cycles.
+struct GlobalChromeSession {
+    session: ChromeSession,
+    _child: std::process::Child,
+}
+
+static GLOBAL_CHROME: Mutex<Option<GlobalChromeSession>> = Mutex::new(None);
+
+/// Get or launch a shared Chrome session. Returns the port of the running Chrome.
+/// If Chrome has died since last time, relaunches it.
+fn ensure_chrome_alive(profile: &ClientProfile, hint_url: &str) -> Result<ChromeSession, String> {
+    let mut guard = GLOBAL_CHROME
+        .lock()
+        .map_err(|e| format!("Chrome lock poisoned: {}", e))?;
+
+    // Check if existing session is still alive
+    if let Some(ref existing) = *guard {
+        let pid = existing.session.pid;
+        // Quick ping via HTTP to verify Chrome is still responsive
+        let alive = reqwest::blocking::get(format!(
+            "http://127.0.0.1:{}/json/version",
+            existing.session.debug_port
+        ))
+        .ok()
+        .map(|r| r.status().is_success())
+        .unwrap_or(false);
+
+        if alive {
+            debug_log!(
+                "Reusing existing Chrome (pid={}, port={})",
+                pid,
+                existing.session.debug_port
+            );
+            return Ok(existing.session.clone());
+        }
+
+        // Still alive as process but unresponsive — kill it
+        debug_log!("Chrome (pid={}) is unresponsive, relaunching...", pid);
+        kill_chrome_process(pid);
+        *guard = None;
+    }
+
+    // Launch a new Chrome instance
+    debug_log!("Launching new Chrome instance...");
+    let (session, child) = launch_chrome_cdp(profile, hint_url)?;
+    debug_log!(
+        "Chrome launched (pid={}, port={})",
+        session.pid,
+        session.debug_port
+    );
+    *guard = Some(GlobalChromeSession {
+        session: session.clone(),
+        _child: child,
+    });
+    Ok(session)
+}
+
+/// Kill any existing global Chrome session (e.g. on service shutdown).
+pub fn shutdown_global_chrome() {
+    if let Ok(mut guard) = GLOBAL_CHROME.lock() {
+        if let Some(existing) = guard.take() {
+            debug_log!("Shutting down global Chrome (pid={})", existing.session.pid);
+            kill_chrome_process(existing.session.pid);
+        }
+    }
 }
 
 fn find_chrome() -> Option<PathBuf> {
@@ -84,6 +153,29 @@ fn find_chrome() -> Option<PathBuf> {
     }
 
     None
+}
+
+fn is_global_headless_enabled() -> bool {
+    if let Some(data_dir) = dirs_next::data_dir() {
+        let paths = vec![
+            data_dir.join("com.crawlflow.desktop").join("crawlflow.db"),
+            data_dir.join("crawlflow").join("crawlflow.db"),
+        ];
+        for master_db in paths {
+            if master_db.exists() {
+                if let Ok(conn) = rusqlite::Connection::open(&master_db) {
+                    if let Ok(mut stmt) =
+                        conn.prepare("SELECT value FROM app_settings WHERE key = 'chrome_headless'")
+                    {
+                        if let Ok(row) = stmt.query_row([], |r| r.get::<_, String>(0)) {
+                            return row == "true" || row == "1" || row.to_lowercase() == "new";
+                        }
+                    }
+                }
+            }
+        }
+    }
+    true
 }
 
 fn build_reqwest_client(profile: &ClientProfile) -> Result<reqwest::Client, String> {
@@ -270,7 +362,7 @@ const timeout = {};
     };
 
     let mut cmd = Command::new(&chrome);
-    let headless = profile.headless.unwrap_or(true);
+    let headless = is_global_headless_enabled();
     cmd.args([
         "--disable-gpu",
         "--no-sandbox",
@@ -501,7 +593,12 @@ pub fn launch_chrome_cdp(
         "--disable-features=TranslateUI,ChromeWhatsNewUI",
     ]);
 
-    cmd.arg("--headless=new");
+    if is_global_headless_enabled() {
+        cmd.arg("--headless=new");
+        debug_log!("Headless mode: enabled (global setting)");
+    } else {
+        debug_log!("Headless mode: disabled (global setting)");
+    }
 
     if let Some(args) = &profile.chrome_args {
         for arg in args {
@@ -626,6 +723,10 @@ fn send_cdp_msg(ws: &mut WsStream, msg: &serde_json::Value) -> Result<serde_json
     set_ws_read_timeout(ws, 15);
     ws.write(tungstenite::Message::Text(raw))
         .map_err(|e| format!("CDP write: {}", e))?;
+    // Essential: flush the tungstenite internal buffer to send it now
+    if let Err(e) = ws.flush() {
+        return Err(format!("CDP write flush error: {}", e));
+    }
 
     // Read responses until we get one matching our id
     loop {
@@ -680,8 +781,8 @@ pub fn fetch_via_cdp(
     wait_for_selector: Option<&str>,
     wait_timeout_ms: Option<u64>,
 ) -> (CrawlResult, Option<ChromeSession>) {
-    debug_log!("[fetch_via_cdp] Launching Chrome for URL: {}", url);
-    let (session, _child) = match launch_chrome_cdp(profile, url) {
+    debug_log!("[fetch_via_cdp] Ensuring Chrome is alive for URL: {}", url);
+    let session = match ensure_chrome_alive(profile, url) {
         Ok(s) => s,
         Err(e) => {
             log::error!("[fetch_via_cdp] Chrome launch failed: {}", e);
@@ -699,7 +800,7 @@ pub fn fetch_via_cdp(
         }
     };
     debug_log!(
-        "[fetch_via_cdp] Chrome launched (pid={}, port={})",
+        "[fetch_via_cdp] Chrome ready (pid={}, port={})",
         session.pid,
         session.debug_port
     );

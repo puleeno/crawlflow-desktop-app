@@ -1,13 +1,13 @@
-use crate::data_preprocessor::{DataPreprocessor, PreprocessorConfig, UrlPattern, ExtractRule};
+use crate::data_preprocessor::{DataPreprocessor, ExtractRule, PreprocessorConfig, UrlPattern};
+use crate::finish_actions::{ActionEngine, FinishAction};
+use crate::item_matcher::{MatchPattern, MatchRule};
 use crate::logs::LogManager;
 use crate::models::ClientProfile;
 use crate::plugins;
 use crate::python_plugins::PythonPluginEngine;
 use crate::repository::RawItemRepository;
-use crate::item_matcher::{MatchPattern, MatchRule};
 use crate::request_clients;
-use crate::worker_engine::{WorkerDef, ProcessorStep, WorkerEngine};
-use crate::finish_actions::{FinishAction, ActionEngine};
+use crate::worker_engine::{ProcessorStep, WorkerDef, WorkerEngine};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -75,36 +75,47 @@ fn extract_client_profile(node_data: &serde_json::Value) -> ClientProfile {
     let default_timeout = Some(30u64);
     if let Some(url_settings) = node_data.get("urlSettings") {
         if let Some(http_client) = url_settings.get("httpClient") {
-            let client_type = http_client.get("clientType")
+            let client_type = http_client
+                .get("clientType")
                 .and_then(|v| v.as_str())
                 .unwrap_or("reqwest")
                 .to_string();
-            let user_agent = http_client.get("userAgent")
+            let user_agent = http_client
+                .get("userAgent")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
-            let proxy_url = http_client.get("proxyUrl")
+            let proxy_url = http_client
+                .get("proxyUrl")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
-            let timeout_secs = http_client.get("timeoutSecs")
+            let timeout_secs = http_client
+                .get("timeoutSecs")
                 .and_then(|v| v.as_u64())
                 .or(default_timeout);
-            let headers = http_client.get("headers")
+            let headers = http_client
+                .get("headers")
                 .and_then(|v| v.as_array())
                 .map(|arr| {
-                    arr.iter().filter_map(|h| {
-                        let key = h.get("key")?.as_str()?.to_string();
-                        let value = h.get("value")?.as_str()?.to_string();
-                        Some((key, value))
-                    }).collect::<Vec<_>>()
+                    arr.iter()
+                        .filter_map(|h| {
+                            let key = h.get("key")?.as_str()?.to_string();
+                            let value = h.get("value")?.as_str()?.to_string();
+                            Some((key, value))
+                        })
+                        .collect::<Vec<_>>()
                 });
-            let chrome_args = http_client.get("chromeArgs")
+            let chrome_args = http_client
+                .get("chromeArgs")
                 .and_then(|v| v.as_array())
                 .map(|arr| {
-                    arr.iter().filter_map(|a| a.as_str().map(|s| s.to_string())).collect()
+                    arr.iter()
+                        .filter_map(|a| a.as_str().map(|s| s.to_string()))
+                        .collect()
                 });
-            let wait_for_selector = http_client.get("waitForSelector")
+            let wait_for_selector = http_client
+                .get("waitForSelector")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
@@ -276,7 +287,12 @@ pub fn execute_pipeline_with_mode(
             ExecutionMode::Queue => {
                 for node_id in level_nodes {
                     process_node(
-                        node_id, config, &node_outputs, log_manager, project_id, &mut steps,
+                        node_id,
+                        config,
+                        &node_outputs,
+                        log_manager,
+                        project_id,
+                        &mut steps,
                     );
                 }
             }
@@ -555,8 +571,6 @@ fn node_inputs_read(
     combined
 }
 
-
-
 // ── Repository-based Pipeline (New Architecture) ─────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -579,21 +593,36 @@ pub async fn execute_repository_pipeline(
     mut python_engine: Option<&mut PythonPluginEngine>,
     cancellation: Option<&Arc<AtomicBool>>,
 ) -> RepositoryPipelineResult {
-    log_manager.info(project_id, "pipeline",
-        &format!("Repository pipeline started: {} nodes", config.nodes.len()));
+    log_manager.info(
+        project_id,
+        "pipeline",
+        &format!("Repository pipeline started: {} nodes", config.nodes.len()),
+    );
 
     // Helper to check cancellation
     let is_cancelled = || -> bool {
-        cancellation.map(|c| c.load(Ordering::Relaxed)).unwrap_or(false)
+        cancellation
+            .map(|c| c.load(Ordering::Relaxed))
+            .unwrap_or(false)
     };
 
     let repo = match RawItemRepository::open(db_path) {
-        Ok(r) => { r.ensure_tables().ok(); r }
-        Err(e) => return RepositoryPipelineResult {
-            success: false, phase: "init".into(),
-            ingested: 0, matched: 0, processed: 0, failed: 0,
-            actions: vec![], error: Some(e),
-        },
+        Ok(r) => {
+            r.ensure_tables().ok();
+            r
+        }
+        Err(e) => {
+            return RepositoryPipelineResult {
+                success: false,
+                phase: "init".into(),
+                ingested: 0,
+                matched: 0,
+                processed: 0,
+                failed: 0,
+                actions: vec![],
+                error: Some(e),
+            }
+        }
     };
 
     // ── Phase 1a: Data Fetching ─────────────────────────────
@@ -610,23 +639,53 @@ pub async fn execute_repository_pipeline(
     let mut fetched_sources: Vec<FetchedData> = Vec::new();
     for node in &config.nodes {
         if is_cancelled() {
-            log_manager.info(project_id, "pipeline", "Pipeline cancelled during data fetching");
+            log_manager.info(
+                project_id,
+                "pipeline",
+                "Pipeline cancelled during data fetching",
+            );
             return RepositoryPipelineResult {
-                success: false, phase: "fetching".into(),
-                ingested: total_ingested, matched: 0, processed: 0, failed: 0,
-                actions: vec![], error: Some("Cancelled by user".into()),
+                success: false,
+                phase: "fetching".into(),
+                ingested: total_ingested,
+                matched: 0,
+                processed: 0,
+                failed: 0,
+                actions: vec![],
+                error: Some("Cancelled by user".into()),
             };
         }
 
-        if !matches!(node.node_type.as_str(), "start" | "dataSource" | "rssSource") {
+        if !matches!(
+            node.node_type.as_str(),
+            "start" | "dataSource" | "rssSource"
+        ) {
             continue;
         }
-        let node_label = node.data.get("label").and_then(|v| v.as_str()).unwrap_or(&node.id);
-        let source_type = node.data.get("sourceType").and_then(|v| v.as_str()).unwrap_or("url");
-        let source_value = node.data.get("sourceValue").and_then(|v| v.as_str()).unwrap_or("");
+        let node_label = node
+            .data
+            .get("label")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&node.id);
+        let source_type = node
+            .data
+            .get("sourceType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("url");
+        let source_value = node
+            .data
+            .get("sourceValue")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
-        log_manager.info(project_id, "fetching",
-            &format!("[node={}] Processing node type={}, sourceType={}", node_label, node.node_type, source_type));
+        log_manager.info(
+            project_id,
+            "fetching",
+            &format!(
+                "[node={}] Processing node type={}, sourceType={}",
+                node_label, node.node_type, source_type
+            ),
+        );
 
         match source_type {
             "url" | "api" => {
@@ -635,41 +694,75 @@ pub async fn execute_repository_pipeline(
                 let wait_for_selector = node.data.get("waitForSelector").and_then(|v| v.as_str());
                 let wait_for_content = node.data.get("waitForContent").and_then(|v| v.as_str());
                 let wait_timeout_ms = node.data.get("waitTimeoutMs").and_then(|v| v.as_u64());
-                
-                log_manager.info(project_id, "fetching",
-                    &format!("[node={}] Fetching: {} (client: {})", node_label, url, profile.client_type));
+
+                log_manager.info(
+                    project_id,
+                    "fetching",
+                    &format!(
+                        "[node={}] Fetching: {} (client: {})",
+                        node_label, url, profile.client_type
+                    ),
+                );
 
                 let use_cdp = profile.client_type == "chrome";
                 let fetch_start = std::time::Instant::now();
                 let (crawl_result, chrome_session) = if use_cdp {
-                    log_manager.info(project_id, "fetching",
-                        &format!("[node={}] Launching Chrome CDP...", node_label));
+                    log_manager.info(
+                        project_id,
+                        "fetching",
+                        &format!("[node={}] Launching Chrome CDP...", node_label),
+                    );
                     request_clients::fetch_with_client_cdp(
-                        &url, &profile, None,
-                        wait_for_selector, wait_timeout_ms,
-                    ).await
+                        &url,
+                        &profile,
+                        None,
+                        wait_for_selector,
+                        wait_timeout_ms,
+                    )
+                    .await
                 } else {
                     let result = request_clients::fetch_with_client(
-                        &url, &profile, None,
-                        wait_for_selector, wait_for_content, wait_timeout_ms,
-                    ).await;
+                        &url,
+                        &profile,
+                        None,
+                        wait_for_selector,
+                        wait_for_content,
+                        wait_timeout_ms,
+                    )
+                    .await;
                     (result, None)
                 };
                 let fetch_elapsed = fetch_start.elapsed();
 
-                log_manager.info(project_id, "fetching",
-                    &format!("[node={}] Fetch completed in {:.1}s", node_label, fetch_elapsed.as_secs_f64()));
+                log_manager.info(
+                    project_id,
+                    "fetching",
+                    &format!(
+                        "[node={}] Fetch completed in {:.1}s",
+                        node_label,
+                        fetch_elapsed.as_secs_f64()
+                    ),
+                );
 
                 if let Some(session) = &chrome_session {
-                    log_manager.info(project_id, "fetching",
-                        &format!("[node={}] Chrome session active (pid={}, port={})", node_label, session.pid, session.debug_port));
+                    log_manager.info(
+                        project_id,
+                        "fetching",
+                        &format!(
+                            "[node={}] Chrome session active (pid={}, port={})",
+                            node_label, session.pid, session.debug_port
+                        ),
+                    );
                 }
 
                 match crawl_result.error {
                     None => {
                         let html = crawl_result.html.unwrap_or_default();
-                        log_manager.info(project_id, "fetching",
-                            &format!("Fetched {} ({} bytes)", source_value, html.len()));
+                        log_manager.info(
+                            project_id,
+                            "fetching",
+                            &format!("Fetched {} ({} bytes)", source_value, html.len()),
+                        );
                         fetched_sources.push(FetchedData {
                             source_url: source_value.to_string(),
                             raw_data: html,
@@ -679,11 +772,8 @@ pub async fn execute_repository_pipeline(
                     }
                     Some(e) => {
                         log_manager.error(project_id, "fetching", &e);
-                        // Close Chrome on error
-                        if let Some(session) = chrome_session {
-                            request_clients::close_chrome_session(&session);
-                        }
-                    },
+                        // Keep Chrome alive even on error — it will be reused or garbage-collected
+                    }
                 }
             }
             "csv" | "json" | "xml" | "text" => {
@@ -697,8 +787,11 @@ pub async fn execute_repository_pipeline(
                 }
             }
             _ => {
-                log_manager.warn(project_id, "fetching",
-                    &format!("Unknown source type: {}", source_type));
+                log_manager.warn(
+                    project_id,
+                    "fetching",
+                    &format!("Unknown source type: {}", source_type),
+                );
             }
         }
     }
@@ -712,8 +805,11 @@ pub async fn execute_repository_pipeline(
         ($sources:expr) => {
             for f in $sources {
                 if let Some(ref s) = f.chrome_session {
-                    log_manager.info(project_id, "preprocessing",
-                        &format!("Closing Chrome session (pid={})", s.pid));
+                    log_manager.info(
+                        project_id,
+                        "preprocessing",
+                        &format!("Closing Chrome session (pid={})", s.pid),
+                    );
                     request_clients::close_chrome_session(s);
                 }
             }
@@ -722,17 +818,27 @@ pub async fn execute_repository_pipeline(
 
     for fetched in &fetched_sources {
         if is_cancelled() {
-            log_manager.info(project_id, "pipeline", "Pipeline cancelled during preprocessing");
+            log_manager.info(
+                project_id,
+                "pipeline",
+                "Pipeline cancelled during preprocessing",
+            );
             close_chrome_sessions!(&fetched_sources);
             return RepositoryPipelineResult {
-                success: false, phase: "preprocessing".into(),
-                ingested: total_ingested, matched: 0, processed: 0, failed: 0,
-                actions: vec![], error: Some("Cancelled by user".into()),
+                success: false,
+                phase: "preprocessing".into(),
+                ingested: total_ingested,
+                matched: 0,
+                processed: 0,
+                failed: 0,
+                actions: vec![],
+                error: Some("Cancelled by user".into()),
             };
         }
 
         // Tìm preprocessor node phù hợp cho source này (theo input_type)
-        let preproc_config = preprocessor_nodes.iter()
+        let preproc_config = preprocessor_nodes
+            .iter()
             .find(|p| p.input_type == fetched.input_type)
             .cloned()
             .unwrap_or_else(|| PreprocessorConfig {
@@ -760,61 +866,90 @@ pub async fn execute_repository_pipeline(
             )
         } else {
             // Use async version to support re-fetching with custom client settings
-            DataPreprocessor::process_async(
-                &fetched.raw_data,
-                &fetched.source_url,
-                &preproc_config,
-            ).await
+            DataPreprocessor::process_async(&fetched.raw_data, &fetched.source_url, &preproc_config)
+                .await
         };
 
         match repo.save_items(&result.items) {
             Ok(r) => {
                 total_ingested += r.inserted;
-                log_manager.info(project_id, "preprocessing",
-                    &format!("Source {}: {} extracted, {} new, {} dup",
-                        fetched.source_url, result.extracted_count, r.inserted, r.duplicated));
+                log_manager.info(
+                    project_id,
+                    "preprocessing",
+                    &format!(
+                        "Source {}: {} extracted, {} new, {} dup",
+                        fetched.source_url, result.extracted_count, r.inserted, r.duplicated
+                    ),
+                );
             }
-            Err(e) => { log_manager.error(project_id, "preprocessing", &e); },
+            Err(e) => {
+                log_manager.error(project_id, "preprocessing", &e);
+            }
         }
     }
-
-    // ── Close all Chrome sessions after preprocessing ─────────
-    close_chrome_sessions!(&fetched_sources);
 
     // ── Phase 2: Worker Matching ─────────────────────────────
     log_manager.info(project_id, "pipeline", "Phase 2: Worker Matching");
 
     if is_cancelled() {
-        log_manager.info(project_id, "pipeline", "Pipeline cancelled before worker matching");
+        log_manager.info(
+            project_id,
+            "pipeline",
+            "Pipeline cancelled before worker matching",
+        );
         return RepositoryPipelineResult {
-            success: false, phase: "worker_matching".into(),
-            ingested: total_ingested, matched: 0, processed: 0, failed: 0,
-            actions: vec![], error: Some("Cancelled by user".into()),
+            success: false,
+            phase: "worker_matching".into(),
+            ingested: total_ingested,
+            matched: 0,
+            processed: 0,
+            failed: 0,
+            actions: vec![],
+            error: Some("Cancelled by user".into()),
         };
     }
 
     let workers = extract_workers(config);
     let mut pending_items = match repo.get_pending_items(10000) {
         Ok(items) => items,
-        Err(e) => return RepositoryPipelineResult {
-            success: false, phase: "worker_matching".into(),
-            ingested: total_ingested, matched: 0, processed: 0, failed: 0,
-            actions: vec![], error: Some(e),
-        },
+        Err(e) => {
+            return RepositoryPipelineResult {
+                success: false,
+                phase: "worker_matching".into(),
+                ingested: total_ingested,
+                matched: 0,
+                processed: 0,
+                failed: 0,
+                actions: vec![],
+                error: Some(e),
+            }
+        }
     };
 
     let match_result = match WorkerEngine::match_items(&repo, &workers, &mut pending_items) {
         Ok(r) => r,
-        Err(e) => return RepositoryPipelineResult {
-            success: false, phase: "worker_matching".into(),
-            ingested: total_ingested, matched: 0, processed: 0, failed: 0,
-            actions: vec![], error: Some(e),
-        },
+        Err(e) => {
+            return RepositoryPipelineResult {
+                success: false,
+                phase: "worker_matching".into(),
+                ingested: total_ingested,
+                matched: 0,
+                processed: 0,
+                failed: 0,
+                actions: vec![],
+                error: Some(e),
+            }
+        }
     };
 
-    log_manager.info(project_id, "worker_matching",
-        &format!("Matched: {}, unmatched: {}, ignored: {}",
-            match_result.matched, match_result.unmatched, match_result.ignored));
+    log_manager.info(
+        project_id,
+        "worker_matching",
+        &format!(
+            "Matched: {}, unmatched: {}, ignored: {}",
+            match_result.matched, match_result.unmatched, match_result.ignored
+        ),
+    );
 
     // ── Phase 3: Processing ──────────────────────────────────
     log_manager.info(project_id, "pipeline", "Phase 3: Chain of Processors");
@@ -822,33 +957,49 @@ pub async fn execute_repository_pipeline(
     let mut total_processed = 0i64;
     let mut total_failed = 0i64;
 
-    let process_fn = |processor_type: &str, _cfg: &serde_json::Value, data: &serde_json::Value|
-        -> Result<serde_json::Value, String>
-    {
+    let process_fn = |processor_type: &str,
+                      _cfg: &serde_json::Value,
+                      data: &serde_json::Value|
+     -> Result<serde_json::Value, String> {
         let config_json = _cfg.clone();
-        let result = plugins::execute_processor_static(
-            processor_type, vec![data.clone()], config_json);
+        let result =
+            plugins::execute_processor_static(processor_type, vec![data.clone()], config_json);
         if result.success {
             Ok(serde_json::Value::Array(result.data))
         } else {
-            Err(result.error.unwrap_or_else(|| "Processor failed".to_string()))
+            Err(result
+                .error
+                .unwrap_or_else(|| "Processor failed".to_string()))
         }
     };
 
     for worker in &workers {
         if is_cancelled() {
-            log_manager.info(project_id, "pipeline", "Pipeline cancelled during processing");
+            log_manager.info(
+                project_id,
+                "pipeline",
+                "Pipeline cancelled during processing",
+            );
             return RepositoryPipelineResult {
-                success: false, phase: "processing".into(),
-                ingested: total_ingested, matched: match_result.matched, processed: total_processed, failed: total_failed,
-                actions: vec![], error: Some("Cancelled by user".into()),
+                success: false,
+                phase: "processing".into(),
+                ingested: total_ingested,
+                matched: match_result.matched,
+                processed: total_processed,
+                failed: total_failed,
+                actions: vec![],
+                error: Some("Cancelled by user".into()),
             };
         }
 
         let items = match repo.get_matched_items(&worker.id, 1000) {
             Ok(items) => items,
             Err(e) => {
-                log_manager.error(project_id, "processing", &format!("Worker {}: {}", worker.id, e));
+                log_manager.error(
+                    project_id,
+                    "processing",
+                    &format!("Worker {}: {}", worker.id, e),
+                );
                 continue;
             }
         };
@@ -861,13 +1012,22 @@ pub async fn execute_repository_pipeline(
             Ok(result) => {
                 total_processed += result.processed;
                 total_failed += result.failed;
-                log_manager.info(project_id, "processing",
-                    &format!("Worker '{}': {} processed, {} failed", worker.name, result.processed, result.failed));
+                log_manager.info(
+                    project_id,
+                    "processing",
+                    &format!(
+                        "Worker '{}': {} processed, {} failed",
+                        worker.name, result.processed, result.failed
+                    ),
+                );
             }
             Err(e) => {
                 total_failed += items.len() as i64;
-                log_manager.error(project_id, "processing",
-                    &format!("Worker '{}' error: {}", worker.name, e));
+                log_manager.error(
+                    project_id,
+                    "processing",
+                    &format!("Worker '{}' error: {}", worker.name, e),
+                );
             }
         }
     }
@@ -876,35 +1036,54 @@ pub async fn execute_repository_pipeline(
     log_manager.info(project_id, "pipeline", "Phase 4: Finish Actions");
 
     if is_cancelled() {
-        log_manager.info(project_id, "pipeline", "Pipeline cancelled before finish actions");
+        log_manager.info(
+            project_id,
+            "pipeline",
+            "Pipeline cancelled before finish actions",
+        );
         return RepositoryPipelineResult {
-            success: false, phase: "finish_actions".into(),
-            ingested: total_ingested, matched: match_result.matched, processed: total_processed, failed: total_failed,
-            actions: vec![], error: Some("Cancelled by user".into()),
+            success: false,
+            phase: "finish_actions".into(),
+            ingested: total_ingested,
+            matched: match_result.matched,
+            processed: total_processed,
+            failed: total_failed,
+            actions: vec![],
+            error: Some("Cancelled by user".into()),
         };
     }
 
     let finish_actions = extract_finish_actions(config);
-    let log_fn = |msg: &str, level: &str| {
-        match level {
-            "error" => { log_manager.error(project_id, "finish_actions", msg); },
-            "warn" => { log_manager.warn(project_id, "finish_actions", msg); },
-            _ => { log_manager.info(project_id, "finish_actions", msg); },
+    let log_fn = |msg: &str, level: &str| match level {
+        "error" => {
+            log_manager.error(project_id, "finish_actions", msg);
+        }
+        "warn" => {
+            log_manager.warn(project_id, "finish_actions", msg);
+        }
+        _ => {
+            log_manager.info(project_id, "finish_actions", msg);
         }
     };
 
-    let action_results = match ActionEngine::execute_actions(&finish_actions, &repo, project_id, &log_fn) {
-        Ok(results) => results,
-        Err(e) => {
-            log_manager.error(project_id, "finish_actions", &e);
-            vec![]
-        }
-    };
+    let action_results =
+        match ActionEngine::execute_actions(&finish_actions, &repo, project_id, &log_fn) {
+            Ok(results) => results,
+            Err(e) => {
+                log_manager.error(project_id, "finish_actions", &e);
+                vec![]
+            }
+        };
 
     let success = total_failed == 0;
-    log_manager.info(project_id, "pipeline",
-        &format!("Pipeline complete: ingested={}, matched={}, processed={}, failed={}",
-            total_ingested, match_result.matched, total_processed, total_failed));
+    log_manager.info(
+        project_id,
+        "pipeline",
+        &format!(
+            "Pipeline complete: ingested={}, matched={}, processed={}, failed={}",
+            total_ingested, match_result.matched, total_processed, total_failed
+        ),
+    );
 
     RepositoryPipelineResult {
         success,
@@ -929,49 +1108,90 @@ fn simple_hash(input: &str) -> String {
 
 /// Extract preprocessor configs từ các preprocessor nodes
 fn extract_preprocessors(config: &PipelineConfig) -> Vec<PreprocessorConfig> {
-    config.nodes.iter().filter_map(|node| {
-        if node.node_type != "preprocessor" {
-            return None;
-        }
-        let data = &node.data;
-        Some(PreprocessorConfig {
-            input_type: data.get("inputType").and_then(|v| v.as_str()).unwrap_or("html").to_string(),
-            item_selector: data.get("itemSelector").and_then(|v| v.as_str()).map(String::from),
-            url_patterns: data.get("urlPatterns")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter().filter_map(|p| {
-                        Some(UrlPattern {
-                            enabled: p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
-                            pattern_type: p.get("type").and_then(|v| v.as_str())?.to_string(),
-                            value: p.get("value").and_then(|v| v.as_str())?.to_string(),
-                        })
-                    }).collect()
-                })
-                .unwrap_or_default(),
-            extract_rules: data.get("extractRules")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter().filter_map(|r| {
-                        Some(ExtractRule {
-                            rule_type: r.get("type").and_then(|v| v.as_str())?.to_string(),
-                            value: r.get("value").and_then(|v| v.as_str())?.to_string(),
-                            attribute: r.get("attribute").and_then(|v| v.as_str()).map(String::from),
-                        })
-                    }).collect()
-                })
-                .unwrap_or_default(),
-            csv_delimiter: data.get("csvDelimiter").and_then(|v| v.as_str()).map(String::from),
-            csv_has_header: data.get("csvHasHeader").and_then(|v| v.as_bool()),
-            json_item_path: data.get("jsonItemPath").and_then(|v| v.as_str()).map(String::from),
-            client_type: data.get("clientType").and_then(|v| v.as_str()).map(String::from),
-            client_timeout_secs: data.get("clientTimeoutSecs").and_then(|v| v.as_u64()),
-            client_headless: data.get("clientHeadless").and_then(|v| v.as_bool()),
-            wait_for_selector: data.get("waitForSelector").and_then(|v| v.as_str()).map(String::from),
-            wait_for_content: data.get("waitForContent").and_then(|v| v.as_str()).map(String::from),
-            wait_timeout_ms: data.get("waitTimeoutMs").and_then(|v| v.as_u64()),
+    config
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            if node.node_type != "preprocessor" {
+                return None;
+            }
+            let data = &node.data;
+            Some(PreprocessorConfig {
+                input_type: data
+                    .get("inputType")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("html")
+                    .to_string(),
+                item_selector: data
+                    .get("itemSelector")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                url_patterns: data
+                    .get("urlPatterns")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|p| {
+                                Some(UrlPattern {
+                                    enabled: p
+                                        .get("enabled")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(true),
+                                    pattern_type: p
+                                        .get("type")
+                                        .and_then(|v| v.as_str())?
+                                        .to_string(),
+                                    value: p.get("value").and_then(|v| v.as_str())?.to_string(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                extract_rules: data
+                    .get("extractRules")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|r| {
+                                Some(ExtractRule {
+                                    rule_type: r.get("type").and_then(|v| v.as_str())?.to_string(),
+                                    value: r.get("value").and_then(|v| v.as_str())?.to_string(),
+                                    attribute: r
+                                        .get("attribute")
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                csv_delimiter: data
+                    .get("csvDelimiter")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                csv_has_header: data.get("csvHasHeader").and_then(|v| v.as_bool()),
+                json_item_path: data
+                    .get("jsonItemPath")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                client_type: data
+                    .get("clientType")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                client_timeout_secs: data.get("clientTimeoutSecs").and_then(|v| v.as_u64()),
+                client_headless: data.get("clientHeadless").and_then(|v| v.as_bool()),
+                wait_for_selector: data
+                    .get("waitForSelector")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                wait_for_content: data
+                    .get("waitForContent")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                wait_timeout_ms: data.get("waitTimeoutMs").and_then(|v| v.as_u64()),
+            })
         })
-    }).collect()
+        .collect()
 }
 
 fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
@@ -982,29 +1202,33 @@ fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
             continue;
         }
 
-        let matching_rules: Vec<MatchRule> = node.data.get("detectionRules")
+        let matching_rules: Vec<MatchRule> = node
+            .data
+            .get("detectionRules")
             .or_else(|| node.data.get("matchingRules"))
             .and_then(|v| v.as_array())
             .map(|arr| {
-                arr.iter().filter_map(|r| {
-                    let field = r.get("field").and_then(|v| v.as_str()).unwrap_or("url");
-                    let pattern_type = r.get("type").and_then(|v| v.as_str())?;
-                    let value = r.get("value").and_then(|v| v.as_str())?;
-                    let negate = r.get("negate").and_then(|v| v.as_bool()).unwrap_or(false);
-                    Some(MatchRule {
-                        field: field.to_string(),
-                        pattern: match pattern_type {
-                            "wildcard" => MatchPattern::Wildcard(value.into()),
-                            "regex" => MatchPattern::Regex(value.into()),
-                            "contains" => MatchPattern::Contains(value.into()),
-                            "startswith" => MatchPattern::StartsWith(value.into()),
-                            "endswith" => MatchPattern::EndsWith(value.into()),
-                            "always" => MatchPattern::Always,
-                            _ => return None,
-                        },
-                        negate,
+                arr.iter()
+                    .filter_map(|r| {
+                        let field = r.get("field").and_then(|v| v.as_str()).unwrap_or("url");
+                        let pattern_type = r.get("type").and_then(|v| v.as_str())?;
+                        let value = r.get("value").and_then(|v| v.as_str())?;
+                        let negate = r.get("negate").and_then(|v| v.as_bool()).unwrap_or(false);
+                        Some(MatchRule {
+                            field: field.to_string(),
+                            pattern: match pattern_type {
+                                "wildcard" => MatchPattern::Wildcard(value.into()),
+                                "regex" => MatchPattern::Regex(value.into()),
+                                "contains" => MatchPattern::Contains(value.into()),
+                                "startswith" => MatchPattern::StartsWith(value.into()),
+                                "endswith" => MatchPattern::EndsWith(value.into()),
+                                "always" => MatchPattern::Always,
+                                _ => return None,
+                            },
+                            negate,
+                        })
                     })
-                }).collect()
+                    .collect()
             })
             .unwrap_or_default();
 
@@ -1013,16 +1237,25 @@ fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
         let mut visited = std::collections::HashSet::new();
 
         while let Some(cid) = current_id.take() {
-            if !visited.insert(cid.to_string()) { break; }
+            if !visited.insert(cid.to_string()) {
+                break;
+            }
 
             if let Some(n) = config.nodes.iter().find(|n| n.id == cid) {
                 if n.id != node.id {
                     processor_chain.push(ProcessorStep {
                         id: n.id.clone(),
-                        processor_type: n.data.get("processorType")
-                            .and_then(|v| v.as_str()).unwrap_or(&n.node_type).to_string(),
-                        config: n.data.get("processorConfig")
-                            .cloned().unwrap_or(serde_json::Value::Null),
+                        processor_type: n
+                            .data
+                            .get("processorType")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&n.node_type)
+                            .to_string(),
+                        config: n
+                            .data
+                            .get("processorConfig")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
                     });
                 }
             }
@@ -1049,19 +1282,39 @@ fn extract_finish_actions(config: &PipelineConfig) -> Vec<FinishAction> {
     for node in &config.nodes {
         let action = match node.node_type.as_str() {
             "excelExport" => Some(FinishAction::ExportExcel {
-                path: node.data.get("outputPath")
-                    .and_then(|v| v.as_str()).unwrap_or("output.xlsx").to_string(),
-                fields: node.data.get("fields")
+                path: node
+                    .data
+                    .get("outputPath")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("output.xlsx")
+                    .to_string(),
+                fields: node
+                    .data
+                    .get("fields")
                     .and_then(|v| v.as_array())
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default(),
             }),
             "csvExport" => Some(FinishAction::ExportCsv {
-                path: node.data.get("outputPath")
-                    .and_then(|v| v.as_str()).unwrap_or("output.csv").to_string(),
-                fields: node.data.get("fields")
+                path: node
+                    .data
+                    .get("outputPath")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("output.csv")
+                    .to_string(),
+                fields: node
+                    .data
+                    .get("fields")
                     .and_then(|v| v.as_array())
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default(),
             }),
             "completion" | "finish" => Some(FinishAction::LogSummary),
@@ -1106,7 +1359,11 @@ mod tests {
 
     #[test]
     fn test_extract_preprocessors_empty() {
-        let config = PipelineConfig { nodes: vec![], edges: vec![], settings: serde_json::Value::Null };
+        let config = PipelineConfig {
+            nodes: vec![],
+            edges: vec![],
+            settings: serde_json::Value::Null,
+        };
         let preprocs = extract_preprocessors(&config);
         assert!(preprocs.is_empty());
     }
@@ -1114,13 +1371,17 @@ mod tests {
     #[test]
     fn test_extract_preprocessors_with_html_node() {
         let config = PipelineConfig {
-            nodes: vec![make_node("pre-1", "preprocessor", serde_json::json!({
-                "inputType": "html",
-                "itemSelector": ".product-item",
-                "urlPatterns": [
-                    {"enabled": true, "type": "contains", "value": "/product/"}
-                ]
-            }))],
+            nodes: vec![make_node(
+                "pre-1",
+                "preprocessor",
+                serde_json::json!({
+                    "inputType": "html",
+                    "itemSelector": ".product-item",
+                    "urlPatterns": [
+                        {"enabled": true, "type": "contains", "value": "/product/"}
+                    ]
+                }),
+            )],
             edges: vec![],
             settings: serde_json::Value::Null,
         };
@@ -1136,8 +1397,16 @@ mod tests {
         let config = PipelineConfig {
             nodes: vec![
                 make_node("ds-1", "start", serde_json::json!({"sourceType": "url"})),
-                make_node("pre-1", "preprocessor", serde_json::json!({"inputType": "html"})),
-                make_node("proc-1", "processor", serde_json::json!({"processorType": "rust-deduplicate"})),
+                make_node(
+                    "pre-1",
+                    "preprocessor",
+                    serde_json::json!({"inputType": "html"}),
+                ),
+                make_node(
+                    "proc-1",
+                    "processor",
+                    serde_json::json!({"processorType": "rust-deduplicate"}),
+                ),
             ],
             edges: vec![],
             settings: serde_json::Value::Null,
@@ -1150,19 +1419,31 @@ mod tests {
     fn test_extract_preprocessors_multiple_input_types() {
         let config = PipelineConfig {
             nodes: vec![
-                make_node("pre-html", "preprocessor", serde_json::json!({
-                    "inputType": "html",
-                    "itemSelector": ".item",
-                })),
-                make_node("pre-csv", "preprocessor", serde_json::json!({
-                    "inputType": "csv",
-                    "csvDelimiter": ";",
-                    "csvHasHeader": true,
-                })),
-                make_node("pre-json", "preprocessor", serde_json::json!({
-                    "inputType": "json",
-                    "jsonItemPath": "data.items",
-                })),
+                make_node(
+                    "pre-html",
+                    "preprocessor",
+                    serde_json::json!({
+                        "inputType": "html",
+                        "itemSelector": ".item",
+                    }),
+                ),
+                make_node(
+                    "pre-csv",
+                    "preprocessor",
+                    serde_json::json!({
+                        "inputType": "csv",
+                        "csvDelimiter": ";",
+                        "csvHasHeader": true,
+                    }),
+                ),
+                make_node(
+                    "pre-json",
+                    "preprocessor",
+                    serde_json::json!({
+                        "inputType": "json",
+                        "jsonItemPath": "data.items",
+                    }),
+                ),
             ],
             edges: vec![],
             settings: serde_json::Value::Null,
@@ -1184,13 +1465,17 @@ mod tests {
     #[test]
     fn test_extract_preprocessors_with_extract_rules() {
         let config = PipelineConfig {
-            nodes: vec![make_node("pre-1", "preprocessor", serde_json::json!({
-                "inputType": "html",
-                "extractRules": [
-                    {"type": "title", "value": ".product-title", "attribute": null},
-                    {"type": "price", "value": ".price", "attribute": "data-value"},
-                ]
-            }))],
+            nodes: vec![make_node(
+                "pre-1",
+                "preprocessor",
+                serde_json::json!({
+                    "inputType": "html",
+                    "extractRules": [
+                        {"type": "title", "value": ".product-title", "attribute": null},
+                        {"type": "price", "value": ".price", "attribute": "data-value"},
+                    ]
+                }),
+            )],
             edges: vec![],
             settings: serde_json::Value::Null,
         };
@@ -1198,7 +1483,10 @@ mod tests {
         assert_eq!(preprocs.len(), 1);
         assert_eq!(preprocs[0].extract_rules.len(), 2);
         assert_eq!(preprocs[0].extract_rules[0].rule_type, "title");
-        assert_eq!(preprocs[0].extract_rules[1].attribute.as_deref(), Some("data-value"));
+        assert_eq!(
+            preprocs[0].extract_rules[1].attribute.as_deref(),
+            Some("data-value")
+        );
     }
 
     #[test]
@@ -1208,10 +1496,7 @@ mod tests {
             make_node("b", "processor", serde_json::Value::Null),
             make_node("c", "processor", serde_json::Value::Null),
         ];
-        let edges = vec![
-            make_edge("a", "b"),
-            make_edge("b", "c"),
-        ];
+        let edges = vec![make_edge("a", "b"), make_edge("b", "c")];
         let sorted = topological_sort(&nodes, &edges).unwrap();
         let pos_a = sorted.iter().position(|x| x == "a").unwrap();
         let pos_b = sorted.iter().position(|x| x == "b").unwrap();

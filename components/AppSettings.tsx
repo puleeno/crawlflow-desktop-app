@@ -22,6 +22,8 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [chromePath, setChromePath] = useState('');
   const [savedChromePath, setSavedChromePath] = useState('');
+  const [headless, setHeadless] = useState<boolean>(true);
+  const [savedHeadless, setSavedHeadless] = useState<boolean>(true);
   const [chromeLoading, setChromeLoading] = useState(false);
   const [chromeMessage, setChromeMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -47,6 +49,16 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
     } catch (e) { /* ignore */ }
   }, []);
 
+  const fetchHeadless = useCallback(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const val: string | null = await invoke('get_app_setting_cmd', { key: 'chrome_headless' });
+      const isHeadless = val === null ? true : val === 'true';
+      setHeadless(isHeadless);
+      setSavedHeadless(isHeadless);
+    } catch (e) { /* ignore */ }
+  }, []);
+
   const handleSaveChromePath = async () => {
     setChromeLoading(true);
     setChromeMessage(null);
@@ -61,10 +73,27 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
     setChromeLoading(false);
   };
 
+  const handleToggleHeadless = async (checked: boolean) => {
+    setHeadless(checked);
+    setChromeLoading(true);
+    setChromeMessage(null);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_app_setting_cmd', { key: 'chrome_headless', value: checked ? 'true' : 'false' });
+      setSavedHeadless(checked);
+      setChromeMessage({ type: 'success', text: 'Headless preference saved.' });
+    } catch (e: any) {
+      setHeadless(!checked);
+      setChromeMessage({ type: 'error', text: e?.toString() || 'Failed to save headless mode' });
+    }
+    setChromeLoading(false);
+  };
+
   useEffect(() => {
     fetchInfo();
     fetchChromePath();
-  }, [fetchInfo, fetchChromePath]);
+    fetchHeadless();
+  }, [fetchInfo, fetchChromePath, fetchHeadless]);
 
   const showMsg = (type: 'success' | 'error', text: string) => {
     setMessage({ type, text });
@@ -147,11 +176,10 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
 
         {/* Message */}
         {message && (
-          <div className={`mb-6 px-4 py-3 rounded-xl border text-sm font-medium ${
-            message.type === 'success'
-              ? 'bg-green-50 border-green-200 text-green-700'
-              : 'bg-red-50 border-red-200 text-red-700'
-          }`}>
+          <div className={`mb-6 px-4 py-3 rounded-xl border text-sm font-medium ${message.type === 'success'
+            ? 'bg-green-50 border-green-200 text-green-700'
+            : 'bg-red-50 border-red-200 text-red-700'
+            }`}>
             {message.text}
           </div>
         )}
@@ -189,10 +217,9 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
                 <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
                   <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Status</div>
                   <div className="flex items-center gap-2">
-                    <span className={`inline-block w-3 h-3 rounded-full ${
-                      serviceInfo.running ? 'bg-green-500 animate-pulse' :
+                    <span className={`inline-block w-3 h-3 rounded-full ${serviceInfo.running ? 'bg-green-500 animate-pulse' :
                       serviceInfo.installed ? 'bg-amber-400' : 'bg-gray-300'
-                    }`} />
+                      }`} />
                     <span className="font-bold text-gray-800">
                       {serviceInfo.running ? 'Running' : serviceInfo.installed ? 'Stopped' : 'Not Installed'}
                     </span>
@@ -313,6 +340,25 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
                 {chromeMessage.text}
               </p>
             )}
+          </div>
+
+          <div className="mt-6 pt-6 border-t border-slate-100 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-gray-700">Headless Mode</p>
+              <p className="text-xs text-gray-500 mt-1">
+                Run Chrome entirely in the background without UI (Recommended). Disable this parameter if you need to debug websites block or load issues.
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={headless}
+                onChange={(e) => handleToggleHeadless(e.target.checked)}
+                disabled={chromeLoading}
+              />
+              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+            </label>
           </div>
         </div>
       </div>

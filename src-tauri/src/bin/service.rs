@@ -235,13 +235,13 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
     let lm = Arc::new(SimpleLogger::as_log_manager(master_db_path()));
     let self_pid = std::process::id() as i64;
     let mut cycle = 0u64;
-    
+
     // Cancellation token for stopping pipeline mid-execution
     let cancellation = Arc::new(AtomicBool::new(false));
     let cancellation_clone = cancellation.clone();
     let project_id_clone = project_id.clone();
     let master_db_clone = master_db.clone();
-    
+
     // Spawn background task to monitor service_control and update cancellation token
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
@@ -274,11 +274,7 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
 
     while !shutdown.load(Ordering::Relaxed) {
         cycle += 1;
-        lm.info(
-            &project_id,
-            "service",
-            &format!("--- Cycle #{} ---", cycle),
-        );
+        lm.info(&project_id, "service", &format!("--- Cycle #{} ---", cycle));
 
         // Check if desktop app has this project open for editing
         let conn_result = rusqlite::Connection::open(&master_db);
@@ -360,7 +356,8 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                     &project_id,
                     None,
                     Some(&cancellation),
-                ).await;
+                )
+                .await;
                 let now = {
                     let secs = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -541,5 +538,6 @@ async fn main() {
     for h in handles {
         let _ = h.await;
     }
+    crawlflow_lib::request_clients::shutdown_global_chrome();
     println!("[SERVICE] All stopped. Goodbye.");
 }

@@ -11,7 +11,7 @@ mod plugins;
 mod progress;
 mod python_plugins;
 mod repository;
-mod request_clients;
+pub mod request_clients;
 mod services;
 pub mod settings_engine;
 pub mod spreadsheet;
