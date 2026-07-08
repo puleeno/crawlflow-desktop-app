@@ -183,6 +183,14 @@ impl Default for ClientProfile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChromeSession {
+    pub debug_port: u16,
+    pub pid: u32,
+    pub profile_dir: String,
+    pub page_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlRequest {
     pub url: String,
     pub method: Option<String>,

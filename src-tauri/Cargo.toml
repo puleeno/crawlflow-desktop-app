@@ -36,7 +36,7 @@ tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 scraper = "0.22"
 tokio = { version = "1", features = ["full"] }
 pyo3 = { version = "0.23", features = ["auto-initialize", "serde"] }
@@ -47,6 +47,7 @@ rust_xlsxwriter = "0.82"
 base64 = "0.22.1"
 regex = "1"
 lazy_static = "1.4"
+tungstenite = "0.24"
 # Used by the headless service binary only
 rusqlite = { version = "0.31", features = ["bundled"] }
 ctrlc = { version = "3", features = ["termination"] }

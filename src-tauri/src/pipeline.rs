@@ -603,6 +603,7 @@ pub async fn execute_repository_pipeline(
         source_url: String,
         raw_data: String,
         input_type: String,
+        chrome_session: Option<crate::models::ChromeSession>,
     }
 
     let mut total_ingested = 0i64;
@@ -620,8 +621,12 @@ pub async fn execute_repository_pipeline(
         if !matches!(node.node_type.as_str(), "start" | "dataSource" | "rssSource") {
             continue;
         }
+        let node_label = node.data.get("label").and_then(|v| v.as_str()).unwrap_or(&node.id);
         let source_type = node.data.get("sourceType").and_then(|v| v.as_str()).unwrap_or("url");
         let source_value = node.data.get("sourceValue").and_then(|v| v.as_str()).unwrap_or("");
+
+        log_manager.info(project_id, "fetching",
+            &format!("[node={}] Processing node type={}, sourceType={}", node_label, node.node_type, source_type));
 
         match source_type {
             "url" | "api" => {
@@ -632,31 +637,53 @@ pub async fn execute_repository_pipeline(
                 let wait_timeout_ms = node.data.get("waitTimeoutMs").and_then(|v| v.as_u64());
                 
                 log_manager.info(project_id, "fetching",
-                    &format!("Fetching: {} (client: {})", url, profile.client_type));
-                let crawl_result = request_clients::fetch_with_client(
-                    &url, 
-                    &profile, 
-                    None,
-                    wait_for_selector,
-                    wait_for_content,
-                    wait_timeout_ms,
-                ).await;
-                let result = if crawl_result.error.is_some() {
-                    Err(crawl_result.error.unwrap())
+                    &format!("[node={}] Fetching: {} (client: {})", node_label, url, profile.client_type));
+
+                let use_cdp = profile.client_type == "chrome";
+                let fetch_start = std::time::Instant::now();
+                let (crawl_result, chrome_session) = if use_cdp {
+                    log_manager.info(project_id, "fetching",
+                        &format!("[node={}] Launching Chrome CDP...", node_label));
+                    request_clients::fetch_with_client_cdp(
+                        &url, &profile, None,
+                        wait_for_selector, wait_timeout_ms,
+                    ).await
                 } else {
-                    Ok(crawl_result.html.unwrap_or_default())
+                    let result = request_clients::fetch_with_client(
+                        &url, &profile, None,
+                        wait_for_selector, wait_for_content, wait_timeout_ms,
+                    ).await;
+                    (result, None)
                 };
-                match result {
-                    Ok(html) => {
+                let fetch_elapsed = fetch_start.elapsed();
+
+                log_manager.info(project_id, "fetching",
+                    &format!("[node={}] Fetch completed in {:.1}s", node_label, fetch_elapsed.as_secs_f64()));
+
+                if let Some(session) = &chrome_session {
+                    log_manager.info(project_id, "fetching",
+                        &format!("[node={}] Chrome session active (pid={}, port={})", node_label, session.pid, session.debug_port));
+                }
+
+                match crawl_result.error {
+                    None => {
+                        let html = crawl_result.html.unwrap_or_default();
                         log_manager.info(project_id, "fetching",
                             &format!("Fetched {} ({} bytes)", source_value, html.len()));
                         fetched_sources.push(FetchedData {
                             source_url: source_value.to_string(),
                             raw_data: html,
                             input_type: "html".into(),
+                            chrome_session,
                         });
                     }
-                    Err(e) => { log_manager.error(project_id, "fetching", &e); },
+                    Some(e) => {
+                        log_manager.error(project_id, "fetching", &e);
+                        // Close Chrome on error
+                        if let Some(session) = chrome_session {
+                            request_clients::close_chrome_session(&session);
+                        }
+                    },
                 }
             }
             "csv" | "json" | "xml" | "text" => {
@@ -665,6 +692,7 @@ pub async fn execute_repository_pipeline(
                         source_url: source_value.to_string(),
                         raw_data: content,
                         input_type: source_type.to_string(),
+                        chrome_session: None,
                     });
                 }
             }
@@ -680,9 +708,22 @@ pub async fn execute_repository_pipeline(
 
     let preprocessor_nodes = extract_preprocessors(config);
 
+    macro_rules! close_chrome_sessions {
+        ($sources:expr) => {
+            for f in $sources {
+                if let Some(ref s) = f.chrome_session {
+                    log_manager.info(project_id, "preprocessing",
+                        &format!("Closing Chrome session (pid={})", s.pid));
+                    request_clients::close_chrome_session(s);
+                }
+            }
+        };
+    }
+
     for fetched in &fetched_sources {
         if is_cancelled() {
             log_manager.info(project_id, "pipeline", "Pipeline cancelled during preprocessing");
+            close_chrome_sessions!(&fetched_sources);
             return RepositoryPipelineResult {
                 success: false, phase: "preprocessing".into(),
                 ingested: total_ingested, matched: 0, processed: 0, failed: 0,
@@ -736,6 +777,9 @@ pub async fn execute_repository_pipeline(
             Err(e) => { log_manager.error(project_id, "preprocessing", &e); },
         }
     }
+
+    // ── Close all Chrome sessions after preprocessing ─────────
+    close_chrome_sessions!(&fetched_sources);
 
     // ── Phase 2: Worker Matching ─────────────────────────────
     log_manager.info(project_id, "pipeline", "Phase 2: Worker Matching");
