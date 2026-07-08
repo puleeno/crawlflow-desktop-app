@@ -714,7 +714,12 @@ fn urlencoding(url: &str) -> String {
 
 fn set_ws_read_timeout(ws: &mut WsStream, timeout_secs: u64) {
     if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = ws.get_mut() {
-        let _ = tcp.set_read_timeout(Some(Duration::from_secs(timeout_secs)));
+        let t = if timeout_secs == 0 {
+            None
+        } else {
+            Some(Duration::from_secs(timeout_secs))
+        };
+        let _ = tcp.set_read_timeout(t);
     }
 }
 
