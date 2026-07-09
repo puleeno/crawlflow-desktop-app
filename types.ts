@@ -542,6 +542,7 @@ export interface ItemsSummary {
     done: number;
     error: number;
     ignored: number;
+    crawled: number;
 }
 
 export interface Preset {

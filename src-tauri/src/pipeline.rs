@@ -625,8 +625,8 @@ pub async fn execute_repository_pipeline(
         }
     };
 
-    // ── Phase 1a: Data Fetching ─────────────────────────────
-    log_manager.info(project_id, "pipeline", "Phase 1a: Data Fetching");
+    // ── Phase 1a: Check for Crawled Items & Data Fetching ───────────
+    log_manager.info(project_id, "pipeline", "Phase 1a: Checking for existing crawled items");
 
     struct FetchedData {
         source_url: String,
@@ -637,7 +637,43 @@ pub async fn execute_repository_pipeline(
 
     let mut total_ingested = 0i64;
     let mut fetched_sources: Vec<FetchedData> = Vec::new();
-    for node in &config.nodes {
+    
+    // First check if we already have crawled items
+    let crawled_items = match repo.get_crawled_items() {
+        Ok(items) => items,
+        Err(e) => {
+            return RepositoryPipelineResult {
+                success: false,
+                phase: "fetching".into(),
+                ingested: 0,
+                matched: 0,
+                processed: 0,
+                failed: 0,
+                actions: vec![],
+                error: Some(e),
+            };
+        }
+    };
+    if !crawled_items.is_empty() {
+        log_manager.info(
+            project_id, 
+            "fetching", 
+            &format!("Found {} existing crawled items, using those instead of fetching", crawled_items.len())
+        );
+        for item in crawled_items {
+            if let Some(raw_content) = item.raw_content {
+                fetched_sources.push(FetchedData {
+                    source_url: item.source_url,
+                    raw_data: raw_content,
+                    input_type: "html".into(),
+                    chrome_session: None,
+                });
+            }
+        }
+    } else {
+        // No crawled items, proceed with fetching
+        log_manager.info(project_id, "pipeline", "No existing crawled items found, starting data fetching");
+        for node in &config.nodes {
         if is_cancelled() {
             log_manager.info(
                 project_id,
@@ -795,7 +831,8 @@ pub async fn execute_repository_pipeline(
                 );
             }
         }
-    }
+    } // end of for loop over nodes
+    } // end of else block (when no crawled items found)
 
     // ── Save raw HTML to DB for debug ────────────────────────
     for f in &fetched_sources {

@@ -97,7 +97,6 @@ impl RawItemRepository {
     pub fn save_items(&self, items: &[NewRawItem]) -> Result<RawItemSaveResult, String> {
         let mut inserted = 0i64;
         let mut duplicated = 0i64;
-        let mut skipped = 0i64;
 
         for item in items {
             // Check existing by hash
@@ -140,7 +139,7 @@ impl RawItemRepository {
             }
         }
 
-        Ok(RawItemSaveResult { inserted, duplicated, skipped })
+        Ok(RawItemSaveResult { inserted, duplicated })
     }
 
     /// Save raw HTML fetched from a data source (debug / audit trail).
@@ -304,7 +303,6 @@ impl RawItemRepository {
 pub struct RawItemSaveResult {
     pub inserted: i64,
     pub duplicated: i64,
-    pub skipped: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -315,6 +313,7 @@ pub struct ItemsSummary {
     pub done: i64,
     pub error: i64,
     pub ignored: i64,
+    pub crawled: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -431,7 +430,41 @@ impl RawItemRepository {
         let done = self.count_by_status("done")?;
         let error = self.count_by_status("error")?;
         let ignored = self.count_by_status("ignored")?;
-        Ok(ItemsSummary { total, pending, processing, done, error, ignored })
+        let crawled = self.count_by_status("crawled")?;
+        Ok(ItemsSummary { total, pending, processing, done, error, ignored, crawled })
+    }
+    
+    /// Get all crawled raw items (with status='crawled' and item_type='raw')
+    pub fn get_crawled_items(&self) -> Result<Vec<RawItem>, String> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, source_url, item_type, item_hash, raw_content, extracted_url,
+                    dup_count, priority, worker_id, matched, status, created_at, updated_at
+             FROM raw_items
+             WHERE status = 'crawled' AND item_type = 'raw'
+             ORDER BY created_at ASC"
+        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+        let items = stmt.query_map([], |row| {
+            Ok(RawItem {
+                id: row.get(0)?,
+                source_url: row.get(1)?,
+                item_type: row.get(2)?,
+                item_hash: row.get(3)?,
+                raw_content: row.get(4)?,
+                extracted_url: row.get(5)?,
+                dup_count: row.get(6)?,
+                priority: row.get(7)?,
+                worker_id: row.get(8)?,
+                matched: row.get(9)?,
+                status: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+            })
+        }).map_err(|e| format!("Failed to query items: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+        Ok(items)
     }
 }
 

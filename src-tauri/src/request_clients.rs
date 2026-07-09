@@ -639,7 +639,7 @@ pub fn launch_chrome_cdp(
     // Read Chrome stderr in a background thread so the pipe doesn't fill up
     let stderr_handle = child.stderr.take().map(|stderr| {
         std::thread::spawn(move || {
-            use std::io::{BufRead, Read};
+            use std::io::BufRead;
             let mut reader = std::io::BufReader::new(stderr);
             let mut line = String::new();
             while reader.read_line(&mut line).unwrap_or(0) > 0 {

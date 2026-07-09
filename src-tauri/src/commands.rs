@@ -925,6 +925,7 @@ pub fn get_raw_items_summary_cmd(
             done: 0,
             error: 0,
             ignored: 0,
+            crawled: 0,
         });
     }
 

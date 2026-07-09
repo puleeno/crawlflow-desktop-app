@@ -186,7 +186,7 @@ impl ServiceManager {
                 rusqlite::params![project_id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, u64>(4).unwrap_or(0))),
             );
-            if let Ok((status, cycle_count, last_run_at, last_error, runner_pid)) = row {
+            if let Ok((status, cycle_count, last_run_at, last_error, _runner_pid)) = row {
                 // For background service "running" status, verify the PID is still alive
                 let effective_status = if status == "running" {
                     if is_project_running_in_background(project_id) {

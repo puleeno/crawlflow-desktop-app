@@ -182,28 +182,9 @@ pub fn get_project_migrations() -> Vec<Migration> {
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 );
 
-                CREATE TABLE IF NOT EXISTS crawl_data (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_url TEXT,
-                    field_name TEXT NOT NULL,
-                    field_value TEXT,
-                    raw_data TEXT,
-                    node_id TEXT,
-                    extracted_at TEXT NOT NULL DEFAULT (datetime('now'))
-                );
-
-                CREATE TABLE IF NOT EXISTS crawl_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    level TEXT NOT NULL DEFAULT 'info',
-                    message TEXT NOT NULL,
-                    node_id TEXT,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-                );
-
                 CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(type);
                 CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source);
                 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target);
-                CREATE INDEX IF NOT EXISTS idx_crawl_data_field ON crawl_data(field_name);
             ",
             kind: MigrationKind::Up,
         },

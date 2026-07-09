@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import type { RawItem, ItemsSummary } from '../types';
 
-const STATUS_TABS = ['all', 'pending', 'processing', 'done', 'error', 'ignored'] as const;
+const STATUS_TABS = ['all', 'pending', 'processing', 'done', 'error', 'ignored', 'crawled'] as const;
 type StatusTab = (typeof STATUS_TABS)[number];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -11,6 +11,7 @@ const STATUS_COLORS: Record<string, string> = {
   done: '#22c55e',
   error: '#ef4444',
   ignored: '#6b7280',
+  crawled: '#06b6d4',
 };
 
 interface Props {

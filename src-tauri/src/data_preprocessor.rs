@@ -203,7 +203,7 @@ impl DataPreprocessor {
 
     fn process_html(html: &str, source_url: &str, config: &PreprocessorConfig) -> PreprocessorResult {
         let mut items = Vec::new();
-        let mut errors = Vec::new();
+        let errors = Vec::new();
 
         // Convert URL patterns to MatchPattern
         let match_patterns: Vec<MatchPattern> = config.url_patterns.iter()
@@ -284,7 +284,7 @@ impl DataPreprocessor {
 
     fn process_csv(data: &str, source_url: &str, config: &PreprocessorConfig) -> PreprocessorResult {
         let mut items = Vec::new();
-        let mut errors = Vec::new();
+        let errors = Vec::new();
         let delimiter = config.csv_delimiter.as_deref().unwrap_or(",");
         let has_header = config.csv_has_header.unwrap_or(true);
 

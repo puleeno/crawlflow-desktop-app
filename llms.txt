@@ -231,15 +231,23 @@ processor  → processor     (optional chain)
 
 File: `src-tauri/src/pipeline.rs`. Executed by background service with 4 phases using `raw_items` + `processing_log` SQLite tables per project:
 
-#### Phase 1a: Data Fetching
-Iterates `start`/`dataSource`/`rssSource` nodes, fetches raw data:
+#### Phase 1a: Check for Crawled Items & Data Fetching
+**First checks:** If the project already has items in `raw_items` table with `status="crawled"` and `item_type="raw"`, uses those **instead** of fetching new data (for speed/reliability).
+
+Otherwise, iterates `start`/`dataSource`/`rssSource` nodes and fetches new raw data:
 - `"url"` / `"api"` → HTTP fetch via reqwest (blocking tokio runtime)
 - `"csv"` / `"json"` / `"xml"` / `"text"` → file read via `std::fs::read_to_string`
+
+**Important:** Every fetched source (including **each pagination page**) is saved as individual `raw_item` with:
+- `item_type="raw"`
+- `status="crawled"`
+- `raw_content` containing **full HTML** (outer HTML of selected element for HTML sources; entire content otherwise)
 
 #### Phase 1b: Data Preprocessing
 - Looks for `preprocessor` nodes matching the source's `inputType` (`html`/`csv`/`json`/`xml`/`text`)
 - Extracts items from raw data using configurable rules:
   - **HTML**: CSS selector + URL pattern extraction (via `ItemMatcher`)
+    - `extract_by_selector` uses **outer HTML** (not inner HTML) for full element content
   - **CSV**: delimiter-based row parsing with optional headers
   - **JSON**: JSON path navigation + auto URL extraction
   - **XML**: regex-based `<item>` extraction
@@ -335,9 +343,29 @@ interface ProjectSettings {
 }
 ```
 
+## 10. Raw Items Status Schema Update
+The `ItemsSummary` interface (in `types.ts` and Rust `repository.rs`) now includes an additional field:
+- `crawled` - Count of items with status='crawled'
+```typescript
+interface ItemsSummary {
+  total: number;
+  pending: number;
+  processing: number;
+  done: number;
+  error: number;
+  ignored: number;
+  crawled: number;       // New field!
+}
+```
+
+RawItemsBrowser UI now includes:
+- "Crawled" status tab (color: teal/cyan)
+- When you click on any row, expands to show full raw_content (with character count)
+
+
 ---
 
-## 10. Headless Service Binary
+## 11. Headless Service Binary
 
 The `crawlflow-service` binary (`src-tauri/src/bin/service.rs`) is the **sole execution engine** for all pipeline runs. It executes without the Tauri/GUI runtime.
 
@@ -362,7 +390,7 @@ System service integration:
 
 ---
 
-## 11. File Structure Reference
+## 12. File Structure Reference
 
 ```
 crawlflow-desktop-app/

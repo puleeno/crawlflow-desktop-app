@@ -81,7 +81,7 @@ impl WorkerEngine {
             -> Result<serde_json::Value, String>,
     ) -> Result<ProcessResult, String> {
         let mut processed = 0i64;
-        let mut failed = 0i64;
+        let failed = 0i64;
         let mut results = Vec::new();
 
         for item in items {
@@ -122,7 +122,6 @@ impl WorkerEngine {
                             None, Some(&e),
                         )?;
                         repo.update_status(item.id, "error")?;
-                        failed += 1;
                         return Err(format!("Processor '{}' failed on item {}: {}",
                             step.processor_type, item.id, e));
                     }
