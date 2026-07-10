@@ -51,6 +51,66 @@ fn project_db_path(db_filename: &str) -> PathBuf {
     get_app_data_dir().join(db_filename)
 }
 
+fn get_user_plugins_dir() -> PathBuf {
+    dirs_next::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("crawlflow")
+        .join("plugins")
+}
+
+fn get_builtin_plugins_dir() -> Option<PathBuf> {
+    let bundled_dir = std::env::current_exe().ok().and_then(|path| {
+        path.parent()?
+            .parent()
+            .map(|resources| resources.join("plugins"))
+    });
+    if bundled_dir.as_ref().is_some_and(|path| path.is_dir()) {
+        return bundled_dir;
+    }
+
+    let dev_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|path| path.join("plugins"));
+    dev_dir.filter(|path| path.is_dir())
+}
+
+fn get_enabled_python_plugin_ids() -> Result<std::collections::HashSet<String>, String> {
+    let connection = open_db(&master_db_path())?;
+    let mut statement = connection
+        .prepare("SELECT id FROM extensions WHERE type = 'plugin' AND enabled = 1")
+        .map_err(|error| format!("Cannot read enabled plugins: {}", error))?;
+    let plugin_ids = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Cannot query enabled plugins: {}", error))?
+        .filter_map(Result::ok)
+        .map(|plugin_id| plugin_id.strip_prefix("py-").unwrap_or(&plugin_id).to_string())
+        .collect();
+    Ok(plugin_ids)
+}
+
+fn create_python_plugin_engine(
+    enabled_plugin_ids: &std::collections::HashSet<String>,
+) -> Result<crawlflow_lib::python_plugins::PythonPluginEngine, String> {
+    let user_dir = get_user_plugins_dir();
+    std::fs::create_dir_all(&user_dir).map_err(|error| {
+        format!(
+            "Cannot create user plugin directory {:?}: {}",
+            user_dir, error
+        )
+    })?;
+
+    let mut engine =
+        crawlflow_lib::python_plugins::PythonPluginEngine::new(get_builtin_plugins_dir(), user_dir);
+    let discovered = engine.discover()?;
+    engine.retain_plugins(enabled_plugin_ids);
+    let enabled_discovered: Vec<_> = discovered
+        .into_iter()
+        .filter(|plugin_id| enabled_plugin_ids.contains(plugin_id))
+        .collect();
+    println!("[SERVICE] Python plugins initialized: {:?}", enabled_discovered);
+    Ok(engine)
+}
+
 fn open_db(path: &PathBuf) -> Result<rusqlite::Connection, String> {
     rusqlite::Connection::open(path).map_err(|e| format!("Cannot open {:?}: {}", path, e))
 }
@@ -233,6 +293,28 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
     }
 
     let lm = Arc::new(SimpleLogger::as_log_manager(master_db_path()));
+    let enabled_plugin_ids = match get_enabled_python_plugin_ids() {
+        Ok(plugin_ids) => plugin_ids,
+        Err(error) => {
+            lm.error(
+                &project_id,
+                "service",
+                &format!("Could not read enabled plugin settings: {}", error),
+            );
+            return;
+        }
+    };
+    let mut python_engine = match create_python_plugin_engine(&enabled_plugin_ids) {
+        Ok(engine) => engine,
+        Err(error) => {
+            lm.error(
+                &project_id,
+                "service",
+                &format!("Python plugin initialization failed: {}", error),
+            );
+            return;
+        }
+    };
     let self_pid = std::process::id() as i64;
     let mut cycle = 0u64;
 
@@ -354,7 +436,7 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                     &db_path,
                     &lm,
                     &project_id,
-                    None,
+                    Some(&mut python_engine),
                     Some(&cancellation),
                 )
                 .await;

@@ -186,6 +186,12 @@ impl PythonPluginEngine {
         self.plugins.values().collect()
     }
 
+    /// Keep only the plugins enabled in the application's extension settings.
+    pub fn retain_plugins(&mut self, enabled_plugin_ids: &std::collections::HashSet<String>) {
+        self.plugins
+            .retain(|plugin_id, _| enabled_plugin_ids.contains(plugin_id));
+    }
+
     pub fn get_plugin(&mut self, id: &str) -> Option<&mut PythonPlugin> {
         self.plugins.get_mut(id)
     }

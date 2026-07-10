@@ -10,7 +10,7 @@ pub mod pagination;
 pub mod pipeline;
 mod plugins;
 mod progress;
-mod python_plugins;
+pub mod python_plugins;
 mod repository;
 pub mod request_clients;
 mod services;

@@ -40,11 +40,13 @@ XUAT EXCEL/CSV:
 """
 
 import json
+import hashlib
 import time
 import os
 import re
 import urllib.parse
 from datetime import datetime
+from html import unescape
 from html.parser import HTMLParser
 
 
@@ -79,6 +81,179 @@ def find_store_id(data):
             if res:
                 return res
     return None
+
+
+def _find_apollo_store_id(data):
+    """Lay store ID tu __APOLLO_STATE__ cua Oreka Next.js page."""
+    if isinstance(data, dict):
+        apollo_state = data.get("__APOLLO_STATE__")
+        if isinstance(apollo_state, dict):
+            for cache_key, record in apollo_state.items():
+                if not cache_key.startswith("Store:"):
+                    continue
+                store_id = record.get("id") if isinstance(record, dict) else None
+                return str(store_id or cache_key.removeprefix("Store:")).strip()
+        for value in data.values():
+            store_id = _find_apollo_store_id(value)
+            if store_id:
+                return store_id
+    elif isinstance(data, list):
+        for value in data:
+            store_id = _find_apollo_store_id(value)
+            if store_id:
+                return store_id
+    return None
+
+
+def _extract_store_id_from_next_data(html):
+    """Parse JSON trong script __NEXT_DATA__ va lay Store:<id> tu Apollo cache."""
+    match = re.search(
+        r'<script\b(?=[^>]*\bid=["\']__NEXT_DATA__["\'])[^>]*>(.*?)</script>',
+        html,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if not match:
+        return None
+
+    try:
+        next_data = json.loads(unescape(match.group(1)).strip())
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+    apollo_state = (
+        next_data.get("props", {})
+        .get("pageProps", {})
+        .get("__APOLLO_STATE__", {})
+    )
+    if not isinstance(apollo_state, dict):
+        return _find_apollo_store_id(next_data)
+
+    for cache_key, record in apollo_state.items():
+        if cache_key.startswith("Store:"):
+            store_id = record.get("id") if isinstance(record, dict) else None
+            return str(store_id or cache_key.removeprefix("Store:")).strip()
+    return None
+
+
+def _extract_store_id_from_html(html):
+    """Lay store ID tu HTML trang Oreka, uu tien du lieu Next.js."""
+    html = unescape(html)
+    store_id = _extract_store_id_from_next_data(html)
+    if store_id:
+        return store_id
+
+    for script_content in re.findall(r'<script\b[^>]*>(.*?)</script>', html, re.DOTALL | re.IGNORECASE):
+        if "storeId" not in script_content and '"store"' not in script_content:
+            continue
+        try:
+            script_data = json.loads(script_content.strip())
+            store_id = _find_apollo_store_id(script_data) or find_store_id(script_data)
+            if store_id:
+                return str(store_id).strip()
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+
+    for pattern in (
+        r'["\']storeId["\']\s*:\s*["\']([^"\']+)["\']',
+        r'["\']store["\']\s*:\s*\{\s*["\']id["\']\s*:\s*["\']([^"\']+)["\']',
+        r'[?&]storeId=([^&"\'\s]+)',
+    ):
+        match = re.search(pattern, html, re.IGNORECASE)
+        if match:
+            return urllib.parse.unquote(match.group(1)).strip()
+    return None
+
+
+def _oreka_listing_url(source_url, store_id):
+    parsed = urllib.parse.urlparse(source_url)
+    base_url = f"{parsed.scheme or 'https'}://{parsed.netloc or 'www.oreka.vn'}"
+    query = urllib.parse.urlencode({
+        'storeId': store_id,
+        'sort': 'createdAt',
+        'order': 'desc',
+    })
+    return f"{base_url}/mua-ban?{query}"
+
+
+def register_preprocessors():
+    """Dang ky preprocessor chuyen trang store Oreka thanh danh sach san pham."""
+    return json.dumps([{
+        "id": "oreka-store-products",
+        "name": "Oreka Store Products",
+        "plugin_id": "",
+        "input_type": "html",
+        "platform": "oreka.vn",
+        "config": {
+            "input_type": "html",
+            "item_selector": None,
+            "url_patterns": [],
+            "extract_rules": [],
+            "csv_delimiter": None,
+            "csv_has_header": None,
+            "json_item_path": None,
+            "client_type": None,
+            "client_timeout_secs": None,
+            "client_headless": None,
+            "wait_for_selector": None,
+            "wait_for_content": None,
+            "wait_timeout_ms": None,
+        },
+    }])
+
+
+def preprocess_data(data_json):
+    """Lay store ID tu HTML nguon va tra ve tat ca URL san pham cua store."""
+    payload = json.loads(data_json) if isinstance(data_json, str) else data_json
+    html = payload.get("raw_data", "")
+    source_url = payload.get("source_url", "https://www.oreka.vn")
+    store_id = _extract_store_id_from_html(html) or _extract_store_id_from_html(source_url)
+
+    if not store_id:
+        crawlflow.log("[OrekaShop] Khong tim thay storeId trong HTML data source", "warn")
+        return json.dumps([])
+
+    listing_url = _oreka_listing_url(source_url, store_id)
+    listing_origin = urllib.parse.urlunparse(
+        urllib.parse.urlparse(listing_url)._replace(path="", params="", query="", fragment="")
+    )
+    product_urls = set()
+
+    for page_number in range(1, 101):
+        page_url = listing_url if page_number == 1 else _add_page_to_url(listing_url, "page", page_number)
+        crawlflow.log(f"[OrekaShop] Fetch danh sach trang {page_number}: {page_url}", "info")
+        try:
+            response = crawlflow.fetch_url(page_url, None)
+            result = json.loads(response) if isinstance(response, str) else response
+        except Exception as error:
+            crawlflow.log(f"[OrekaShop] Loi fetch trang {page_number}: {error}", "error")
+            break
+
+        if result.get("status") != 200:
+            crawlflow.log(
+                f"[OrekaShop] Trang {page_number} tra ve status {result.get('status')}",
+                "warn",
+            )
+            break
+
+        page_product_urls = _extract_oreka_listing_links(result.get("body", ""), listing_origin)
+        new_urls = page_product_urls - product_urls
+        if not new_urls:
+            break
+        product_urls.update(new_urls)
+
+    product_urls = sorted(product_urls)
+    items = [{
+        "source_url": listing_url,
+        "item_type": "url",
+        "item_hash": hashlib.sha256(product_url.encode("utf-8")).hexdigest(),
+        "raw_content": None,
+        "extracted_url": product_url,
+    } for product_url in product_urls]
+    crawlflow.log(
+        f"[OrekaShop] Tim thay {len(items)} san pham cho store {store_id}",
+        "info",
+    )
+    return json.dumps(items)
 
 
 # ── Mac dinh cho oreka.vn ──────────────────────────────────────────────
@@ -218,6 +393,19 @@ def _extract_listing_links(html, base_url):
     for m in re.finditer(r'<a[^>]*href\s*=\s*["\'](https?://[^"\']*(?:product|san-pham)[^"\']*)["\']', html, re.IGNORECASE):
         links.add(m.group(1))
     return list(links)
+
+
+def _extract_oreka_listing_links(html, base_url):
+    """Lay URL chi tiet san pham Oreka: /mua-ban-*/...--detail/<product_id>."""
+    links = set()
+    pattern = re.compile(
+        r'''["']((?:https?://[^"']+)?/mua-ban(?:-[^/"']+)?/[^"']*?--detail/\d+(?:\?[^"']*)?)["']''',
+        re.IGNORECASE,
+    )
+    for match in pattern.finditer(unescape(html)):
+        href = match.group(1)
+        links.add(urllib.parse.urljoin(base_url.rstrip("/") + "/", href))
+    return links
 
 
 def _extract_total_pages(html):
