@@ -772,17 +772,24 @@ fn cdp_evaluate_js(ws: &mut WsStream, expression: &str) -> Result<String, String
         "method": "Runtime.evaluate",
         "params": {
             "expression": expression,
-            "returnByValue": true
+            "returnByValue": true,
+            "awaitPromise": true
         }
     });
     let result = send_cdp_msg(ws, &msg)?;
     if let Some(error) = result.get("error") {
         return Err(format!("CDP JS error: {}", error));
     }
-    result["result"]["result"]["value"]
-        .as_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| "CDP evaluate returned non-string".into())
+    let res_obj = &result["result"]["result"];
+    if let Some(val) = res_obj.get("value") {
+        if val.is_string() {
+            Ok(val.as_str().unwrap().to_string())
+        } else {
+            Ok(val.to_string())
+        }
+    } else {
+        Err("CDP evaluate returned no value".into())
+    }
 }
 
 /// Fetch URL via CDP (Chrome DevTools Protocol) — keeps Chrome alive after fetch.
@@ -791,6 +798,7 @@ pub fn fetch_via_cdp(
     url: &str,
     profile: &ClientProfile,
     wait_for_selector: Option<&str>,
+    wait_for_content: Option<&str>,
     wait_timeout_ms: Option<u64>,
 ) -> (CrawlResult, Option<ChromeSession>) {
     debug_log!("[fetch_via_cdp] Ensuring Chrome is alive for URL: {}", url);
@@ -972,22 +980,39 @@ pub fn fetch_via_cdp(
         debug_log!("[fetch_via_cdp] Waiting for selector: {}", selector);
         let js = format!(
             "new Promise(resolve => {{ \
-                const el = document.querySelector('{}'); \
-                if (el) {{ resolve(true); return; }} \
+                const check = () => document.querySelector('{}'); \
+                if (check()) {{ resolve(true); return; }} \
                 const observer = new MutationObserver(() => {{ \
-                    if (document.querySelector('{}')) {{ \
-                        observer.disconnect(); resolve(true); \
-                    }} \
+                    if (check()) {{ observer.disconnect(); resolve(true); }} \
                 }}); \
-                observer.observe(document.body, {{ childList: true, subtree: true }}); \
-                setTimeout(() => resolve(false), {}); \
+                observer.observe(document.documentElement, {{ childList: true, subtree: true }}); \
+                setTimeout(() => {{ observer.disconnect(); resolve(false); }}, {}); \
             }})",
-            selector.replace('\\', "\\\\").replace('\'', "\\'"),
             selector.replace('\\', "\\\\").replace('\'', "\\'"),
             wait_timeout_ms.unwrap_or(10000)
         );
         let _ = cdp_evaluate_js(&mut ws, &js);
         debug_log!("[fetch_via_cdp] Selector wait done");
+    }
+
+    // Wait for content if configured
+    if let Some(content) = wait_for_content {
+        debug_log!("[fetch_via_cdp] Waiting for content: {}", content);
+        let js = format!(
+            "new Promise(resolve => {{ \
+                const check = () => document.body && document.body.innerText.includes('{}'); \
+                if (check()) {{ resolve(true); return; }} \
+                const observer = new MutationObserver(() => {{ \
+                    if (check()) {{ observer.disconnect(); resolve(true); }} \
+                }}); \
+                observer.observe(document.documentElement, {{ childList: true, subtree: true, characterData: true }}); \
+                setTimeout(() => {{ observer.disconnect(); resolve(false); }}, {}); \
+            }})",
+            content.replace('\\', "\\\\").replace('\'', "\\'"),
+            wait_timeout_ms.unwrap_or(10000)
+        );
+        let _ = cdp_evaluate_js(&mut ws, &js);
+        debug_log!("[fetch_via_cdp] Content wait done");
     }
 
     // Get full HTML
@@ -1264,30 +1289,18 @@ pub async fn fetch_with_client(
     wait_timeout_ms: Option<u64>,
 ) -> CrawlResult {
     let result = match profile.client_type.as_str() {
-        "chrome" => tokio::task::spawn_blocking({
-            let url = url.to_string();
-            let profile = profile.clone();
-            let selector = wait_for_selector.map(|s| s.to_string());
-            let content = wait_for_content.map(|c| c.to_string());
-            move || {
-                fetch_chrome_sync(
-                    &url,
-                    &profile,
-                    selector.as_deref(),
-                    content.as_deref(),
-                    wait_timeout_ms,
-                )
-            }
-        })
-        .await
-        .unwrap_or_else(|e| CrawlResult {
-            url: url.to_string(),
-            status: 0,
-            html: None,
-            text: None,
-            extracted: None,
-            error: Some(format!("Chrome task failed: {}", e)),
-        }),
+        "chrome" | "cdp" => {
+            let (res, _) = fetch_with_client_cdp(
+                url,
+                profile,
+                None, // Extract rules will be applied below
+                wait_for_selector,
+                wait_for_content,
+                wait_timeout_ms,
+            )
+            .await;
+            res
+        }
         _ => fetch_reqwest(url, profile).await,
     };
 
@@ -1312,14 +1325,24 @@ pub async fn fetch_with_client_cdp(
     profile: &ClientProfile,
     extract_rules: Option<Vec<ExtractRule>>,
     wait_for_selector: Option<&str>,
+    wait_for_content: Option<&str>,
     wait_timeout_ms: Option<u64>,
 ) -> (CrawlResult, Option<ChromeSession>) {
     let (mut result, session) = tokio::task::spawn_blocking({
         let url = url.to_string();
         let profile = profile.clone();
         let selector = wait_for_selector.map(|s| s.to_string());
+        let content = wait_for_content.map(|c| c.to_string());
         let timeout = wait_timeout_ms;
-        move || fetch_via_cdp(&url, &profile, selector.as_deref(), timeout)
+        move || {
+            fetch_via_cdp(
+                &url,
+                &profile,
+                selector.as_deref(),
+                content.as_deref(),
+                timeout,
+            )
+        }
     })
     .await
     .unwrap_or_else(|e| {

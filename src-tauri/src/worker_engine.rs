@@ -292,6 +292,7 @@ impl WorkerEngine {
                 profile,
                 profile.wait_for_selector.as_deref(),
                 None,
+                None,
             );
             return result.html.ok_or_else(|| {
                 result

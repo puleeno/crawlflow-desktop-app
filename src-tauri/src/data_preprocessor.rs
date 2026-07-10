@@ -173,7 +173,11 @@ impl DataPreprocessor {
         config: &PreprocessorConfig,
     ) -> PreprocessorResult {
         // If preprocessor has custom client settings, re-fetch with that client
-        if config.client_type.is_some() || config.client_timeout_secs.is_some() {
+        if config.client_type.is_some()
+            || config.client_timeout_secs.is_some()
+            || config.wait_for_selector.is_some()
+            || config.wait_for_content.is_some()
+        {
             if let Some(refreshed_data) = Self::refetch_with_client(source_url, config) {
                 return Self::process_internal(&refreshed_data, source_url, config);
             }
@@ -196,7 +200,12 @@ impl DataPreprocessor {
         };
 
         let result = rt.block_on(request_clients::fetch_with_client(
-            source_url, &profile, None, None, None, None,
+            source_url,
+            &profile,
+            None,
+            config.wait_for_selector.as_deref(),
+            config.wait_for_content.as_deref(),
+            config.wait_timeout_ms,
         ));
         result.html
     }

@@ -42,8 +42,6 @@ mod tests {
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS project_settings"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS nodes"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS edges"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS crawl_data"));
-        assert!(sql.contains("CREATE TABLE IF NOT EXISTS crawl_logs"));
     }
 
     #[test]
@@ -53,7 +51,6 @@ mod tests {
         assert!(sql.contains("CREATE INDEX IF NOT EXISTS idx_nodes_type"));
         assert!(sql.contains("CREATE INDEX IF NOT EXISTS idx_edges_source"));
         assert!(sql.contains("CREATE INDEX IF NOT EXISTS idx_edges_target"));
-        assert!(sql.contains("CREATE INDEX IF NOT EXISTS idx_crawl_data_field"));
     }
 
     #[test]
@@ -69,15 +66,13 @@ mod tests {
     }
 
     #[test]
-    fn test_crawl_data_columns() {
-        let migrations = get_project_migrations();
+    fn test_raw_items_columns() {
+        let migrations = get_project_migrations_v2();
         let sql = &migrations[0].sql;
-        assert!(sql.contains("source_url TEXT"));
-        assert!(sql.contains("field_name TEXT NOT NULL"));
-        assert!(sql.contains("field_value TEXT"));
-        assert!(sql.contains("raw_data TEXT"));
-        assert!(sql.contains("node_id TEXT"));
-        assert!(sql.contains("extracted_at TEXT"));
+        assert!(sql.contains("source_url TEXT NOT NULL"));
+        assert!(sql.contains("item_type TEXT NOT NULL DEFAULT 'url'"));
+        assert!(sql.contains("item_hash TEXT NOT NULL"));
+        assert!(sql.contains("raw_content TEXT"));
     }
 
     #[test]
@@ -143,11 +138,10 @@ pub fn get_master_migrations() -> Vec<Migration> {
 
 #[allow(dead_code)]
 pub fn get_project_migrations() -> Vec<Migration> {
-    vec![
-        Migration {
-            version: 1,
-            description: "create project database tables",
-            sql: "
+    vec![Migration {
+        version: 1,
+        description: "create project database tables",
+        sql: "
                 CREATE TABLE IF NOT EXISTS project_settings (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
@@ -186,17 +180,15 @@ pub fn get_project_migrations() -> Vec<Migration> {
                 CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source);
                 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target);
             ",
-            kind: MigrationKind::Up,
-        },
-    ]
+        kind: MigrationKind::Up,
+    }]
 }
 
 pub fn get_project_migrations_v2() -> Vec<Migration> {
-    vec![
-        Migration {
-            version: 2,
-            description: "create raw_items and processing_log tables",
-            sql: "
+    vec![Migration {
+        version: 2,
+        description: "create raw_items and processing_log tables",
+        sql: "
                 CREATE TABLE IF NOT EXISTS raw_items (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_url TEXT NOT NULL,
@@ -234,7 +226,6 @@ pub fn get_project_migrations_v2() -> Vec<Migration> {
                 CREATE INDEX IF NOT EXISTS idx_processing_log_item ON processing_log(item_id);
                 CREATE INDEX IF NOT EXISTS idx_processing_log_worker ON processing_log(worker_id);
             ",
-            kind: MigrationKind::Up,
-        },
-    ]
+        kind: MigrationKind::Up,
+    }]
 }
