@@ -43,8 +43,42 @@ import json
 import time
 import os
 import re
+import urllib.parse
 from datetime import datetime
 from html.parser import HTMLParser
+
+
+def _add_page_to_url(url, page_param, page_num):
+    parsed = urllib.parse.urlparse(url)
+    qd = urllib.parse.parse_qs(parsed.query)
+    qd[page_param] = [str(page_num)]
+    new_query = urllib.parse.urlencode(qd, doseq=True)
+    return urllib.parse.urlunparse((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        parsed.params,
+        new_query,
+        parsed.fragment
+    ))
+
+
+def find_store_id(data):
+    if isinstance(data, dict):
+        if "store" in data and isinstance(data["store"], dict) and "id" in data["store"]:
+            return data["store"]["id"]
+        if "storeId" in data:
+            return data["storeId"]
+        for val in data.values():
+            res = find_store_id(val)
+            if res:
+                return res
+    elif isinstance(data, list):
+        for val in data:
+            res = find_store_id(val)
+            if res:
+                return res
+    return None
 
 
 # ── Mac dinh cho oreka.vn ──────────────────────────────────────────────
@@ -370,6 +404,51 @@ def fetch_data(config_json):
     base_url = re.match(r'(https?://[^/]+)', shop_url)
     base = base_url.group(1) if base_url else shop_url
 
+    # Check and rewrite store URL to MUABAN search page if store/ URL is passed
+    if "/store/" in shop_url:
+        crawlflow.log(f"[OrekaShop] Kiem tra URL tin cua store de lay storeId: {shop_url}", "info")
+        try:
+            raw = crawlflow.fetch_url(shop_url, None)
+            result = json.loads(raw) if isinstance(raw, str) else raw
+            if result.get("status") == 200:
+                html_body = result.get("body", "")
+                
+                # Dynamic storeId extraction
+                store_id = None
+                
+                # Check NEXT_DATA script tag
+                next_data_match = re.search(
+                    r'<script\s+id=["\']__NEXT_DATA__["\']\s+type=["\']application/json["\'][^>]*>(.*?)</script>',
+                    html_body,
+                    re.DOTALL
+                )
+                if next_data_match:
+                    try:
+                        next_data = json.loads(next_data_match.group(1))
+                        store_id = find_store_id(next_data)
+                    except Exception as e:
+                        crawlflow.log(f"[OrekaShop] Failed to parse __NEXT_DATA__: {e}", "warn")
+                
+                # Regex fallback
+                if not store_id:
+                    store_id_match = re.search(r'"storeId"\s*:\s*["\']([^"\']+)["\']', html_body)
+                    if store_id_match:
+                        store_id = store_id_match.group(1).strip()
+                    else:
+                        store_id_match = re.search(r'"store"\s*:\s*\{\s*"id"\s*:\s*["\']([^"\']+)["\']', html_body)
+                        if store_id_match:
+                            store_id = store_id_match.group(1).strip()
+                
+                if store_id:
+                    shop_url = f"{base.rstrip('/')}/mua-ban?storeId={store_id}&sort=createdAt&order=desc"
+                    crawlflow.log(f"[OrekaShop] Chuyen doi URL cua store thanh: {shop_url}", "info")
+                else:
+                    crawlflow.log("[OrekaShop] Khong tim thay storeId tu page HTML. Tiep tuc voi URL goc.", "warn")
+            else:
+                crawlflow.log(f"[OrekaShop] Web request to store page returned status {result.get('status')}", "warn")
+        except Exception as e:
+            crawlflow.log(f"[OrekaShop] Loi khi lay storeId tu store page: {e}", "error")
+
     # Khoi tao progress
     started_at = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -380,7 +459,7 @@ def fetch_data(config_json):
     crawlflow.log(f"[OrekaShop] Bat dau crawl shop: {shop_url}", "info")
 
     for page in range(1, max_pages + 1):
-        page_url = f"{shop_url.rstrip('?')}?{selectors['page_param']}={page}" if page > 1 else shop_url
+        page_url = _add_page_to_url(shop_url, selectors['page_param'], page) if page > 1 else shop_url
 
         crawlflow.log(f"[OrekaShop] Dang crawl trang {page}/{total_pages_estimated}: {page_url}", "info")
 
