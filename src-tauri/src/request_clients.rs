@@ -368,7 +368,6 @@ const timeout = {};
     let headless = is_global_headless_enabled();
     cmd.args([
         "--disable-gpu",
-        "--no-sandbox",
         "--disable-dev-shm-usage",
         "--disable-extensions",
         "--disable-background-networking",
@@ -380,6 +379,9 @@ const timeout = {};
         "--hide-scrollbars",
         "--disable-blink-features=AutomationControlled",
     ]);
+    // --no-sandbox is only needed on Linux (root/Docker); on macOS it triggers a warning
+    #[cfg(target_os = "linux")]
+    cmd.arg("--no-sandbox");
 
     if headless {
         cmd.arg("--headless=new");
@@ -582,7 +584,6 @@ pub fn launch_chrome_cdp(
     debug_log!("Headless mode: true (forced for CDP)");
 
     cmd.args([
-        "--no-sandbox",
         "--disable-gpu",
         "--disable-software-rasterizer",
         "--disable-dev-shm-usage",
@@ -595,6 +596,9 @@ pub fn launch_chrome_cdp(
         "--ignore-certificate-errors",
         "--disable-features=TranslateUI,ChromeWhatsNewUI",
     ]);
+    // --no-sandbox causes a visible warning banner on macOS; only add on Linux
+    #[cfg(target_os = "linux")]
+    cmd.arg("--no-sandbox");
 
     if is_global_headless_enabled() {
         cmd.arg("--headless=new");

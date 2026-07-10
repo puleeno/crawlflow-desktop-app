@@ -626,7 +626,11 @@ pub async fn execute_repository_pipeline(
     };
 
     // ── Phase 1a: Check for Crawled Items & Data Fetching ───────────
-    log_manager.info(project_id, "pipeline", "Phase 1a: Checking for existing crawled items");
+    log_manager.info(
+        project_id,
+        "pipeline",
+        "Phase 1a: Checking for existing crawled items",
+    );
 
     struct FetchedData {
         source_url: String,
@@ -637,7 +641,7 @@ pub async fn execute_repository_pipeline(
 
     let mut total_ingested = 0i64;
     let mut fetched_sources: Vec<FetchedData> = Vec::new();
-    
+
     // First check if we already have crawled items
     let crawled_items = match repo.get_crawled_items() {
         Ok(items) => items,
@@ -656,9 +660,12 @@ pub async fn execute_repository_pipeline(
     };
     if !crawled_items.is_empty() {
         log_manager.info(
-            project_id, 
-            "fetching", 
-            &format!("Found {} existing crawled items, using those instead of fetching", crawled_items.len())
+            project_id,
+            "fetching",
+            &format!(
+                "Found {} existing crawled items, using those instead of fetching",
+                crawled_items.len()
+            ),
         );
         for item in crawled_items {
             if let Some(raw_content) = item.raw_content {
@@ -672,166 +679,204 @@ pub async fn execute_repository_pipeline(
         }
     } else {
         // No crawled items, proceed with fetching
-        log_manager.info(project_id, "pipeline", "No existing crawled items found, starting data fetching");
-        for node in &config.nodes {
-        if is_cancelled() {
-            log_manager.info(
-                project_id,
-                "pipeline",
-                "Pipeline cancelled during data fetching",
-            );
-            return RepositoryPipelineResult {
-                success: false,
-                phase: "fetching".into(),
-                ingested: total_ingested,
-                matched: 0,
-                processed: 0,
-                failed: 0,
-                actions: vec![],
-                error: Some("Cancelled by user".into()),
-            };
-        }
-
-        if !matches!(
-            node.node_type.as_str(),
-            "start" | "dataSource" | "rssSource"
-        ) {
-            continue;
-        }
-        let node_label = node
-            .data
-            .get("label")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&node.id);
-        let source_type = node
-            .data
-            .get("sourceType")
-            .and_then(|v| v.as_str())
-            .unwrap_or("url");
-        let source_value = node
-            .data
-            .get("sourceValue")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
         log_manager.info(
             project_id,
-            "fetching",
-            &format!(
-                "[node={}] Processing node type={}, sourceType={}",
-                node_label, node.node_type, source_type
-            ),
+            "pipeline",
+            "No existing crawled items found, starting data fetching",
         );
-
-        match source_type {
-            "url" | "api" => {
-                let url = source_value.to_string();
-                let profile = extract_client_profile(&node.data);
-                let wait_for_selector = node.data.get("waitForSelector").and_then(|v| v.as_str());
-                let wait_for_content = node.data.get("waitForContent").and_then(|v| v.as_str());
-                let wait_timeout_ms = node.data.get("waitTimeoutMs").and_then(|v| v.as_u64());
-
-                // Check for pagination config
-                let pagination_config = extract_pagination_config(&node.data);
-                let has_pagination = pagination_config.is_some();
-
-                if has_pagination {
-                    log_manager.info(
-                        project_id,
-                        "fetching",
-                        &format!("[node={}] Pagination enabled", node_label),
-                    );
-                }
-
+        for node in &config.nodes {
+            if is_cancelled() {
                 log_manager.info(
                     project_id,
-                    "fetching",
-                    &format!(
-                        "[node={}] Fetching: {} (client: {})",
-                        node_label, url, profile.client_type
-                    ),
+                    "pipeline",
+                    "Pipeline cancelled during data fetching",
                 );
-
-                let fetch_start = std::time::Instant::now();
-                
-                // Execute pagination if configured, otherwise single fetch
-                let htmls = if let Some(pag_config) = pagination_config {
-                    match execute_pagination_in_pipeline(
-                        &url,
-                        &pag_config,
-                        &profile,
-                        project_id,
-                        &log_manager,
-                        node_label,
-                    ).await {
-                        Ok(htmls) => {
-                            log_manager.info(
-                                project_id,
-                                "fetching",
-                                &format!("[node={}] Pagination completed: {} pages fetched", node_label, htmls.len()),
-                            );
-                            htmls
-                        }
-                        Err(e) => {
-                            log_manager.error(project_id, "fetching", &format!("Pagination failed: {}, falling back to single fetch", e));
-                            // Fallback to single fetch
-                            let (result, _) = fetch_single_page(&url, &profile, wait_for_selector, wait_for_content, wait_timeout_ms, project_id, &log_manager, node_label).await;
-                            vec![result.unwrap_or_default()]
-                        }
-                    }
-                } else {
-                    let (result, _) = fetch_single_page(&url, &profile, wait_for_selector, wait_for_content, wait_timeout_ms, project_id, &log_manager, node_label).await;
-                    vec![result.unwrap_or_default()]
+                return RepositoryPipelineResult {
+                    success: false,
+                    phase: "fetching".into(),
+                    ingested: total_ingested,
+                    matched: 0,
+                    processed: 0,
+                    failed: 0,
+                    actions: vec![],
+                    error: Some("Cancelled by user".into()),
                 };
+            }
 
-                let fetch_elapsed = fetch_start.elapsed();
+            if !matches!(
+                node.node_type.as_str(),
+                "start" | "dataSource" | "rssSource"
+            ) {
+                continue;
+            }
+            let node_label = node
+                .data
+                .get("label")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&node.id);
+            let source_type = node
+                .data
+                .get("sourceType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("url");
+            let source_value = node
+                .data
+                .get("sourceValue")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
 
-                log_manager.info(
-                    project_id,
-                    "fetching",
-                    &format!(
-                        "[node={}] Fetch completed in {:.1}s",
-                        node_label,
-                        fetch_elapsed.as_secs_f64()
-                    ),
-                );
+            log_manager.info(
+                project_id,
+                "fetching",
+                &format!(
+                    "[node={}] Processing node type={}, sourceType={}",
+                    node_label, node.node_type, source_type
+                ),
+            );
 
-                // Combine all HTMLs from pagination into single data for preprocessing
-                let combined_html = htmls.join("\n");
+            match source_type {
+                "url" | "api" => {
+                    let url = source_value.to_string();
+                    let profile = extract_client_profile(&node.data);
+                    let wait_for_selector =
+                        node.data.get("waitForSelector").and_then(|v| v.as_str());
+                    let wait_for_content = node.data.get("waitForContent").and_then(|v| v.as_str());
+                    let wait_timeout_ms = node.data.get("waitTimeoutMs").and_then(|v| v.as_u64());
 
-                if !combined_html.is_empty() {
+                    // Check for pagination config
+                    let pagination_config = extract_pagination_config(&node.data);
+                    let has_pagination = pagination_config.is_some();
+
+                    if has_pagination {
+                        log_manager.info(
+                            project_id,
+                            "fetching",
+                            &format!("[node={}] Pagination enabled", node_label),
+                        );
+                    }
+
                     log_manager.info(
                         project_id,
                         "fetching",
-                        &format!("Fetched {} ({} bytes)", source_value, combined_html.len()),
+                        &format!(
+                            "[node={}] Fetching: {} (client: {})",
+                            node_label, url, profile.client_type
+                        ),
                     );
-                    fetched_sources.push(FetchedData {
-                        source_url: source_value.to_string(),
-                        raw_data: combined_html,
-                        input_type: "html".into(),
-                        chrome_session: None,
-                    });
+
+                    let fetch_start = std::time::Instant::now();
+
+                    // Execute pagination if configured, otherwise single fetch
+                    let htmls = if let Some(pag_config) = pagination_config {
+                        match execute_pagination_in_pipeline(
+                            &url,
+                            &pag_config,
+                            &profile,
+                            project_id,
+                            &log_manager,
+                            node_label,
+                        )
+                        .await
+                        {
+                            Ok(htmls) => {
+                                log_manager.info(
+                                    project_id,
+                                    "fetching",
+                                    &format!(
+                                        "[node={}] Pagination completed: {} pages fetched",
+                                        node_label,
+                                        htmls.len()
+                                    ),
+                                );
+                                htmls
+                            }
+                            Err(e) => {
+                                log_manager.error(
+                                    project_id,
+                                    "fetching",
+                                    &format!(
+                                        "Pagination failed: {}, falling back to single fetch",
+                                        e
+                                    ),
+                                );
+                                // Fallback to single fetch
+                                let (result, _) = fetch_single_page(
+                                    &url,
+                                    &profile,
+                                    wait_for_selector,
+                                    wait_for_content,
+                                    wait_timeout_ms,
+                                    project_id,
+                                    &log_manager,
+                                    node_label,
+                                )
+                                .await;
+                                vec![result.unwrap_or_default()]
+                            }
+                        }
+                    } else {
+                        let (result, _) = fetch_single_page(
+                            &url,
+                            &profile,
+                            wait_for_selector,
+                            wait_for_content,
+                            wait_timeout_ms,
+                            project_id,
+                            &log_manager,
+                            node_label,
+                        )
+                        .await;
+                        vec![result.unwrap_or_default()]
+                    };
+
+                    let fetch_elapsed = fetch_start.elapsed();
+
+                    log_manager.info(
+                        project_id,
+                        "fetching",
+                        &format!(
+                            "[node={}] Fetch completed in {:.1}s",
+                            node_label,
+                            fetch_elapsed.as_secs_f64()
+                        ),
+                    );
+
+                    // Combine all HTMLs from pagination into single data for preprocessing
+                    let combined_html = htmls.join("\n");
+
+                    if !combined_html.is_empty() {
+                        log_manager.info(
+                            project_id,
+                            "fetching",
+                            &format!("Fetched {} ({} bytes)", source_value, combined_html.len()),
+                        );
+                        fetched_sources.push(FetchedData {
+                            source_url: source_value.to_string(),
+                            raw_data: combined_html,
+                            input_type: "html".into(),
+                            chrome_session: None,
+                        });
+                    }
+                }
+                "csv" | "json" | "xml" | "text" => {
+                    if let Ok(content) = std::fs::read_to_string(source_value) {
+                        fetched_sources.push(FetchedData {
+                            source_url: source_value.to_string(),
+                            raw_data: content,
+                            input_type: source_type.to_string(),
+                            chrome_session: None,
+                        });
+                    }
+                }
+                _ => {
+                    log_manager.warn(
+                        project_id,
+                        "fetching",
+                        &format!("Unknown source type: {}", source_type),
+                    );
                 }
             }
-            "csv" | "json" | "xml" | "text" => {
-                if let Ok(content) = std::fs::read_to_string(source_value) {
-                    fetched_sources.push(FetchedData {
-                        source_url: source_value.to_string(),
-                        raw_data: content,
-                        input_type: source_type.to_string(),
-                        chrome_session: None,
-                    });
-                }
-            }
-            _ => {
-                log_manager.warn(
-                    project_id,
-                    "fetching",
-                    &format!("Unknown source type: {}", source_type),
-                );
-            }
-        }
-    } // end of for loop over nodes
+        } // end of for loop over nodes
     } // end of else block (when no crawled items found)
 
     // ── Save raw HTML to DB for debug ────────────────────────
@@ -843,7 +888,11 @@ pub async fn execute_repository_pipeline(
                 &format!("Saving raw source HTML ({} bytes) to DB", f.raw_data.len()),
             );
             if let Err(e) = repo.save_raw_source(&f.source_url, &f.raw_data) {
-                log_manager.warn(project_id, "fetching", &format!("Failed to save raw source: {}", e));
+                log_manager.warn(
+                    project_id,
+                    "fetching",
+                    &format!("Failed to save raw source: {}", e),
+                );
             }
         }
     }
@@ -1180,12 +1229,20 @@ async fn fetch_single_page(
         wait_for_selector,
         wait_for_content,
         wait_timeout_ms,
-    ).await;
+    )
+    .await;
 
     // Fallback to HTTP client if chrome fails
     if crawl_result.error.is_some() && profile.client_type == "chrome" {
-        log_manager.warn(project_id, "fetching",
-            &format!("[node={}] Chrome failed: {}, trying HTTP client", node_label, crawl_result.error.as_ref().unwrap()));
+        log_manager.warn(
+            project_id,
+            "fetching",
+            &format!(
+                "[node={}] Chrome failed: {}, trying HTTP client",
+                node_label,
+                crawl_result.error.as_ref().unwrap()
+            ),
+        );
         let http_profile = crate::models::ClientProfile {
             client_type: "reqwest".to_string(),
             timeout_secs: profile.timeout_secs,
@@ -1194,28 +1251,40 @@ async fn fetch_single_page(
             headers: profile.headers.clone(),
             ..Default::default()
         };
-        crawl_result = request_clients::fetch_with_client(
-            url,
-            &http_profile,
-            None,
-            None,
-            None,
-            None,
-        ).await;
+        crawl_result =
+            request_clients::fetch_with_client(url, &http_profile, None, None, None, None).await;
     }
 
     let html = if crawl_result.error.is_some() {
-        log_manager.error(project_id, "fetching",
-            &format!("[node={}] Fetch failed: {}", node_label, crawl_result.error.as_ref().unwrap()));
+        log_manager.error(
+            project_id,
+            "fetching",
+            &format!(
+                "[node={}] Fetch failed: {}",
+                node_label,
+                crawl_result.error.as_ref().unwrap()
+            ),
+        );
         None
     } else {
         let html = crawl_result.html.unwrap_or_default();
-        log_manager.info(project_id, "fetching",
-            &format!("[node={}] Fetched {} ({} bytes)", node_label, url, html.len()));
+        log_manager.info(
+            project_id,
+            "fetching",
+            &format!(
+                "[node={}] Fetched {} ({} bytes)",
+                node_label,
+                url,
+                html.len()
+            ),
+        );
         // Log HTML snippet (first 500 chars)
         let html_snippet = html.chars().take(500).collect::<String>();
-        log_manager.debug(project_id, "fetching",
-            &format!("[node={}] HTML snippet: {}", node_label, html_snippet));
+        log_manager.debug(
+            project_id,
+            "fetching",
+            &format!("[node={}] HTML snippet: {}", node_label, html_snippet),
+        );
         Some(html)
     };
 
@@ -1230,8 +1299,8 @@ async fn execute_pagination_in_pipeline(
     log_manager: &crate::logs::LogManager,
     node_label: &str,
 ) -> Result<Vec<String>, String> {
-    use crate::pagination::{PaginationStrategy, UrlParameterPagination, execute_pagination};
-    
+    use crate::pagination::{execute_pagination, PaginationStrategy, UrlParameterPagination};
+
     let strategy: Box<dyn PaginationStrategy> = match config.pagination_type {
         crate::models::PaginationType::UrlParameter => {
             Box::new(UrlParameterPagination::new(config.clone()))
@@ -1241,8 +1310,14 @@ async fn execute_pagination_in_pipeline(
         }
     };
 
-    log_manager.info(project_id, "fetching",
-        &format!("[node={}] Starting pagination with type: {:?}", node_label, config.pagination_type));
+    log_manager.info(
+        project_id,
+        "fetching",
+        &format!(
+            "[node={}] Starting pagination with type: {:?}",
+            node_label, config.pagination_type
+        ),
+    );
 
     execute_pagination(base_url, config, profile, strategy.as_ref()).await
 }
@@ -1408,11 +1483,90 @@ fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
             }
         }
 
+        let client_type = node
+            .data
+            .get("clientType")
+            .or_else(|| node.data.get("client_type"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("reqwest")
+            .to_string();
+
+        let timeout_secs = node
+            .data
+            .get("clientTimeoutSecs")
+            .or_else(|| node.data.get("client_timeout_secs"))
+            .or_else(|| node.data.get("timeout_secs"))
+            .and_then(|v| v.as_u64())
+            .or(Some(30));
+
+        let headless = node
+            .data
+            .get("clientHeadless")
+            .or_else(|| node.data.get("client_headless"))
+            .or_else(|| node.data.get("headless"))
+            .and_then(|v| v.as_bool())
+            .or(Some(true));
+
+        let wait_for_selector = node
+            .data
+            .get("waitForSelector")
+            .or_else(|| node.data.get("wait_for_selector"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let client_profile = crate::models::ClientProfile {
+            client_type,
+            timeout_secs,
+            headless,
+            wait_for_selector,
+            ..Default::default()
+        };
+
+        let extract_rules: Vec<crate::models::ExtractRule> = node
+            .data
+            .get("extractRules")
+            .or_else(|| node.data.get("parserRules"))
+            .or_else(|| node.data.get("rules"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|r| {
+                        let field = r
+                            .get("field")
+                            .or_else(|| r.get("name"))
+                            .and_then(|v| v.as_str())?
+                            .to_string();
+                        let selector = r
+                            .get("selector")
+                            .or_else(|| r.get("value"))
+                            .and_then(|v| v.as_str())?
+                            .to_string();
+                        let attribute = r
+                            .get("attribute")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        let extract_multiple = r
+                            .get("extractMultiple")
+                            .or_else(|| r.get("extract_multiple"))
+                            .and_then(|v| v.as_bool());
+                        Some(crate::models::ExtractRule {
+                            field,
+                            selector,
+                            attribute,
+                            extract_multiple,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         workers.push(WorkerDef {
             id: node.id.clone(),
             name: node.label.clone().unwrap_or_else(|| node.id.clone()),
             matching_rules,
             processor_chain,
+            client_profile: Some(client_profile),
+            extract_rules: Some(extract_rules),
         });
     }
 

@@ -39,10 +39,30 @@ interface SettingsPanelProps {
 }
 
 const commonInputClasses = "w-full p-2 bg-white text-gray-900 border border-slate-300 rounded-md shadow-sm placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-slate-100 disabled:text-gray-500";
+const commonSelectClasses = "w-full pl-3 pr-9 py-2 bg-white text-gray-900 border border-slate-300 rounded-md shadow-sm appearance-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-slate-100 disabled:text-gray-500 cursor-pointer";
+const smallSelectClasses = "w-full pl-2.5 pr-8 py-1.5 text-sm bg-white text-gray-900 border border-slate-300 rounded-md shadow-sm appearance-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 cursor-pointer disabled:bg-slate-100 disabled:text-gray-500";
 const smallInputClasses = "w-full p-1.5 text-sm bg-white text-gray-900 border border-slate-300 rounded-md shadow-sm placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500";
 const commonLabelClasses = "block text-sm font-medium text-gray-700 mb-1";
 const commonButtonClasses = "w-full p-2 rounded-md font-semibold text-white transition-colors";
 const smallButtonClasses = "px-2.5 py-1.5 text-sm rounded-md font-semibold text-white transition-colors";
+
+interface StyledSelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
+    small?: boolean;
+}
+
+const StyledSelect: React.FC<StyledSelectProps> = ({ className, small, ...props }) => (
+    <div className="relative w-full">
+        <select
+            {...props}
+            className={`${small ? smallSelectClasses : commonSelectClasses} ${className ?? ''}`}
+        />
+        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2.5 text-gray-400">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+            </svg>
+        </div>
+    </div>
+);
 
 const CollapsibleSection: React.FC<{ title: string; children: React.ReactNode; defaultOpen?: boolean }> = ({ title, children, defaultOpen = false }) => {
     const [isOpen, setIsOpen] = useState(defaultOpen);
@@ -257,10 +277,10 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
                 <div className="space-y-4">
                     <div>
                         <label className={commonLabelClasses}>Client Type</label>
-                        <select value={config.clientType} onChange={e => updateHttpClient({ clientType: e.target.value as HttpClientConfig['clientType'] })} className={commonInputClasses}>
+                        <StyledSelect value={config.clientType} onChange={e => updateHttpClient({ clientType: e.target.value as HttpClientConfig['clientType'] })}>
                             <option value="reqwest">Built-in (Reqwest)</option>
                             <option value="chrome">Headless Chrome</option>
-                        </select>
+                        </StyledSelect>
                     </div>
                     <div>
                         <label className={commonLabelClasses}>User-Agent</label>
@@ -327,19 +347,19 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
                 <CollapsibleSection title="Authentication" defaultOpen>
                     <div className="space-y-3">
                         <label className={commonLabelClasses}>Auth Type</label>
-                        <select value={settings.authType} onChange={(e) => handleNestedUpdate('apiSettings', { authType: e.target.value as any, authDetails: {} })} className={commonInputClasses}>
+                        <StyledSelect value={settings.authType} onChange={(e) => handleNestedUpdate('apiSettings', { authType: e.target.value as any, authDetails: {} })}>
                             <option value="none">None</option>
                             <option value="api-key">API Key</option>
                             <option value="bearer">Bearer Token</option>
                             <option value="basic">Basic Auth</option>
-                        </select>
+                        </StyledSelect>
                         {settings.authType === 'api-key' && (
                             <div className="p-3 bg-slate-100 rounded-md space-y-3">
                                 <label className={commonLabelClasses}>Location</label>
-                                <select value={(authDetails as APIKeyAuth).location} onChange={(e) => handleNestedUpdate('apiSettings', { authDetails: { ...(authDetails as APIKeyAuth), location: e.target.value as any } })} className={commonInputClasses}>
+                                <StyledSelect value={(authDetails as APIKeyAuth).location} onChange={(e) => handleNestedUpdate('apiSettings', { authDetails: { ...(authDetails as APIKeyAuth), location: e.target.value as any } })}>
                                     <option value="header">Header</option>
                                     <option value="query">Query Parameter</option>
-                                </select>
+                                </StyledSelect>
                                 <label className={commonLabelClasses}>Key Name</label>
                                 <input type="text" value={(authDetails as APIKeyAuth).keyName || ''} onChange={e => handleNestedUpdate('apiSettings', { authDetails: { ...(authDetails as APIKeyAuth), keyName: e.target.value } })} placeholder="X-API-KEY" className={commonInputClasses} />
                                 <label className={commonLabelClasses}>Key Value</label>
@@ -365,12 +385,12 @@ const StartNodeSettings: React.FC<{ node: Node<StartNodeData>; onUpdate: (data: 
                 <CollapsibleSection title="Pagination">
                     <div className="space-y-3">
                         <label className={commonLabelClasses}>Pagination Type</label>
-                        <select value={settings.paginationType} onChange={(e) => handleNestedUpdate('apiSettings', { paginationType: e.target.value as any, paginationDetails: {} })} className={commonInputClasses}>
+                        <StyledSelect value={settings.paginationType} onChange={(e) => handleNestedUpdate('apiSettings', { paginationType: e.target.value as any, paginationDetails: {} })}>
                             <option value="none">None</option>
                             <option value="page">Page Number</option>
                             <option value="offset-limit">Offset/Limit</option>
                             <option value="next-url">Next URL Path</option>
-                        </select>
+                        </StyledSelect>
                         {settings.paginationType === 'page' && (
                             <div className="p-3 bg-slate-100 rounded-md space-y-3">
                                 <p className="text-xs text-gray-600">Use {'`{{page}}`'} tag in the API URL.</p>
@@ -769,11 +789,11 @@ const HTMLDataExtractorSettings: React.FC<{
                                 )}
                                 <div className="grid grid-cols-2 gap-2">
                                     <input type="text" placeholder="Field Name" value={rule.name} onChange={e => handleRuleChange(rule.id, 'name', e.target.value)} className={`${smallInputClasses} disabled:bg-slate-200 disabled:text-gray-600 disabled:cursor-not-allowed`} disabled={isPresetRule} title={isPresetRule ? 'Preset field names cannot be changed' : ''} />
-                                    <select value={rule.extractFrom} onChange={e => handleRuleChange(rule.id, 'extractFrom', e.target.value as ExtractFrom)} className={smallInputClasses}>
+                                    <StyledSelect value={rule.extractFrom} onChange={e => handleRuleChange(rule.id, 'extractFrom', e.target.value as ExtractFrom)} small>
                                         <option value="html-element">HTML Element</option>
                                         <option value="json-ld">JSON-LD</option>
                                         <option value="html-comment">HTML Comment</option>
-                                    </select>
+                                    </StyledSelect>
                                 </div>
                                 {rule.extractFrom === 'html-element' && (
                                     <>
@@ -802,12 +822,12 @@ const HTMLDataExtractorSettings: React.FC<{
                                                 <CursorArrowRaysIcon />
                                             </button>
                                         </div>
-                                        <select value={rule.extract || 'text'} onChange={e => handleRuleChange(rule.id, 'extract', e.target.value)} className={smallInputClasses}>
+                                        <StyledSelect value={rule.extract || 'text'} onChange={e => handleRuleChange(rule.id, 'extract', e.target.value)} small>
                                             <option value="text">Extract Text</option>
                                             <option value="attribute">Extract Attribute</option>
                                             <option value="html">Extract HTML</option>
                                             <option value="regex">Extract via Regex</option>
-                                        </select>
+                                        </StyledSelect>
                                         {rule.extract === 'attribute' && <input type="text" placeholder="Attribute Name (e.g., href)" value={rule.attribute || ''} onChange={e => handleRuleChange(rule.id, 'attribute', e.target.value)} className={smallInputClasses} />}
                                         {rule.extract === 'regex' && (
                                             <div className="grid grid-cols-3 gap-2">
@@ -1283,11 +1303,11 @@ const ProcessorNodeSettings: React.FC<{
             <h3 className="text-lg font-bold text-gray-800 border-b pb-2">Processor Settings</h3>
             <div>
                 <label className={commonLabelClasses}>Processor Type</label>
-                <select value={data.processorType} onChange={e => handleTypeChange(e.target.value as any)} className={commonInputClasses}>
+                <StyledSelect value={data.processorType} onChange={e => handleTypeChange(e.target.value as any)}>
                     {PROCESSORS.map(p => (
                         <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
-                </select>
+                </StyledSelect>
             </div>
 
             <CollapsibleSection title="Configuration" defaultOpen>
@@ -1299,20 +1319,20 @@ const ProcessorNodeSettings: React.FC<{
                             <>
                                 {data.processorType === 'save-to-database' && (
                                     <>
-                                        <select value={s.connectionType || 'mysql'} onChange={e => handleSettingsChange('connectionType', e.target.value)} className={commonInputClasses}>
+                                        <StyledSelect value={s.connectionType || 'mysql'} onChange={e => handleSettingsChange('connectionType', e.target.value)}>
                                             <option value="mysql">MySQL</option>
                                             <option value="postgresql">PostgreSQL</option>
-                                        </select>
+                                        </StyledSelect>
                                         <input type="text" placeholder="Host" value={s.host || ''} onChange={e => handleSettingsChange('host', e.target.value)} className={commonInputClasses} />
                                         <input type="text" placeholder="User" value={s.user || ''} onChange={e => handleSettingsChange('user', e.target.value)} className={commonInputClasses} />
                                         <input type="password" placeholder="Password" value={s.password || ''} onChange={e => handleSettingsChange('password', e.target.value)} className={commonInputClasses} />
                                         <input type="text" placeholder="Database" value={s.database || ''} onChange={e => handleSettingsChange('database', e.target.value)} className={commonInputClasses} />
                                         <input type="text" placeholder="Table Name" value={s.tableName || ''} onChange={e => handleSettingsChange('tableName', e.target.value)} className={commonInputClasses} />
-                                        <select value={s.conflictStrategy || 'insert'} onChange={e => handleSettingsChange('conflictStrategy', e.target.value)} className={commonInputClasses}>
+                                        <StyledSelect value={s.conflictStrategy || 'insert'} onChange={e => handleSettingsChange('conflictStrategy', e.target.value)}>
                                             <option value="insert">Insert (Fail on Duplicate)</option>
                                             <option value="upsert">Upsert (Update on Duplicate)</option>
                                             <option value="skip">Skip on Duplicate</option>
-                                        </select>
+                                        </StyledSelect>
 
                                         {renderMappingSection('autoMapColumns', 'columnMapping', 'DB Column')}
                                     </>
@@ -1320,11 +1340,11 @@ const ProcessorNodeSettings: React.FC<{
                                 {data.processorType === 'send-to-api' && (
                                     <>
                                         <input type="url" placeholder="Endpoint URL" value={s.endpointUrl || ''} onChange={e => handleSettingsChange('endpointUrl', e.target.value)} className={commonInputClasses} />
-                                        <select value={s.method || 'POST'} onChange={e => handleSettingsChange('method', e.target.value)} className={commonInputClasses}>
+                                        <StyledSelect value={s.method || 'POST'} onChange={e => handleSettingsChange('method', e.target.value)}>
                                             <option value="POST">POST</option>
                                             <option value="PUT">PUT</option>
                                             <option value="PATCH">PATCH</option>
-                                        </select>
+                                        </StyledSelect>
 
                                         {renderMappingSection('autoMapFields', 'fieldMapping', 'JSON Key')}
                                     </>
@@ -1332,11 +1352,11 @@ const ProcessorNodeSettings: React.FC<{
                                 {data.processorType === 'generate-csv-file' && (
                                     <>
                                         <input type="text" placeholder="File Name Pattern" value={s.fileName || ''} onChange={e => handleSettingsChange('fileName', e.target.value)} className={commonInputClasses} />
-                                        <select value={s.delimiter || ','} onChange={e => handleSettingsChange('delimiter', e.target.value)} className={commonInputClasses}>
+                                        <StyledSelect value={s.delimiter || ','} onChange={e => handleSettingsChange('delimiter', e.target.value)}>
                                             <option value=",">Comma (,)</option>
                                             <option value=";">Semicolon (;)</option>
                                             <option value="\t">Tab (\t)</option>
-                                        </select>
+                                        </StyledSelect>
                                         <div className="flex items-center gap-2 mt-2">
                                             <input
                                                 type="checkbox"
@@ -1416,10 +1436,10 @@ const WorkerNodeSettings: React.FC<{ node: Node<WorkerNodeData>; onUpdate: (data
                 <div className="space-y-4">
                     <div className="flex items-center gap-2 mb-2 p-3 bg-slate-50 rounded border border-slate-200">
                         <span className="text-sm text-gray-700 font-medium">Match:</span>
-                        <select value={data.detectionLogic || 'and'} onChange={e => onUpdate({ ...data, detectionLogic: e.target.value as 'and' | 'or' })} className={`${commonInputClasses} w-32 border-gray-300`}>
+                        <StyledSelect value={data.detectionLogic || 'and'} onChange={e => onUpdate({ ...data, detectionLogic: e.target.value as 'and' | 'or' })} className="w-32">
                             <option value="and">ALL</option>
                             <option value="or">ANY</option>
-                        </select>
+                        </StyledSelect>
                         <span className="text-sm text-gray-700">of the following rules:</span>
                     </div>
 
@@ -1440,13 +1460,13 @@ const WorkerNodeSettings: React.FC<{ node: Node<WorkerNodeData>; onUpdate: (data
                             <div className="space-y-4">
                                 <div>
                                     <label className={commonLabelClasses}>Rule Type</label>
-                                    <select value={rule.type} onChange={e => updateRule(rule.id, { type: e.target.value as WorkerRuleType })} className={commonInputClasses}>
+                                    <StyledSelect value={rule.type} onChange={e => updateRule(rule.id, { type: e.target.value as WorkerRuleType })}>
                                         <option value="url-format">URL Format</option>
                                         <option value="html-contains">HTML Contains</option>
                                         <option value="dom-value">DOM Element Value</option>
                                         <option value="tag-attribute">Tag Attribute</option>
                                         <option value="data-source-type">Data Source Type</option>
-                                    </select>
+                                    </StyledSelect>
                                 </div>
 
                                 {rule.type === 'url-format' && (
@@ -1470,13 +1490,13 @@ const WorkerNodeSettings: React.FC<{ node: Node<WorkerNodeData>; onUpdate: (data
                                         <div className="grid grid-cols-2 gap-3">
                                             <div>
                                                 <label className={commonLabelClasses}>Condition</label>
-                                                <select value={(rule as DOMValueRule).condition} onChange={e => updateRule(rule.id, { condition: e.target.value as RuleCondition })} className={commonInputClasses}>
+                                                <StyledSelect value={(rule as DOMValueRule).condition} onChange={e => updateRule(rule.id, { condition: e.target.value as RuleCondition })}>
                                                     <option value="exists">Exists</option>
                                                     <option value="not-exists">Not Exists</option>
                                                     <option value="contains">Contains</option>
                                                     <option value="not-contains">Not Contains</option>
                                                     <option value="matches-regex">Matches Regex</option>
-                                                </select>
+                                                </StyledSelect>
                                             </div>
                                             {['contains', 'not-contains', 'matches-regex'].includes((rule as DOMValueRule).condition) && (
                                                 <div>
@@ -1500,13 +1520,13 @@ const WorkerNodeSettings: React.FC<{ node: Node<WorkerNodeData>; onUpdate: (data
                                         <div className="grid grid-cols-2 gap-3">
                                             <div>
                                                 <label className={commonLabelClasses}>Condition</label>
-                                                <select value={(rule as TagAttributeRule).condition} onChange={e => updateRule(rule.id, { condition: e.target.value as RuleCondition })} className={commonInputClasses}>
+                                                <StyledSelect value={(rule as TagAttributeRule).condition} onChange={e => updateRule(rule.id, { condition: e.target.value as RuleCondition })}>
                                                     <option value="exists">Exists</option>
                                                     <option value="not-exists">Not Exists</option>
                                                     <option value="contains">Contains</option>
                                                     <option value="not-contains">Not Contains</option>
                                                     <option value="matches-regex">Matches Regex</option>
-                                                </select>
+                                                </StyledSelect>
                                             </div>
                                             {['contains', 'not-contains', 'matches-regex'].includes((rule as TagAttributeRule).condition) && (
                                                 <div>
@@ -1520,14 +1540,14 @@ const WorkerNodeSettings: React.FC<{ node: Node<WorkerNodeData>; onUpdate: (data
                                 {rule.type === 'data-source-type' && (
                                     <div>
                                         <label className={commonLabelClasses}>Source Type</label>
-                                        <select value={(rule as DataSourceTypeRule).sourceType || 'url'} onChange={e => updateRule(rule.id, { sourceType: e.target.value } as any)} className={commonInputClasses}>
+                                        <StyledSelect value={(rule as DataSourceTypeRule).sourceType || 'url'} onChange={e => updateRule(rule.id, { sourceType: e.target.value } as any)}>
                                             <option value="url">URL</option>
                                             <option value="api">API</option>
                                             <option value="xml">XML</option>
                                             <option value="csv">CSV</option>
                                             <option value="json">JSON</option>
                                             <option value="mysql">MySQL</option>
-                                        </select>
+                                        </StyledSelect>
                                     </div>
                                 )}
                             </div>

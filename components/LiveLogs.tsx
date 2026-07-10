@@ -148,29 +148,35 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
           <div className="flex items-center gap-2">
             <span className={`inline-block w-2.5 h-2.5 rounded-full ${statusColor} animate-pulse`} />
             <span className="text-sm font-semibold text-gray-700">Service</span>
-            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-              isRunning ? 'bg-green-100 text-green-700' :
-              isPaused ? 'bg-amber-100 text-amber-700' :
-              isError ? 'bg-red-100 text-red-700' :
-              'bg-gray-100 text-gray-600'
-            }`}>{statusLabel}</span>
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${isRunning ? 'bg-green-100 text-green-700' :
+                isPaused ? 'bg-amber-100 text-amber-700' :
+                  isError ? 'bg-red-100 text-red-700' :
+                    'bg-gray-100 text-gray-600'
+              }`}>{statusLabel}</span>
           </div>
           {serviceInfo && (
             <span className="text-xs text-gray-400">Cycle #{serviceInfo.cycle_count}</span>
           )}
         </div>
         <div className="flex items-center gap-2">
-          <select
-            value={levelFilter}
-            onChange={e => setLevelFilter(e.target.value)}
-            className="text-xs border border-slate-300 rounded-lg px-2 py-1 bg-white text-gray-700"
-          >
-            <option value="all">All Levels</option>
-            <option value="error">Error</option>
-            <option value="warn">Warning</option>
-            <option value="info">Info</option>
-            <option value="debug">Debug</option>
-          </select>
+          <div className="relative">
+            <select
+              value={levelFilter}
+              onChange={e => setLevelFilter(e.target.value)}
+              className="text-xs border border-slate-300 rounded-lg pl-2 pr-6 py-1 bg-white text-gray-700 appearance-none cursor-pointer"
+            >
+              <option value="all">All Levels</option>
+              <option value="error">Error</option>
+              <option value="warn">Warning</option>
+              <option value="info">Info</option>
+              <option value="debug">Debug</option>
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-1.5 text-gray-400">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+              </svg>
+            </div>
+          </div>
           <button onClick={clearLogs} className="px-2 py-1 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-slate-100 rounded-lg">Clear</button>
           <button onClick={() => setAutoScroll(!autoScroll)} className={`px-2 py-1 text-xs font-medium rounded-lg ${autoScroll ? 'text-indigo-600 bg-indigo-50' : 'text-gray-500 hover:text-gray-700'}`}>
             Auto-scroll

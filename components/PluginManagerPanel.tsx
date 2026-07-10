@@ -43,10 +43,17 @@ const PluginConfigForm: React.FC<{
                             <span className="text-sm text-gray-600">Enabled</span>
                         </label>
                     ) : f.type === 'select' ? (
-                        <select value={values[f.key] ?? f.defaultValue ?? ''} onChange={e => set(f.key, e.target.value)}
-                            className="w-full p-2 text-sm bg-white border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500">
-                            {f.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                        </select>
+                        <div className="relative w-full">
+                            <select value={values[f.key] ?? f.defaultValue ?? ''} onChange={e => set(f.key, e.target.value)}
+                                className="w-full pl-3 pr-9 py-2 text-sm bg-white border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 appearance-none cursor-pointer mb-[1px]">
+                                {f.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
+                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2.5 text-gray-400">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                    <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                                </svg>
+                            </div>
+                        </div>
                     ) : f.type === 'textarea' ? (
                         <textarea value={values[f.key] ?? f.defaultValue ?? ''} onChange={e => set(f.key, e.target.value)}
                             placeholder={f.placeholder}
@@ -152,10 +159,10 @@ export const PluginManagerPanel: React.FC<PluginManagerPanelProps> = ({ isOpen, 
                         <PluginCard key={p.id} plugin={p} onToggle={handleToggle} enabled={enabled.has(p.id)} />
                     ))}
                 </div>
-            <MarketplacePanel isOpen={marketplaceOpen} onClose={() => setMarketplaceOpen(false)} />
-        </div>
-    );
-};
+                <MarketplacePanel isOpen={marketplaceOpen} onClose={() => setMarketplaceOpen(false)} />
+            </div>
+        );
+    };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">

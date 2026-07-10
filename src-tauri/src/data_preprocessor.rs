@@ -1,6 +1,6 @@
 use crate::item_matcher::{ItemMatcher, MatchPattern};
-use crate::repository::NewRawItem;
 use crate::models::ClientProfile;
+use crate::repository::NewRawItem;
 use crate::request_clients;
 use serde::{Deserialize, Serialize};
 
@@ -114,7 +114,11 @@ impl DataPreprocessor {
                 }
                 Err(e) => {
                     // Plugin hook thất bại → fallback vào built-in
-                    log::warn!("Plugin preprocessor '{}' failed (fallback to built-in): {}", reg.plugin_id, e);
+                    log::warn!(
+                        "Plugin preprocessor '{}' failed (fallback to built-in): {}",
+                        reg.plugin_id,
+                        e
+                    );
                 }
             }
         }
@@ -130,27 +134,35 @@ impl DataPreprocessor {
         config: &PreprocessorConfig,
     ) -> PreprocessorResult {
         // If preprocessor has custom client settings, re-fetch with that client
-        if config.client_type.is_some() || config.client_timeout_secs.is_some() || config.wait_for_selector.is_some() || config.wait_for_content.is_some() {
+        if config.client_type.is_some()
+            || config.client_timeout_secs.is_some()
+            || config.wait_for_selector.is_some()
+            || config.wait_for_content.is_some()
+        {
             let profile = ClientProfile {
-                client_type: config.client_type.clone().unwrap_or_else(|| "reqwest".to_string()),
+                client_type: config
+                    .client_type
+                    .clone()
+                    .unwrap_or_else(|| "reqwest".to_string()),
                 timeout_secs: config.client_timeout_secs,
                 headless: config.client_headless,
                 ..Default::default()
             };
-            
+
             let result = request_clients::fetch_with_client(
-                source_url, 
-                &profile, 
+                source_url,
+                &profile,
                 None,
                 config.wait_for_selector.as_deref(),
                 config.wait_for_content.as_deref(),
                 config.wait_timeout_ms,
-            ).await;
+            )
+            .await;
             if let Some(refreshed_data) = result.html {
                 return Self::process_internal(&refreshed_data, source_url, config);
             }
         }
-        
+
         Self::process_internal(raw_data, source_url, config)
     }
 
@@ -166,7 +178,7 @@ impl DataPreprocessor {
                 return Self::process_internal(&refreshed_data, source_url, config);
             }
         }
-        
+
         Self::process_internal(raw_data, source_url, config)
     }
 
@@ -174,13 +186,18 @@ impl DataPreprocessor {
     fn refetch_with_client(source_url: &str, config: &PreprocessorConfig) -> Option<String> {
         let rt = tokio::runtime::Runtime::new().ok()?;
         let profile = ClientProfile {
-            client_type: config.client_type.clone().unwrap_or_else(|| "reqwest".to_string()),
+            client_type: config
+                .client_type
+                .clone()
+                .unwrap_or_else(|| "reqwest".to_string()),
             timeout_secs: config.client_timeout_secs,
             headless: config.client_headless,
             ..Default::default()
         };
-        
-        let result = rt.block_on(request_clients::fetch_with_client(source_url, &profile, None, None, None, None));
+
+        let result = rt.block_on(request_clients::fetch_with_client(
+            source_url, &profile, None, None, None, None,
+        ));
         result.html
     }
 
@@ -201,30 +218,36 @@ impl DataPreprocessor {
 
     // ── HTML Processing ───────────────────────────────────────
 
-    fn process_html(html: &str, source_url: &str, config: &PreprocessorConfig) -> PreprocessorResult {
+    fn process_html(
+        html: &str,
+        source_url: &str,
+        config: &PreprocessorConfig,
+    ) -> PreprocessorResult {
         let mut items = Vec::new();
         let errors = Vec::new();
 
         // Convert URL patterns to MatchPattern
-        let match_patterns: Vec<MatchPattern> = config.url_patterns.iter()
+        let match_patterns: Vec<MatchPattern> = config
+            .url_patterns
+            .iter()
             .filter(|p| p.enabled)
-            .filter_map(|p| {
-                match p.pattern_type.as_str() {
-                    "wildcard" => Some(MatchPattern::Wildcard(p.value.clone())),
-                    "regex" => Some(MatchPattern::Regex(p.value.clone())),
-                    "contains" => Some(MatchPattern::Contains(p.value.clone())),
-                    "startswith" => Some(MatchPattern::StartsWith(p.value.clone())),
-                    "endswith" => Some(MatchPattern::EndsWith(p.value.clone())),
-                    "always" | "all" => Some(MatchPattern::Always),
-                    _ => None,
-                }
-            }).collect();
+            .filter_map(|p| match p.pattern_type.as_str() {
+                "wildcard" => Some(MatchPattern::Wildcard(p.value.clone())),
+                "regex" => Some(MatchPattern::Regex(p.value.clone())),
+                "contains" => Some(MatchPattern::Contains(p.value.clone())),
+                "startswith" => Some(MatchPattern::StartsWith(p.value.clone())),
+                "endswith" => Some(MatchPattern::EndsWith(p.value.clone())),
+                "always" | "all" => Some(MatchPattern::Always),
+                _ => None,
+            })
+            .collect();
 
         if let Some(selector) = &config.item_selector {
             // Extract items by CSS selector → then extract URLs from each item
             let items_html = Self::extract_by_selector(html, selector);
             for item_html in items_html {
-                let urls = ItemMatcher::extract_matching_urls(&item_html, source_url, &match_patterns);
+                let urls =
+                    ItemMatcher::extract_matching_urls(&item_html, source_url, &match_patterns);
                 for url in urls {
                     let item_hash = Self::hash(&url);
                     items.push(NewRawItem {
@@ -282,7 +305,11 @@ impl DataPreprocessor {
 
     // ── CSV Processing ────────────────────────────────────────
 
-    fn process_csv(data: &str, source_url: &str, config: &PreprocessorConfig) -> PreprocessorResult {
+    fn process_csv(
+        data: &str,
+        source_url: &str,
+        config: &PreprocessorConfig,
+    ) -> PreprocessorResult {
         let mut items = Vec::new();
         let errors = Vec::new();
         let delimiter = config.csv_delimiter.as_deref().unwrap_or(",");
@@ -290,9 +317,14 @@ impl DataPreprocessor {
 
         let mut lines = data.lines().filter(|l| !l.trim().is_empty());
         let headers: Vec<String> = if has_header {
-            lines.next().map(|line| {
-                line.split(delimiter).map(|s| s.trim().to_string()).collect()
-            }).unwrap_or_default()
+            lines
+                .next()
+                .map(|line| {
+                    line.split(delimiter)
+                        .map(|s| s.trim().to_string())
+                        .collect()
+                })
+                .unwrap_or_default()
         } else {
             (0..20).map(|i| format!("col_{}", i)).collect()
         };
@@ -301,7 +333,10 @@ impl DataPreprocessor {
             let cols: Vec<&str> = line.split(delimiter).collect();
             let mut fields = serde_json::Map::new();
             for (i, col) in cols.iter().enumerate() {
-                let key = headers.get(i).cloned().unwrap_or_else(|| format!("col_{}", i));
+                let key = headers
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| format!("col_{}", i));
                 fields.insert(key, serde_json::Value::String(col.trim().to_string()));
             }
 
@@ -318,12 +353,20 @@ impl DataPreprocessor {
             });
         }
 
-        PreprocessorResult { extracted_count: items.len(), items, errors }
+        PreprocessorResult {
+            extracted_count: items.len(),
+            items,
+            errors,
+        }
     }
 
     // ── JSON Processing ───────────────────────────────────────
 
-    fn process_json(data: &str, source_url: &str, config: &PreprocessorConfig) -> PreprocessorResult {
+    fn process_json(
+        data: &str,
+        source_url: &str,
+        config: &PreprocessorConfig,
+    ) -> PreprocessorResult {
         let mut items = Vec::new();
         let mut errors = Vec::new();
 
@@ -332,7 +375,11 @@ impl DataPreprocessor {
             Ok(v) => v,
             Err(e) => {
                 errors.push(format!("Invalid JSON: {}", e));
-                return PreprocessorResult { extracted_count: 0, items, errors };
+                return PreprocessorResult {
+                    extracted_count: 0,
+                    items,
+                    errors,
+                };
             }
         };
 
@@ -351,7 +398,8 @@ impl DataPreprocessor {
         for item_val in arr {
             let item_str = item_val.to_string();
             let item_hash = Self::hash(&item_str);
-            let extracted_url = item_val.get("url")
+            let extracted_url = item_val
+                .get("url")
                 .or_else(|| item_val.get("link"))
                 .or_else(|| item_val.get("href"))
                 .and_then(|v| v.as_str())
@@ -366,22 +414,38 @@ impl DataPreprocessor {
             });
         }
 
-        PreprocessorResult { extracted_count: items.len(), items, errors }
+        PreprocessorResult {
+            extracted_count: items.len(),
+            items,
+            errors,
+        }
     }
 
     // ── XML Processing ────────────────────────────────────────
 
-    fn process_xml(data: &str, source_url: &str, config: &PreprocessorConfig) -> PreprocessorResult {
+    fn process_xml(
+        data: &str,
+        source_url: &str,
+        config: &PreprocessorConfig,
+    ) -> PreprocessorResult {
         let mut items = Vec::new();
         let mut errors = Vec::new();
 
         // Extract item-like tags using regex (simple XML parsing)
         let item_tag = config.item_selector.as_deref().unwrap_or("item");
-        let re = match regex::Regex::new(&format!(r"<{}[^>]*>(.*?)</{}>", regex::escape(item_tag), regex::escape(item_tag))) {
+        let re = match regex::Regex::new(&format!(
+            r"<{}[^>]*>(.*?)</{}>",
+            regex::escape(item_tag),
+            regex::escape(item_tag)
+        )) {
             Ok(r) => r,
             Err(e) => {
                 errors.push(format!("Invalid XML pattern: {}", e));
-                return PreprocessorResult { extracted_count: 0, items, errors };
+                return PreprocessorResult {
+                    extracted_count: 0,
+                    items,
+                    errors,
+                };
             }
         };
 
@@ -416,18 +480,28 @@ impl DataPreprocessor {
             });
         }
 
-        PreprocessorResult { extracted_count: items.len(), items, errors }
+        PreprocessorResult {
+            extracted_count: items.len(),
+            items,
+            errors,
+        }
     }
 
     // ── Text Processing ───────────────────────────────────────
 
-    fn process_text(data: &str, source_url: &str, _config: &PreprocessorConfig) -> PreprocessorResult {
+    fn process_text(
+        data: &str,
+        source_url: &str,
+        _config: &PreprocessorConfig,
+    ) -> PreprocessorResult {
         let mut items = Vec::new();
 
         // Mỗi dòng là 1 item
         for line in data.lines() {
             let line = line.trim();
-            if line.is_empty() { continue; }
+            if line.is_empty() {
+                continue;
+            }
 
             let item_hash = Self::hash(line);
             let is_url = line.starts_with("http://") || line.starts_with("https://");
@@ -441,7 +515,11 @@ impl DataPreprocessor {
             });
         }
 
-        PreprocessorResult { extracted_count: items.len(), items, errors: vec![] }
+        PreprocessorResult {
+            extracted_count: items.len(),
+            items,
+            errors: vec![],
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────
@@ -452,9 +530,7 @@ impl DataPreprocessor {
 
         let document = Html::parse_fragment(html);
         if let Ok(sel) = Selector::parse(selector) {
-            document.select(&sel)
-                .map(|el| el.html())
-                .collect()
+            document.select(&sel).map(|el| el.html()).collect()
         } else {
             vec![]
         }
@@ -473,7 +549,12 @@ impl DataPreprocessor {
                     let text = if let Some(attr) = &rule.attribute {
                         element.value().attr(attr).unwrap_or("").to_string()
                     } else {
-                        element.text().collect::<Vec<_>>().join(" ").trim().to_string()
+                        element
+                            .text()
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                            .trim()
+                            .to_string()
                     };
                     result.insert(rule.rule_type.clone(), serde_json::Value::String(text));
                 }
@@ -532,6 +613,12 @@ mod tests {
             csv_delimiter: Some(",".into()),
             csv_has_header: Some(true),
             json_item_path: None,
+            client_type: None,
+            client_timeout_secs: None,
+            client_headless: None,
+            wait_for_selector: None,
+            wait_for_content: None,
+            wait_timeout_ms: None,
         };
         let result = DataPreprocessor::process(csv, "https://example.com/data.csv", &config);
         assert_eq!(result.extracted_count, 2);
@@ -548,15 +635,25 @@ mod tests {
             csv_delimiter: None,
             csv_has_header: None,
             json_item_path: Some("items".into()),
+            client_type: None,
+            client_timeout_secs: None,
+            client_headless: None,
+            wait_for_selector: None,
+            wait_for_content: None,
+            wait_timeout_ms: None,
         };
         let result = DataPreprocessor::process(json, "https://example.com/data.json", &config);
         assert_eq!(result.extracted_count, 2);
-        assert_eq!(result.items[0].extracted_url.as_deref(), Some("https://a.com"));
+        assert_eq!(
+            result.items[0].extracted_url.as_deref(),
+            Some("https://a.com")
+        );
     }
 
     #[test]
     fn test_html_url_extraction() {
-        let html = r#"<a href="/product/1">P1</a><a href="/product/2">P2</a><a href="/blog">Blog</a>"#;
+        let html =
+            r#"<a href="/product/1">P1</a><a href="/product/2">P2</a><a href="/blog">Blog</a>"#;
         let config = PreprocessorConfig {
             input_type: "html".into(),
             item_selector: None,
@@ -569,6 +666,12 @@ mod tests {
             csv_delimiter: None,
             csv_has_header: None,
             json_item_path: None,
+            client_type: None,
+            client_timeout_secs: None,
+            client_headless: None,
+            wait_for_selector: None,
+            wait_for_content: None,
+            wait_timeout_ms: None,
         };
         let result = DataPreprocessor::process(html, "https://example.com", &config);
         assert_eq!(result.extracted_count, 2);

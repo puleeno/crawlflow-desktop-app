@@ -87,17 +87,24 @@ export function SelectField({ field, value, onChange, error, disabled }: Rendere
   return (
     <div>
       <label className={baseLabel}>{field.title}</label>
-      <select
-        value={(value as string) ?? ''}
-        onChange={e => onChange(e.target.value)}
-        className={`${baseInput} ${error ? 'border-red-500' : ''}`}
-        disabled={disabled}
-      >
-        {field.placeholder && <option value="">{field.placeholder}</option>}
-        {field.options?.map(opt => (
-          <option key={opt.value} value={opt.value}>{opt.label}</option>
-        ))}
-      </select>
+      <div className="relative w-full">
+        <select
+          value={(value as string) ?? ''}
+          onChange={e => onChange(e.target.value)}
+          className={`${baseInput} pr-9 appearance-none cursor-pointer ${error ? 'border-red-500' : ''}`}
+          disabled={disabled}
+        >
+          {field.placeholder && <option value="">{field.placeholder}</option>}
+          {field.options?.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2.5 text-gray-400">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+            <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+          </svg>
+        </div>
+      </div>
       {error && <p className={baseError}>{error}</p>}
       {field.description && !error && <p className={baseHint}>{field.description}</p>}
     </div>
