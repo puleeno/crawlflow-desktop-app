@@ -47,12 +47,8 @@ impl Workbook {
         let mut rows = Vec::new();
         for item in data {
             let cells = match item {
-                serde_json::Value::Array(arr) => {
-                    arr.iter().map(|v| cell_from_json(v)).collect()
-                }
-                serde_json::Value::Object(obj) => {
-                    obj.values().map(|v| cell_from_json(v)).collect()
-                }
+                serde_json::Value::Array(arr) => arr.iter().map(|v| cell_from_json(v)).collect(),
+                serde_json::Value::Object(obj) => obj.values().map(|v| cell_from_json(v)).collect(),
                 _ => vec![CellValue::String(item.to_string())],
             };
             rows.push(Row { cells });
@@ -101,7 +97,10 @@ impl SpreadsheetFormat {
             "xlsx" => Ok(SpreadsheetFormat::Xlsx),
             "csv" => Ok(SpreadsheetFormat::Csv),
             "ods" => Ok(SpreadsheetFormat::Ods),
-            _ => Err(format!("Unsupported spreadsheet format: .{}. Supported: .xlsx, .csv, .ods", ext)),
+            _ => Err(format!(
+                "Unsupported spreadsheet format: .{}. Supported: .xlsx, .csv, .ods",
+                ext
+            )),
         }
     }
 }
@@ -178,27 +177,40 @@ pub fn to_xlsx_bytes(workbook: &Workbook) -> Result<Vec<u8>, String> {
 
     for sheet in &workbook.sheets {
         let xl_sheet = xl_workbook.add_worksheet();
-        xl_sheet
-            .set_name(&sheet.name)
-            .map_err(|e| e.to_string())?;
+        xl_sheet.set_name(&sheet.name).map_err(|e| e.to_string())?;
 
         for (row_idx, row) in sheet.rows.iter().enumerate() {
             for (col_idx, cell) in row.cells.iter().enumerate() {
                 match cell {
                     CellValue::String(s) => {
-                        xl_sheet.write_string(row_idx as u32, col_idx as u16, s)
+                        let truncated;
+                        let safe_s = if s.chars().count() > 32700 {
+                            truncated = s.chars().take(32700).collect::<String>();
+                            &truncated
+                        } else {
+                            s
+                        };
+                        xl_sheet
+                            .write_string(row_idx as u32, col_idx as u16, safe_s)
                             .map_err(|e| e.to_string())?;
                     }
                     CellValue::Number(n) => {
-                        xl_sheet.write_number(row_idx as u32, col_idx as u16, *n)
+                        xl_sheet
+                            .write_number(row_idx as u32, col_idx as u16, *n)
                             .map_err(|e| e.to_string())?;
                     }
                     CellValue::Bool(b) => {
-                        xl_sheet.write_boolean(row_idx as u32, col_idx as u16, *b)
+                        xl_sheet
+                            .write_boolean(row_idx as u32, col_idx as u16, *b)
                             .map_err(|e| e.to_string())?;
                     }
                     CellValue::Empty => {
-                        xl_sheet.write_blank(row_idx as u32, col_idx as u16, &rust_xlsxwriter::Format::default())
+                        xl_sheet
+                            .write_blank(
+                                row_idx as u32,
+                                col_idx as u16,
+                                &rust_xlsxwriter::Format::default(),
+                            )
                             .map_err(|e| e.to_string())?;
                     }
                 }
@@ -272,7 +284,7 @@ pub fn to_ods_bytes(workbook: &Workbook) -> Result<Vec<u8>, String> {
     )
     .map_err(|e| format!("ODS zip error: {}", e))?;
     zip.write_all(b"application/vnd.oasis.opendocument.spreadsheet")
-    .map_err(|e| format!("ODS zip error: {}", e))?;
+        .map_err(|e| format!("ODS zip error: {}", e))?;
 
     // META-INF/manifest.xml
     zip.start_file::<&str, ()>(
@@ -315,7 +327,8 @@ fn escape_xml(s: &str) -> String {
 
 fn build_ods_content(workbook: &Workbook) -> String {
     let mut xml = String::new();
-    xml.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>
+    xml.push_str(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <office:document-content
   xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
   xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
@@ -324,18 +337,14 @@ fn build_ods_content(workbook: &Workbook) -> String {
   office:version="1.2">
   <office:body>
     <office:spreadsheet>
-"#);
+"#,
+    );
 
     for sheet in &workbook.sheets {
         let name = escape_xml(&sheet.name);
         xml.push_str(&format!("      <table:table table:name=\"{}\">\n", name));
 
-        let max_cols = sheet
-            .rows
-            .iter()
-            .map(|r| r.cells.len())
-            .max()
-            .unwrap_or(0);
+        let max_cols = sheet.rows.iter().map(|r| r.cells.len()).max().unwrap_or(0);
         if max_cols > 0 {
             xml.push_str(&format!(
                 "        <table:table-column table:number-columns-repeated=\"{}\"/>\n",
@@ -378,9 +387,7 @@ fn build_ods_content(workbook: &Workbook) -> String {
         xml.push_str("      </table:table>\n");
     }
 
-    xml.push_str(
-        "    </office:spreadsheet>\n  </office:body>\n</office:document-content>\n",
-    );
+    xml.push_str("    </office:spreadsheet>\n  </office:body>\n</office:document-content>\n");
     xml
 }
 

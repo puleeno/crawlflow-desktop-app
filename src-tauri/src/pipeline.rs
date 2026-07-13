@@ -619,6 +619,21 @@ pub async fn execute_repository_pipeline(
                     );
                 }
             }
+            // If there are 'done' URL items but no 'pending' items, reset them so the
+            // pipeline can re-fetch detail pages (e.g. after extract_rules were added).
+            let pending_count = r.count_by_status("pending").unwrap_or(0);
+            let done_url_count = r.count_done_url_items().unwrap_or(0);
+            if pending_count == 0 && done_url_count > 0 {
+                if let Ok(n) = r.reset_done_url_items_to_pending() {
+                    if n > 0 {
+                        log_manager.info(
+                            project_id,
+                            "pipeline",
+                            &format!("Reset {} done URL items -> pending for re-processing", n),
+                        );
+                    }
+                }
+            }
             r
         }
         Err(e) => {
@@ -1453,6 +1468,40 @@ async fn execute_pagination_in_pipeline(
 
 // ── Config Extractors ─────────────────────────────────────
 
+/// Parse a JSON array of extract rule objects into `ExtractRule` structs.
+/// Supports both `{ field, selector, attribute }` (pipeline format) and
+/// `{ name, selector, extract, attribute, extractMultiple }` (CrawlFlow UI format).
+fn parse_extract_rules_array(arr: &[serde_json::Value]) -> Vec<crate::models::ExtractRule> {
+    arr.iter()
+        .filter_map(|r| {
+            let field = r
+                .get("field")
+                .or_else(|| r.get("name"))
+                .and_then(|v| v.as_str())?
+                .to_string();
+            let selector = r
+                .get("selector")
+                .or_else(|| r.get("value"))
+                .and_then(|v| v.as_str())?
+                .to_string();
+            let attribute = r
+                .get("attribute")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let extract_multiple = r
+                .get("extractMultiple")
+                .or_else(|| r.get("extract_multiple"))
+                .and_then(|v| v.as_bool());
+            Some(crate::models::ExtractRule {
+                field,
+                selector,
+                attribute,
+                extract_multiple,
+            })
+        })
+        .collect()
+}
+
 /// Extract preprocessor configs từ các preprocessor nodes
 fn extract_preprocessors(config: &PipelineConfig) -> Vec<PreprocessorConfig> {
     config
@@ -1651,43 +1700,64 @@ fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
             ..Default::default()
         };
 
-        let extract_rules: Vec<crate::models::ExtractRule> = node
+        // --- Extract rules: first try the worker node's own data ---
+        let mut extract_rules: Vec<crate::models::ExtractRule> = node
             .data
             .get("extractRules")
             .or_else(|| node.data.get("parserRules"))
             .or_else(|| node.data.get("rules"))
             .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|r| {
-                        let field = r
-                            .get("field")
-                            .or_else(|| r.get("name"))
-                            .and_then(|v| v.as_str())?
-                            .to_string();
-                        let selector = r
-                            .get("selector")
-                            .or_else(|| r.get("value"))
-                            .and_then(|v| v.as_str())?
-                            .to_string();
-                        let attribute = r
-                            .get("attribute")
-                            .and_then(|v| v.as_str())
-                            .map(String::from);
-                        let extract_multiple = r
-                            .get("extractMultiple")
-                            .or_else(|| r.get("extract_multiple"))
-                            .and_then(|v| v.as_bool());
-                        Some(crate::models::ExtractRule {
-                            field,
-                            selector,
-                            attribute,
-                            extract_multiple,
-                        })
-                    })
-                    .collect()
-            })
+            .map(|arr| parse_extract_rules_array(arr))
             .unwrap_or_default();
+
+        // --- Also pull rules from any html-data-extractor node that feeds into this worker ---
+        // (i.e. edges where target == worker node id and source node type == "html-data-extractor")
+        let connected_extractor_ids: Vec<&str> = config
+            .edges
+            .iter()
+            .filter(|e| e.target == node.id)
+            .map(|e| e.source.as_str())
+            .collect();
+
+        for extractor_id in connected_extractor_ids {
+            if let Some(ext_node) = config.nodes.iter().find(|n| {
+                n.id == extractor_id
+                    && (n.node_type == "html-data-extractor"
+                        || n.node_type == "htmlDataExtractor"
+                        || n.node_type == "extractor")
+            }) {
+                // customRules is the field used by the CrawlFlow UI
+                let rules_from_extractor = ext_node
+                    .data
+                    .get("customRules")
+                    .or_else(|| ext_node.data.get("extractRules"))
+                    .or_else(|| ext_node.data.get("parserRules"))
+                    .or_else(|| ext_node.data.get("rules"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| parse_extract_rules_array(arr))
+                    .unwrap_or_default();
+
+                if !rules_from_extractor.is_empty() {
+                    log::info!(
+                        "[extract_workers] Merged {} extract rules from html-data-extractor '{}' into worker '{}'",
+                        rules_from_extractor.len(),
+                        ext_node.id,
+                        node.id
+                    );
+                    extract_rules.extend(rules_from_extractor);
+                }
+
+                // Also pick up client settings from the extractor node if not already set on the worker
+                if client_profile.client_type == "reqwest" {
+                    if let Some(url_settings) = ext_node.data.get("urlSettings") {
+                        if let Some(http_client) = url_settings.get("httpClient") {
+                            // Already configured on worker — we only inherit if not overridden
+                            let _ = http_client; // just noting we could merge here
+                        }
+                    }
+                }
+            }
+        }
 
         workers.push(WorkerDef {
             id: node.id.clone(),

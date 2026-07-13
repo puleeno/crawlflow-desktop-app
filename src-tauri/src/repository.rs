@@ -347,6 +347,32 @@ impl RawItemRepository {
             .map_err(|e| format!("Failed to reset stale processing items: {}", e))?;
         Ok(count as i64)
     }
+
+    /// Đếm số items có status='done' và item_type='url'
+    pub fn count_done_url_items(&self) -> Result<i64, String> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM raw_items WHERE status='done' AND item_type='url'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to count done url items: {}", e))
+    }
+
+    /// Reset 'done' URL items về 'pending' + unmatched để pipeline re-fetch và re-parse.
+    /// Dùng khi extract_rules thay đổi hoặc cần crawl lại chi tiết trang.
+    pub fn reset_done_url_items_to_pending(&self) -> Result<i64, String> {
+        let count = self
+            .conn
+            .execute(
+                "UPDATE raw_items SET status = 'pending', matched = 0, worker_id = NULL,
+                 updated_at = datetime('now')
+                 WHERE status = 'done' AND item_type = 'url'",
+                [],
+            )
+            .map_err(|e| format!("Failed to reset done url items: {}", e))?;
+        Ok(count as i64)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
