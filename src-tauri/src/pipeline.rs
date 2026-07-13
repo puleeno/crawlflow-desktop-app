@@ -1739,9 +1739,9 @@ fn extract_finish_actions(config: &PipelineConfig) -> Vec<FinishAction> {
                         let date_str = &now[..10];
                         let resolved_file_name = file_name.replace("{{date}}", date_str);
 
-                        let export_dir = dirs_next::config_dir()
+                        let export_dir = dirs_next::data_dir()
                             .unwrap_or_else(|| std::path::PathBuf::from("."))
-                            .join("crawlflow")
+                            .join("com.crawlflow.desktop")
                             .join("exports");
                         std::fs::create_dir_all(&export_dir).ok();
                         let out_path = export_dir.join(&resolved_file_name);
@@ -1758,9 +1758,9 @@ fn extract_finish_actions(config: &PipelineConfig) -> Vec<FinishAction> {
                             .and_then(|v| v.as_str())
                             .unwrap_or("output.csv");
 
-                        let export_dir = dirs_next::config_dir()
+                        let export_dir = dirs_next::data_dir()
                             .unwrap_or_else(|| std::path::PathBuf::from("."))
-                            .join("crawlflow")
+                            .join("com.crawlflow.desktop")
                             .join("exports");
                         std::fs::create_dir_all(&export_dir).ok();
                         let out_path = export_dir.join(file_name);

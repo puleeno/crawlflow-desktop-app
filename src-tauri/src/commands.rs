@@ -782,9 +782,9 @@ pub fn stop_system_service_cmd() -> Result<String, String> {
 // ── Marketplace installation ─────────────────────────────────────────
 
 fn get_user_plugins_dir() -> PathBuf {
-    dirs_next::config_dir()
+    dirs_next::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("crawlflow")
+        .join("com.crawlflow.desktop")
 }
 
 #[tauri::command]

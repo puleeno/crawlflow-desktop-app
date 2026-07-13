@@ -1050,9 +1050,9 @@ pub fn excel_export_plugin(
     let bytes = inner_export_excel(&data, sheet_name)?;
 
     // Write to a temp file
-    let out_dir = dirs_next::config_dir()
+    let out_dir = dirs_next::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("crawlflow")
+        .join("com.crawlflow.desktop")
         .join("exports");
     std::fs::create_dir_all(&out_dir)
         .map_err(|e| format!("Failed to create exports dir: {}", e))?;

@@ -25,7 +25,7 @@ fn service_exe_str() -> String {
 fn data_dir() -> PathBuf {
     dirs_next::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("crawlflow")
+        .join("com.crawlflow.desktop")
 }
 
 fn service_log_dir() -> PathBuf {

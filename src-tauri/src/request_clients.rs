@@ -89,7 +89,7 @@ pub fn shutdown_global_chrome() {
 fn find_chrome() -> Option<PathBuf> {
     // Check configured path from app settings first
     if let Some(data_dir) = dirs_next::data_dir() {
-        let master_db = data_dir.join("crawlflow").join("crawlflow.db");
+        let master_db = data_dir.join("com.crawlflow.desktop").join("crawlflow.db");
         if master_db.exists() {
             if let Ok(conn) = rusqlite::Connection::open(&master_db) {
                 if let Ok(mut stmt) =
@@ -160,19 +160,14 @@ fn find_chrome() -> Option<PathBuf> {
 
 fn is_global_headless_enabled() -> bool {
     if let Some(data_dir) = dirs_next::data_dir() {
-        let paths = vec![
-            data_dir.join("com.crawlflow.desktop").join("crawlflow.db"),
-            data_dir.join("crawlflow").join("crawlflow.db"),
-        ];
-        for master_db in paths {
-            if master_db.exists() {
-                if let Ok(conn) = rusqlite::Connection::open(&master_db) {
-                    if let Ok(mut stmt) =
-                        conn.prepare("SELECT value FROM app_settings WHERE key = 'chrome_headless'")
-                    {
-                        if let Ok(row) = stmt.query_row([], |r| r.get::<_, String>(0)) {
-                            return row == "true" || row == "1" || row.to_lowercase() == "new";
-                        }
+        let master_db = data_dir.join("com.crawlflow.desktop").join("crawlflow.db");
+        if master_db.exists() {
+            if let Ok(conn) = rusqlite::Connection::open(&master_db) {
+                if let Ok(mut stmt) =
+                    conn.prepare("SELECT value FROM app_settings WHERE key = 'chrome_headless'")
+                {
+                    if let Ok(row) = stmt.query_row([], |r| r.get::<_, String>(0)) {
+                        return row == "true" || row == "1" || row.to_lowercase() == "new";
                     }
                 }
             }

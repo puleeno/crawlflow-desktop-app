@@ -52,9 +52,9 @@ fn project_db_path(db_filename: &str) -> PathBuf {
 }
 
 fn get_user_plugins_dir() -> PathBuf {
-    dirs_next::config_dir()
+    dirs_next::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("crawlflow")
+        .join("com.crawlflow.desktop")
         .join("plugins")
 }
 
