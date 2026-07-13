@@ -519,45 +519,51 @@ fn create_crawlflow_api<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyModule>> 
     Ok(module.into())
 }
 
-#[pyfunction(signature = (url, headers=None))]
+#[pyfunction(name = "fetch_url", signature = (url, headers=None))]
 fn py_fetch_url(url: String, headers: Option<Vec<(String, String)>>) -> PyResult<String> {
 
-    let rt = tokio::runtime::Runtime::new()
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-
-    rt.block_on(async {
-        let client = reqwest::Client::builder()
-            .user_agent("CrawlFlow/1.0")
-            .build()
+    let result = std::thread::spawn(move || -> PyResult<String> {
+        let rt = tokio::runtime::Runtime::new()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        let mut builder = client.get(&url);
-        if let Some(h) = headers {
-            for (k, v) in h {
-                builder = builder.header(&k, &v);
+        rt.block_on(async {
+            let client = reqwest::Client::builder()
+                .user_agent("CrawlFlow/1.0")
+                .build()
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+            let mut builder = client.get(&url);
+            if let Some(h) = headers {
+                for (k, v) in h {
+                    builder = builder.header(&k, &v);
+                }
             }
-        }
 
-        let resp = builder
-            .send()
-            .await
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            let resp = builder
+                .send()
+                .await
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
-        let status = resp.status().as_u16();
-        let body = resp.text().await.unwrap_or_default();
+            let status = resp.status().as_u16();
+            let body = resp.text().await.unwrap_or_default();
 
-        let result = serde_json::json!({
-            "status": status,
-            "body": body,
-            "url": url,
-        });
+            let result = serde_json::json!({
+                "status": status,
+                "body": body,
+                "url": url,
+            });
 
-        serde_json::to_string(&result)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+            serde_json::to_string(&result)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+        })
     })
+    .join()
+    .map_err(|_| pyo3::exceptions::PyRuntimeError::new_err("Thread panicked"))??;
+
+    Ok(result)
 }
 
-#[pyfunction(signature = (message, level=None))]
+#[pyfunction(name = "log", signature = (message, level=None))]
 fn py_log(message: String, level: Option<String>) {
     let lvl = level.unwrap_or_else(|| "info".to_string());
     log::info!("[PythonPlugin] [{}] {}", lvl, message);
@@ -590,14 +596,14 @@ fn py_extract_html(html: String, rules: String) -> PyResult<String> {
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
 }
 
-#[pyfunction]
+#[pyfunction(name = "save_file")]
 fn py_save_file(path: String, content: String) -> PyResult<bool> {
     std::fs::write(&path, &content)
         .map(|_| true)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
 }
 
-#[pyfunction]
+#[pyfunction(name = "read_file")]
 fn py_read_file(path: String) -> PyResult<String> {
     std::fs::read_to_string(&path)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
@@ -675,7 +681,7 @@ fn py_parse_html_table(
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
 }
 
-#[pyfunction]
+#[pyfunction(name = "update_progress")]
 fn py_update_progress(project_id: String, data: String) -> PyResult<()> {
     let info: crate::progress::ProgressInfo = serde_json::from_str(&data)
         .map_err(|e| pyo3::exceptions::PyTypeError::new_err(e.to_string()))?;

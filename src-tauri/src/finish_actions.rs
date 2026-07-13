@@ -1,5 +1,6 @@
 use crate::repository::RawItemRepository;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 // ── Action Types ──────────────────────────────────────────
 
@@ -98,30 +99,155 @@ impl ActionEngine {
     }
 
     fn export_csv(
-        _repo: &RawItemRepository,
-        _path: &str,
-        _fields: &[String],
+        repo: &RawItemRepository,
+        path: &str,
+        fields: &[String],
         log_fn: &dyn Fn(&str, &str),
     ) -> ActionResult {
-        log_fn(&format!("[FinishActions] CSV export to {} (stub)", _path), "info");
-        ActionResult {
-            action: "export_csv".into(),
-            success: true,
-            message: format!("Exported to {}", _path),
+        let done_items = match repo.get_done_items(10000) {
+            Ok(items) => items,
+            Err(e) => {
+                log_fn(&format!("[FinishActions] Failed to get done items: {}", e), "error");
+                return ActionResult {
+                    action: "export_csv".into(),
+                    success: false,
+                    message: format!("Failed to read items: {}", e),
+                };
+            }
+        };
+
+        let rows: Vec<serde_json::Value> = done_items.iter().map(|(item, output)| {
+            let mut map = serde_json::Map::new();
+            map.insert("id".into(), serde_json::json!(item.id));
+            map.insert("source_url".into(), serde_json::json!(item.source_url));
+            map.insert("extracted_url".into(), serde_json::json!(item.extracted_url));
+            map.insert("status".into(), serde_json::json!(item.status));
+            if let Some(out) = output {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(out) {
+                    if let Some(obj) = parsed.as_object() {
+                        for (k, v) in obj {
+                            map.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+            }
+            serde_json::Value::Object(map)
+        }).collect();
+
+        let filtered: Vec<serde_json::Value> = if fields.is_empty() {
+            rows
+        } else {
+            rows.into_iter().map(|item| {
+                let mut map = serde_json::Map::new();
+                if let Some(obj) = item.as_object() {
+                    for f in fields {
+                        if let Some(v) = obj.get(f) {
+                            map.insert(f.clone(), v.clone());
+                        }
+                    }
+                }
+                serde_json::Value::Object(map)
+            }).collect()
+        };
+
+        let wb = crate::spreadsheet::Workbook::from_json_rows(&filtered, "Sheet1");
+        match crate::spreadsheet::write(&wb, path) {
+            Ok(()) => {
+                let abs_path = std::fs::canonicalize(path).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| path.to_string());
+                log_fn(&format!("[FinishActions] CSV exported to {}", abs_path), "info");
+                ActionResult {
+                    action: "export_csv".into(),
+                    success: true,
+                    message: format!("Exported {} items to {}", filtered.len(), abs_path),
+                }
+            }
+            Err(e) => {
+                log_fn(&format!("[FinishActions] CSV export failed: {}", e), "error");
+                ActionResult {
+                    action: "export_csv".into(),
+                    success: false,
+                    message: format!("Export failed: {}", e),
+                }
+            }
         }
     }
 
     fn export_excel(
-        _repo: &RawItemRepository,
-        _path: &str,
-        _fields: &[String],
+        repo: &RawItemRepository,
+        path: &str,
+        fields: &[String],
         log_fn: &dyn Fn(&str, &str),
     ) -> ActionResult {
-        log_fn(&format!("[FinishActions] Excel export to {} (stub)", _path), "info");
-        ActionResult {
-            action: "export_excel".into(),
-            success: true,
-            message: format!("Exported to {}", _path),
+        let done_items = match repo.get_done_items(10000) {
+            Ok(items) => items,
+            Err(e) => {
+                log_fn(&format!("[FinishActions] Failed to get done items: {}", e), "error");
+                return ActionResult {
+                    action: "export_excel".into(),
+                    success: false,
+                    message: format!("Failed to read items: {}", e),
+                };
+            }
+        };
+
+        let rows: Vec<serde_json::Value> = done_items.iter().map(|(item, output)| {
+            let mut map = serde_json::Map::new();
+            map.insert("id".into(), serde_json::json!(item.id));
+            map.insert("source_url".into(), serde_json::json!(item.source_url));
+            map.insert("extracted_url".into(), serde_json::json!(item.extracted_url));
+            map.insert("status".into(), serde_json::json!(item.status));
+            if let Some(out) = output {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(out) {
+                    if let Some(obj) = parsed.as_object() {
+                        for (k, v) in obj {
+                            map.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+            }
+            serde_json::Value::Object(map)
+        }).collect();
+
+        let filtered: Vec<serde_json::Value> = if fields.is_empty() {
+            rows
+        } else {
+            rows.into_iter().map(|item| {
+                let mut map = serde_json::Map::new();
+                if let Some(obj) = item.as_object() {
+                    for f in fields {
+                        if let Some(v) = obj.get(f) {
+                            map.insert(f.clone(), v.clone());
+                        }
+                    }
+                }
+                serde_json::Value::Object(map)
+            }).collect()
+        };
+
+        // Ensure parent directory exists
+        if let Some(parent) = Path::new(path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        let wb = crate::spreadsheet::Workbook::from_json_rows(&filtered, "Sheet1");
+        match crate::spreadsheet::write_xlsx(&wb, path) {
+            Ok(()) => {
+                let abs_path = std::fs::canonicalize(path).map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| path.to_string());
+                log_fn(&format!("[FinishActions] Excel exported to {}", abs_path), "info");
+                ActionResult {
+                    action: "export_excel".into(),
+                    success: true,
+                    message: format!("Exported {} items to {}", filtered.len(), abs_path),
+                }
+            }
+            Err(e) => {
+                log_fn(&format!("[FinishActions] Excel export failed: {}", e), "error");
+                ActionResult {
+                    action: "export_excel".into(),
+                    success: false,
+                    message: format!("Export failed: {}", e),
+                }
+            }
         }
     }
 

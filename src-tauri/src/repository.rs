@@ -434,6 +434,45 @@ impl RawItemRepository {
         Ok(ItemsSummary { total, pending, processing, done, error, ignored, crawled })
     }
     
+    /// Get done items (processed successfully) with their processing_log output
+    pub fn get_done_items(&self, limit: i64) -> Result<Vec<(RawItem, Option<String>)>, String> {
+        let mut stmt = self.conn.prepare(
+            "SELECT r.id, r.source_url, r.item_type, r.item_hash, r.raw_content, r.extracted_url,
+                    r.dup_count, r.priority, r.worker_id, r.matched, r.status, r.created_at, r.updated_at,
+                    p.output
+             FROM raw_items r
+             LEFT JOIN processing_log p ON p.item_id = r.id
+             WHERE r.status = 'done'
+             ORDER BY r.updated_at DESC
+             LIMIT ?1"
+        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+        let items = stmt.query_map(params![limit], |row| {
+            Ok((
+                RawItem {
+                    id: row.get(0)?,
+                    source_url: row.get(1)?,
+                    item_type: row.get(2)?,
+                    item_hash: row.get(3)?,
+                    raw_content: row.get(4)?,
+                    extracted_url: row.get(5)?,
+                    dup_count: row.get(6)?,
+                    priority: row.get(7)?,
+                    worker_id: row.get(8)?,
+                    matched: row.get(9)?,
+                    status: row.get(10)?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                },
+                row.get::<_, Option<String>>(13).ok().flatten(),
+            ))
+        }).map_err(|e| format!("Failed to query done items: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+        Ok(items)
+    }
+
     /// Get all crawled raw items (with status='crawled' and item_type='raw')
     pub fn get_crawled_items(&self) -> Result<Vec<RawItem>, String> {
         let mut stmt = self.conn.prepare(

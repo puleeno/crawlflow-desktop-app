@@ -725,14 +725,116 @@ pub async fn execute_repository_pipeline(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
+            let plugin_source_type = node
+                .data
+                .get("pluginSourceType")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
             log_manager.info(
                 project_id,
                 "fetching",
                 &format!(
-                    "[node={}] Processing node type={}, sourceType={}",
-                    node_label, node.node_type, source_type
+                    "[node={}] Processing node type={}, sourceType={}, pluginSourceType={:?}",
+                    node_label, node.node_type, source_type, plugin_source_type
                 ),
             );
+
+            // Check if a Python plugin should handle this data source
+            if let Some(ref pst) = plugin_source_type {
+                if let Some(engine) = python_engine.as_deref_mut() {
+                    let plugin_id = pst.strip_prefix("py-").unwrap_or(pst);
+                    let plugin_config = node.data.get("pluginConfig").cloned().unwrap_or(serde_json::Value::Null);
+                    let mut config = match &plugin_config {
+                        serde_json::Value::Object(map) => map.clone(),
+                        _ => serde_json::Map::new(),
+                    };
+                    if !config.contains_key("shop_url") && !source_value.is_empty() {
+                        config.insert("shop_url".into(), serde_json::json!(source_value));
+                    }
+                    config.insert("source_url".into(), serde_json::json!(source_value));
+                    config.insert("project_id".into(), serde_json::json!(project_id));
+                    let call_config = serde_json::Value::Object(config);
+
+                    log_manager.info(
+                        project_id,
+                        "fetching",
+                        &format!(
+                            "[node={}] Calling plugin '{}' data source with config",
+                            node_label, plugin_id
+                        ),
+                    );
+
+                    match engine.call_data_source(plugin_id, call_config) {
+                        Ok(plugin_items) => {
+                            log_manager.info(
+                                project_id,
+                                "fetching",
+                                &format!(
+                                    "[node={}] Plugin returned {} items",
+                                    node_label,
+                                    plugin_items.len()
+                                ),
+                            );
+                            if !plugin_items.is_empty() {
+                                // Convert plugin items to NewRawItem and save to repo
+                                let new_items: Vec<crate::repository::NewRawItem> = plugin_items.iter().map(|item| {
+                                    let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                                    let raw_json = serde_json::to_string(item).unwrap_or_default();
+                                    let hash_input = if !url.is_empty() { url } else { &raw_json };
+                                    let item_hash = simple_hash(hash_input);
+                                    crate::repository::NewRawItem {
+                                        source_url: source_value.to_string(),
+                                        item_type: "product".into(),
+                                        item_hash,
+                                        raw_content: Some(raw_json),
+                                        extracted_url: if url.is_empty() { None } else { Some(url.to_string()) },
+                                    }
+                                }).collect();
+
+                                match repo.save_items(&new_items) {
+                                    Ok(r) => {
+                                        total_ingested += r.inserted;
+                                        log_manager.info(
+                                            project_id,
+                                            "fetching",
+                                            &format!(
+                                                "[node={}] Plugin data source: {} inserted, {} dup",
+                                                node_label, r.inserted, r.duplicated
+                                            ),
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log_manager.error(
+                                            project_id,
+                                            "fetching",
+                                            &format!("[node={}] Failed to save plugin items: {}", node_label, e),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log_manager.error(
+                                project_id,
+                                "fetching",
+                                &format!("[node={}] Plugin data source failed: {}", node_label, e),
+                            );
+                        }
+                    }
+                    // Skip the normal URL/source_type processing for plugin-based sources
+                    continue;
+                } else {
+                    log_manager.warn(
+                        project_id,
+                        "fetching",
+                        &format!(
+                            "[node={}] Plugin data source '{}' requested but Python engine not available",
+                            node_label, pst
+                        ),
+                    );
+                }
+            }
 
             match source_type {
                 "url" | "api" => {
@@ -1614,6 +1716,63 @@ fn extract_finish_actions(config: &PipelineConfig) -> Vec<FinishAction> {
                     })
                     .unwrap_or_default(),
             }),
+            "processor" => {
+                let processor_type = node
+                    .data
+                    .get("processorType")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                match processor_type {
+                    "generate-excel-file" => {
+                        let settings = node.data.get("settings").and_then(|s| s.as_object());
+                        let file_name = settings
+                            .and_then(|s| s.get("fileName"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("output.xlsx");
+                        let _sheet_name = settings
+                            .and_then(|s| s.get("sheetName"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Sheet1");
+
+                        // Substitute {{date}} with current date
+                        let now = chrono_now();
+                        let date_str = &now[..10];
+                        let resolved_file_name = file_name.replace("{{date}}", date_str);
+
+                        let export_dir = dirs_next::config_dir()
+                            .unwrap_or_else(|| std::path::PathBuf::from("."))
+                            .join("crawlflow")
+                            .join("exports");
+                        std::fs::create_dir_all(&export_dir).ok();
+                        let out_path = export_dir.join(&resolved_file_name);
+
+                        Some(FinishAction::ExportExcel {
+                            path: out_path.to_string_lossy().to_string(),
+                            fields: vec![],
+                        })
+                    }
+                    "generate-csv-file" => {
+                        let settings = node.data.get("settings").and_then(|s| s.as_object());
+                        let file_name = settings
+                            .and_then(|s| s.get("fileName"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("output.csv");
+
+                        let export_dir = dirs_next::config_dir()
+                            .unwrap_or_else(|| std::path::PathBuf::from("."))
+                            .join("crawlflow")
+                            .join("exports");
+                        std::fs::create_dir_all(&export_dir).ok();
+                        let out_path = export_dir.join(file_name);
+
+                        Some(FinishAction::ExportCsv {
+                            path: out_path.to_string_lossy().to_string(),
+                            fields: vec![],
+                        })
+                    }
+                    _ => None,
+                }
+            }
             "completion" | "finish" => Some(FinishAction::LogSummary),
             _ => None,
         };
@@ -1822,6 +1981,15 @@ mod tests {
         assert!(levels[1].contains(&"c".to_string()));
         assert_eq!(levels[2], vec!["d"]);
     }
+}
+
+fn chrono_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .to_string()
 }
 
 fn label_of(node: &PipelineNode) -> &str {
