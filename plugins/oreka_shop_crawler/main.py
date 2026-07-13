@@ -50,6 +50,181 @@ from html import unescape
 from html.parser import HTMLParser
 
 
+def register_presets():
+    """Register preset for Oreka Shop Crawler plugin."""
+    preset = {
+        "id": "oreka-shop-crawler",
+        "name": "Oreka Shop Crawler",
+        "description": "Crawl sản phẩm từ shop oreka.vn với custom extraction rules và export ra Excel",
+        "icon": "ShoppingCartIcon",
+        "icon_color": "#10b981",
+        "project_settings": {
+            "name": "Oreka Shop - {shop_name}",
+            "description": "Crawl sản phẩm từ shop oreka.vn",
+            "crawlDelay": 1500,
+            "userAgent": "CrawlFlow/1.0",
+            "concurrency": 1,
+            "executionMode": "queue",
+        },
+        "nodes": [
+            {
+                "id": "ds-oreka",
+                "type": "start",
+                "label": "Oreka Shop Source",
+                "position": {"x": 50, "y": 50},
+                "data": {
+                    "pluginSourceType": "py-oreka-shop-crawler",
+                    "sourceType": "url",
+                    "sourceValue": "",
+                    "urlSettings": {
+                        "httpClient": {
+                            "clientType": "reqwest",
+                            "headless": False,
+                        },
+                    },
+                },
+            },
+            {
+                "id": "pre-1",
+                "type": "preprocessor",
+                "label": "Preprocess HTML",
+                "position": {"x": -568, "y": 38},
+                "data": {
+                    "inputType": "html",
+                    "itemSelector": ".mt-12.grid.grid-cols-5.gap-10",
+                    "csvDelimiter": ",",
+                    "csvHasHeader": True,
+                    "jsonItemPath": "",
+                    "urlPatterns": [
+                        {
+                            "enabled": True,
+                            "type": "regex",
+                            "value": ".*-detail\\/[0-9]{1,}\\/?",
+                        },
+                    ],
+                    "extractRules": [],
+                },
+            },
+            {
+                "id": "repository-node",
+                "type": "repository",
+                "label": "Raw Data Repository",
+                "position": {"x": 50, "y": 329},
+                "data": {},
+            },
+            {
+                "id": "worker-1",
+                "type": "worker",
+                "label": "Product Detail Filter",
+                "position": {"x": 40, "y": 641},
+                "data": {
+                    "detectionLogic": "and",
+                    "detectionRules": [
+                        {
+                            "id": "1783651265684",
+                            "type": "url-format",
+                            "selector": "",
+                            "condition": "exists",
+                            "value": "",
+                            "pattern": ".*-detail\\/[0-9]{1,}\\/?",
+                        },
+                    ],
+                },
+            },
+            {
+                "id": "ext-1",
+                "type": "html-data-extractor",
+                "label": "Extract Product Data",
+                "position": {"x": -423, "y": 426},
+                "data": {
+                    "presets": ["ecommerce-product"],
+                    "customRules": [
+                        {
+                            "id": "preset-ecom-html-1",
+                            "name": "product_name",
+                            "extractFrom": "html-element",
+                            "selector": "h1.styles_nameProduct__QSdsj.mt-2",
+                            "extract": "text",
+                        },
+                        {
+                            "id": "preset-ecom-html-2",
+                            "name": "price",
+                            "extractFrom": "html-element",
+                            "selector": "p.font-semibold.text-16.leading-8.text-black-600.line-clamp-1.break-all.styles_productPrice__zkPlt",
+                            "extract": "text",
+                        },
+                        {
+                            "id": "preset-ecom-html-3",
+                            "name": "sku",
+                            "extractFrom": "html-element",
+                            "selector": ".sku, .product-sku",
+                            "extract": "text",
+                        },
+                        {
+                            "id": "preset-ecom-html-4",
+                            "name": "description",
+                            "extractFrom": "html-element",
+                            "selector": "div.mt-6.whitespace-pre-wrap > p.text",
+                            "extract": "html",
+                        },
+                        {
+                            "id": "preset-ecom-html-5",
+                            "name": "image_url",
+                            "extractFrom": "html-element",
+                            "selector": "img.styles_imageSlide__AUZey.object-cover.rounded-md",
+                            "extract": "attribute",
+                            "attribute": "src",
+                        },
+                        {
+                            "id": "preset-ecom-html-6",
+                            "name": "images",
+                            "extractFrom": "html-element",
+                            "selector": ".image-gallery-thumbnail img",
+                            "extract": "attribute",
+                            "attribute": "src",
+                            "extractMultiple": True,
+                        },
+                    ],
+                },
+            },
+            {
+                "id": "proc-1",
+                "type": "processor",
+                "label": "Excel Export",
+                "position": {"x": 52, "y": 914},
+                "data": {
+                    "processorType": "generate-excel-file",
+                    "settings": {
+                        "fileName": "crawl_results_{{date}}.xlsx",
+                        "sheetName": "Sheet1",
+                        "includeHeader": True,
+                        "autoMapHeaders": True,
+                        "columnMapping": {},
+                    },
+                },
+            },
+        ],
+        "edges": [
+            {"id": "e-ds-pre", "source": "ds-oreka", "target": "pre-1"},
+            {"id": "e-pre-repo", "source": "pre-1", "target": "repository-node"},
+            {"id": "e-repo-worker", "source": "repository-node", "target": "worker-1"},
+            {"id": "e-ext-worker", "source": "ext-1", "target": "worker-1"},
+            {"id": "e-worker-proc", "source": "worker-1", "target": "proc-1"},
+        ],
+    }
+    return json.dumps([preset])
+
+import json
+import hashlib
+import time
+import os
+import re
+import urllib.parse
+from datetime import datetime
+from html import unescape
+from html.parser import HTMLParser
+
+
 def _add_page_to_url(url, page_param, page_num):
     parsed = urllib.parse.urlparse(url)
     qd = urllib.parse.parse_qs(parsed.query)
