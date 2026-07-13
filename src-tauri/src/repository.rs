@@ -55,7 +55,9 @@ impl RawItemRepository {
     }
 
     pub fn ensure_tables(&self) -> Result<(), String> {
-        self.conn.execute_batch("
+        self.conn
+            .execute_batch(
+                "
             CREATE TABLE IF NOT EXISTS raw_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_url TEXT NOT NULL,
@@ -90,7 +92,9 @@ impl RawItemRepository {
             );
             CREATE INDEX IF NOT EXISTS idx_processing_log_item ON processing_log(item_id);
             CREATE INDEX IF NOT EXISTS idx_processing_log_worker ON processing_log(worker_id);
-        ").map_err(|e| format!("Failed to create tables: {}", e))
+        ",
+            )
+            .map_err(|e| format!("Failed to create tables: {}", e))
     }
 
     /// Save items with dedup. Increments dup_count for existing items.
@@ -100,7 +104,8 @@ impl RawItemRepository {
 
         for item in items {
             // Check existing by hash
-            let existing: Option<i64> = self.conn
+            let existing: Option<i64> = self
+                .conn
                 .query_row(
                     "SELECT id FROM raw_items WHERE item_hash = ?1",
                     params![item.item_hash],
@@ -111,13 +116,15 @@ impl RawItemRepository {
             match existing {
                 Some(id) => {
                     // Increment dup_count and recalculate priority
-                    self.conn.execute(
-                        "UPDATE raw_items SET dup_count = dup_count + 1,
+                    self.conn
+                        .execute(
+                            "UPDATE raw_items SET dup_count = dup_count + 1,
                          priority = dup_count + 1,
                          updated_at = datetime('now')
                          WHERE id = ?1",
-                        params![id],
-                    ).map_err(|e| format!("Failed to update dup_count: {}", e))?;
+                            params![id],
+                        )
+                        .map_err(|e| format!("Failed to update dup_count: {}", e))?;
                     duplicated += 1;
                 }
                 None => {
@@ -139,7 +146,10 @@ impl RawItemRepository {
             }
         }
 
-        Ok(RawItemSaveResult { inserted, duplicated })
+        Ok(RawItemSaveResult {
+            inserted,
+            duplicated,
+        })
     }
 
     /// Save raw HTML fetched from a data source (debug / audit trail).
@@ -151,7 +161,8 @@ impl RawItemRepository {
         hash_input.hash(&mut hasher);
         let item_hash = format!("{:x}", hasher.finish());
 
-        let existing: Option<i64> = self.conn
+        let existing: Option<i64> = self
+            .conn
             .query_row(
                 "SELECT id FROM raw_items WHERE item_hash = ?1",
                 params![item_hash],
@@ -172,79 +183,91 @@ impl RawItemRepository {
 
     /// Lấy các items pending (chưa xử lý)
     pub fn get_pending_items(&self, limit: i64) -> Result<Vec<RawItem>, String> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, source_url, item_type, item_hash, raw_content, extracted_url,
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, source_url, item_type, item_hash, raw_content, extracted_url,
                     dup_count, priority, worker_id, matched, status, created_at, updated_at
              FROM raw_items
              WHERE status = 'pending' AND matched = 0
              ORDER BY priority DESC, dup_count DESC
-             LIMIT ?1"
-        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+             LIMIT ?1",
+            )
+            .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
-        let items = stmt.query_map(params![limit], |row| {
-            Ok(RawItem {
-                id: row.get(0)?,
-                source_url: row.get(1)?,
-                item_type: row.get(2)?,
-                item_hash: row.get(3)?,
-                raw_content: row.get(4)?,
-                extracted_url: row.get(5)?,
-                dup_count: row.get(6)?,
-                priority: row.get(7)?,
-                worker_id: row.get(8)?,
-                matched: row.get(9)?,
-                status: row.get(10)?,
-                created_at: row.get(11)?,
-                updated_at: row.get(12)?,
+        let items = stmt
+            .query_map(params![limit], |row| {
+                Ok(RawItem {
+                    id: row.get(0)?,
+                    source_url: row.get(1)?,
+                    item_type: row.get(2)?,
+                    item_hash: row.get(3)?,
+                    raw_content: row.get(4)?,
+                    extracted_url: row.get(5)?,
+                    dup_count: row.get(6)?,
+                    priority: row.get(7)?,
+                    worker_id: row.get(8)?,
+                    matched: row.get(9)?,
+                    status: row.get(10)?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                })
             })
-        }).map_err(|e| format!("Failed to query items: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
+            .map_err(|e| format!("Failed to query items: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
 
         Ok(items)
     }
 
     /// Lấy items đã match với worker
     pub fn get_matched_items(&self, worker_id: &str, limit: i64) -> Result<Vec<RawItem>, String> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, source_url, item_type, item_hash, raw_content, extracted_url,
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, source_url, item_type, item_hash, raw_content, extracted_url,
                     dup_count, priority, worker_id, matched, status, created_at, updated_at
              FROM raw_items
              WHERE worker_id = ?1 AND status = 'pending' AND matched = 1
              ORDER BY priority DESC
-             LIMIT ?2"
-        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+             LIMIT ?2",
+            )
+            .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
-        let items = stmt.query_map(params![worker_id, limit], |row| {
-            Ok(RawItem {
-                id: row.get(0)?,
-                source_url: row.get(1)?,
-                item_type: row.get(2)?,
-                item_hash: row.get(3)?,
-                raw_content: row.get(4)?,
-                extracted_url: row.get(5)?,
-                dup_count: row.get(6)?,
-                priority: row.get(7)?,
-                worker_id: row.get(8)?,
-                matched: row.get(9)?,
-                status: row.get(10)?,
-                created_at: row.get(11)?,
-                updated_at: row.get(12)?,
+        let items = stmt
+            .query_map(params![worker_id, limit], |row| {
+                Ok(RawItem {
+                    id: row.get(0)?,
+                    source_url: row.get(1)?,
+                    item_type: row.get(2)?,
+                    item_hash: row.get(3)?,
+                    raw_content: row.get(4)?,
+                    extracted_url: row.get(5)?,
+                    dup_count: row.get(6)?,
+                    priority: row.get(7)?,
+                    worker_id: row.get(8)?,
+                    matched: row.get(9)?,
+                    status: row.get(10)?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                })
             })
-        }).map_err(|e| format!("Failed to query items: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
+            .map_err(|e| format!("Failed to query items: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
 
         Ok(items)
     }
 
     /// Gán worker cho item
     pub fn assign_worker(&self, item_id: i64, worker_id: &str) -> Result<(), String> {
-        self.conn.execute(
-            "UPDATE raw_items SET worker_id = ?1, matched = 1, updated_at = datetime('now')
+        self.conn
+            .execute(
+                "UPDATE raw_items SET worker_id = ?1, matched = 1, updated_at = datetime('now')
              WHERE id = ?2",
-            params![worker_id, item_id],
-        ).map_err(|e| format!("Failed to assign worker: {}", e))?;
+                params![worker_id, item_id],
+            )
+            .map_err(|e| format!("Failed to assign worker: {}", e))?;
         Ok(())
     }
 
@@ -260,17 +283,25 @@ impl RawItemRepository {
 
     /// Cap nhat status cho item
     pub fn update_status(&self, item_id: i64, status: &str) -> Result<(), String> {
-        self.conn.execute(
-            "UPDATE raw_items SET status = ?1, updated_at = datetime('now') WHERE id = ?2",
-            params![status, item_id],
-        ).map_err(|e| format!("Failed to update status: {}", e))?;
+        self.conn
+            .execute(
+                "UPDATE raw_items SET status = ?1, updated_at = datetime('now') WHERE id = ?2",
+                params![status, item_id],
+            )
+            .map_err(|e| format!("Failed to update status: {}", e))?;
         Ok(())
     }
 
     /// Log processing step
-    pub fn log_processing(&self, item_id: i64, worker_id: Option<&str>,
-                          processor_type: &str, status: &str,
-                          output: Option<&str>, error: Option<&str>) -> Result<(), String> {
+    pub fn log_processing(
+        &self,
+        item_id: i64,
+        worker_id: Option<&str>,
+        processor_type: &str,
+        status: &str,
+        output: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<(), String> {
         self.conn.execute(
             "INSERT INTO processing_log (item_id, worker_id, processor_type, status, output, error)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -281,20 +312,39 @@ impl RawItemRepository {
 
     /// Dem so items theo status
     pub fn count_by_status(&self, status: &str) -> Result<i64, String> {
-        self.conn.query_row(
-            "SELECT COUNT(*) FROM raw_items WHERE status = ?1",
-            params![status],
-            |row| row.get(0),
-        ).map_err(|e| format!("Failed to count items: {}", e))
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM raw_items WHERE status = ?1",
+                params![status],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to count items: {}", e))
     }
 
     /// Reset items pending lai sau khi xử lý lỗi
     pub fn reset_failed_items(&self) -> Result<i64, String> {
-        let count = self.conn.execute(
-            "UPDATE raw_items SET status = 'pending', updated_at = datetime('now')
+        let count = self
+            .conn
+            .execute(
+                "UPDATE raw_items SET status = 'pending', updated_at = datetime('now')
              WHERE status = 'error'",
-            [],
-        ).map_err(|e| format!("Failed to reset failed items: {}", e))?;
+                [],
+            )
+            .map_err(|e| format!("Failed to reset failed items: {}", e))?;
+        Ok(count as i64)
+    }
+
+    /// Reset items bị kẹt ở 'processing' về 'pending' (recovery sau crash/restart).
+    /// Items bị matched=1 sẽ giữ nguyên worker_id để được pick up ngay ở Phase 3.
+    pub fn reset_stale_processing_items(&self) -> Result<i64, String> {
+        let count = self
+            .conn
+            .execute(
+                "UPDATE raw_items SET status = 'pending', updated_at = datetime('now')
+             WHERE status = 'processing'",
+                [],
+            )
+            .map_err(|e| format!("Failed to reset stale processing items: {}", e))?;
         Ok(count as i64)
     }
 }
@@ -361,14 +411,20 @@ impl RawItemRepository {
             let n = params.len();
             clauses.push(format!(
                 "(source_url LIKE ?{} OR extracted_url LIKE ?{} OR raw_content LIKE ?{})",
-                n + 1, n + 2, n + 3
+                n + 1,
+                n + 2,
+                n + 3
             ));
             params.push(pattern.clone());
             params.push(pattern.clone());
             params.push(pattern);
         }
 
-        let where_clause = if clauses.is_empty() { String::new() } else { format!("WHERE {}", clauses.join(" AND ")) };
+        let where_clause = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", clauses.join(" AND "))
+        };
 
         // Count
         let count_sql = format!("SELECT COUNT(*) FROM raw_items {}", where_clause);
@@ -381,75 +437,41 @@ impl RawItemRepository {
             "SELECT id, source_url, item_type, item_hash, raw_content, extracted_url,
                     dup_count, priority, worker_id, matched, status, created_at, updated_at
              FROM raw_items {} {} LIMIT ?{} OFFSET ?{}",
-            where_clause, order_clause, params.len() - 1, params.len()
+            where_clause,
+            order_clause,
+            params.len() - 1,
+            params.len()
         );
 
         let items = self.query_items_raw(&query_sql, &params)?;
-        Ok(PaginatedItems { items: items.items, total })
+        Ok(PaginatedItems {
+            items: items.items,
+            total,
+        })
     }
 
     fn query_row_str(&self, sql: &str, params: &[String]) -> Result<i64, String> {
-        let p: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
-        self.conn.query_row(sql, p.as_slice(), |r| r.get(0))
+        let p: Vec<&dyn rusqlite::types::ToSql> = params
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        self.conn
+            .query_row(sql, p.as_slice(), |r| r.get(0))
             .map_err(|e| format!("Query failed: {}", e))
     }
 
     fn query_items_raw(&self, sql: &str, params: &[String]) -> Result<PaginatedItems, String> {
-        let p: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
-        let mut stmt = self.conn.prepare(sql)
+        let p: Vec<&dyn rusqlite::types::ToSql> = params
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let mut stmt = self
+            .conn
+            .prepare(sql)
             .map_err(|e| format!("Prepare failed: {}", e))?;
-        let items = stmt.query_map(p.as_slice(), |row| {
-            Ok(RawItem {
-                id: row.get(0)?,
-                source_url: row.get(1)?,
-                item_type: row.get(2)?,
-                item_hash: row.get(3)?,
-                raw_content: row.get(4)?,
-                extracted_url: row.get(5)?,
-                dup_count: row.get(6)?,
-                priority: row.get(7)?,
-                worker_id: row.get(8)?,
-                matched: row.get(9)?,
-                status: row.get(10)?,
-                created_at: row.get(11)?,
-                updated_at: row.get(12)?,
-            })
-        }).map_err(|e| format!("Query failed: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-        Ok(PaginatedItems { items, total: 0 })
-    }
-
-    /// Count items by all statuses
-    pub fn get_summary(&self) -> Result<ItemsSummary, String> {
-        let total = self.conn.query_row("SELECT COUNT(*) FROM raw_items", [], |r| r.get(0))
-            .map_err(|e| format!("Failed to count: {}", e))?;
-        let pending = self.count_by_status("pending")?;
-        let processing = self.count_by_status("processing")?;
-        let done = self.count_by_status("done")?;
-        let error = self.count_by_status("error")?;
-        let ignored = self.count_by_status("ignored")?;
-        let crawled = self.count_by_status("crawled")?;
-        Ok(ItemsSummary { total, pending, processing, done, error, ignored, crawled })
-    }
-    
-    /// Get done items (processed successfully) with their processing_log output
-    pub fn get_done_items(&self, limit: i64) -> Result<Vec<(RawItem, Option<String>)>, String> {
-        let mut stmt = self.conn.prepare(
-            "SELECT r.id, r.source_url, r.item_type, r.item_hash, r.raw_content, r.extracted_url,
-                    r.dup_count, r.priority, r.worker_id, r.matched, r.status, r.created_at, r.updated_at,
-                    p.output
-             FROM raw_items r
-             LEFT JOIN processing_log p ON p.item_id = r.id
-             WHERE r.status = 'done'
-             ORDER BY r.updated_at DESC
-             LIMIT ?1"
-        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
-
-        let items = stmt.query_map(params![limit], |row| {
-            Ok((
-                RawItem {
+        let items = stmt
+            .query_map(p.as_slice(), |row| {
+                Ok(RawItem {
                     id: row.get(0)?,
                     source_url: row.get(1)?,
                     item_type: row.get(2)?,
@@ -463,45 +485,113 @@ impl RawItemRepository {
                     status: row.get(10)?,
                     created_at: row.get(11)?,
                     updated_at: row.get(12)?,
-                },
-                row.get::<_, Option<String>>(13).ok().flatten(),
-            ))
-        }).map_err(|e| format!("Failed to query done items: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
+                })
+            })
+            .map_err(|e| format!("Query failed: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(PaginatedItems { items, total: 0 })
+    }
+
+    /// Count items by all statuses
+    pub fn get_summary(&self) -> Result<ItemsSummary, String> {
+        let total = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM raw_items", [], |r| r.get(0))
+            .map_err(|e| format!("Failed to count: {}", e))?;
+        let pending = self.count_by_status("pending")?;
+        let processing = self.count_by_status("processing")?;
+        let done = self.count_by_status("done")?;
+        let error = self.count_by_status("error")?;
+        let ignored = self.count_by_status("ignored")?;
+        let crawled = self.count_by_status("crawled")?;
+        Ok(ItemsSummary {
+            total,
+            pending,
+            processing,
+            done,
+            error,
+            ignored,
+            crawled,
+        })
+    }
+
+    /// Get done items (processed successfully) with their processing_log output
+    pub fn get_done_items(&self, limit: i64) -> Result<Vec<(RawItem, Option<String>)>, String> {
+        let mut stmt = self.conn.prepare(
+            "SELECT r.id, r.source_url, r.item_type, r.item_hash, r.raw_content, r.extracted_url,
+                    r.dup_count, r.priority, r.worker_id, r.matched, r.status, r.created_at, r.updated_at,
+                    p.output
+             FROM raw_items r
+             LEFT JOIN processing_log p ON p.item_id = r.id
+             WHERE r.status = 'done'
+             ORDER BY r.updated_at DESC
+             LIMIT ?1"
+        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+        let items = stmt
+            .query_map(params![limit], |row| {
+                Ok((
+                    RawItem {
+                        id: row.get(0)?,
+                        source_url: row.get(1)?,
+                        item_type: row.get(2)?,
+                        item_hash: row.get(3)?,
+                        raw_content: row.get(4)?,
+                        extracted_url: row.get(5)?,
+                        dup_count: row.get(6)?,
+                        priority: row.get(7)?,
+                        worker_id: row.get(8)?,
+                        matched: row.get(9)?,
+                        status: row.get(10)?,
+                        created_at: row.get(11)?,
+                        updated_at: row.get(12)?,
+                    },
+                    row.get::<_, Option<String>>(13).ok().flatten(),
+                ))
+            })
+            .map_err(|e| format!("Failed to query done items: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
 
         Ok(items)
     }
 
     /// Get all crawled raw items (with status='crawled' and item_type='raw')
     pub fn get_crawled_items(&self) -> Result<Vec<RawItem>, String> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, source_url, item_type, item_hash, raw_content, extracted_url,
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, source_url, item_type, item_hash, raw_content, extracted_url,
                     dup_count, priority, worker_id, matched, status, created_at, updated_at
              FROM raw_items
              WHERE status = 'crawled' AND item_type = 'raw'
-             ORDER BY created_at ASC"
-        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+             ORDER BY created_at ASC",
+            )
+            .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
-        let items = stmt.query_map([], |row| {
-            Ok(RawItem {
-                id: row.get(0)?,
-                source_url: row.get(1)?,
-                item_type: row.get(2)?,
-                item_hash: row.get(3)?,
-                raw_content: row.get(4)?,
-                extracted_url: row.get(5)?,
-                dup_count: row.get(6)?,
-                priority: row.get(7)?,
-                worker_id: row.get(8)?,
-                matched: row.get(9)?,
-                status: row.get(10)?,
-                created_at: row.get(11)?,
-                updated_at: row.get(12)?,
+        let items = stmt
+            .query_map([], |row| {
+                Ok(RawItem {
+                    id: row.get(0)?,
+                    source_url: row.get(1)?,
+                    item_type: row.get(2)?,
+                    item_hash: row.get(3)?,
+                    raw_content: row.get(4)?,
+                    extracted_url: row.get(5)?,
+                    dup_count: row.get(6)?,
+                    priority: row.get(7)?,
+                    worker_id: row.get(8)?,
+                    matched: row.get(9)?,
+                    status: row.get(10)?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                })
             })
-        }).map_err(|e| format!("Failed to query items: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
+            .map_err(|e| format!("Failed to query items: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
 
         Ok(items)
     }
@@ -520,15 +610,13 @@ mod tests {
     #[test]
     fn test_save_and_dedup() {
         let repo = setup_repo();
-        let items = vec![
-            NewRawItem {
-                source_url: "https://example.com".into(),
-                item_type: "url".into(),
-                item_hash: "abc123".into(),
-                raw_content: None,
-                extracted_url: Some("https://example.com/page1".into()),
-            },
-        ];
+        let items = vec![NewRawItem {
+            source_url: "https://example.com".into(),
+            item_type: "url".into(),
+            item_hash: "abc123".into(),
+            raw_content: None,
+            extracted_url: Some("https://example.com/page1".into()),
+        }];
         let result = repo.save_items(&items).unwrap();
         assert_eq!(result.inserted, 1);
         assert_eq!(result.duplicated, 0);
@@ -544,15 +632,21 @@ mod tests {
         let repo = setup_repo();
         repo.save_items(&[
             NewRawItem {
-                source_url: "a".into(), item_type: "url".into(),
-                item_hash: "a1".into(), raw_content: None, extracted_url: None,
+                source_url: "a".into(),
+                item_type: "url".into(),
+                item_hash: "a1".into(),
+                raw_content: None,
+                extracted_url: None,
             },
             NewRawItem {
-                source_url: "b".into(), item_type: "url".into(),
-                item_hash: "b1".into(), raw_content: None,
+                source_url: "b".into(),
+                item_type: "url".into(),
+                item_hash: "b1".into(),
+                raw_content: None,
                 extracted_url: Some("https://b.com".into()),
             },
-        ]).unwrap();
+        ])
+        .unwrap();
 
         let pending = repo.get_pending_items(10).unwrap();
         assert_eq!(pending.len(), 2);
@@ -563,12 +657,14 @@ mod tests {
     #[test]
     fn test_ignore_unmatched() {
         let repo = setup_repo();
-        repo.save_items(&[
-            NewRawItem {
-                source_url: "a".into(), item_type: "url".into(),
-                item_hash: "a1".into(), raw_content: None, extracted_url: None,
-            },
-        ]).unwrap();
+        repo.save_items(&[NewRawItem {
+            source_url: "a".into(),
+            item_type: "url".into(),
+            item_hash: "a1".into(),
+            raw_content: None,
+            extracted_url: None,
+        }])
+        .unwrap();
 
         repo.assign_worker(1, "worker-1").unwrap();
         let ignored = repo.ignore_unmatched().unwrap();

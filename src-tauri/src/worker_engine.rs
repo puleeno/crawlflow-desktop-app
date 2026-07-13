@@ -280,10 +280,11 @@ impl WorkerEngine {
         Ok(serde_json::Value::Object(fields))
     }
 
-    // ── HTTP Fetch (blocking) ─────────────────────────────────
+    // ── HTTP Fetch (blocking, safe inside tokio) ──────────────
 
-    /// Make a synchronous HTTP GET.
-    /// Uses `reqwest::blocking` for the default client.
+    /// Make a synchronous HTTP GET, safe to call from within a tokio async context.
+    /// Uses `tokio::task::block_in_place` so the blocking reqwest runtime doesn't
+    /// panic when dropped inside an existing tokio runtime.
     /// Delegates to `fetch_via_cdp` if client_type is "chrome" or "cdp".
     fn blocking_fetch(url: &str, profile: &crate::models::ClientProfile) -> Result<String, String> {
         if profile.client_type == "chrome" || profile.client_type == "cdp" {
@@ -301,43 +302,50 @@ impl WorkerEngine {
             });
         }
 
-        let timeout = std::time::Duration::from_secs(profile.timeout_secs.unwrap_or(30));
-        let mut builder = reqwest::blocking::Client::builder()
-            .timeout(timeout)
-            .danger_accept_invalid_certs(true);
+        let url = url.to_string();
+        let profile = profile.clone();
 
-        if let Some(ref ua) = profile.user_agent {
-            builder = builder.user_agent(ua.as_str());
-        }
+        // block_in_place: yield the tokio thread to blocking work without spawning
+        // a new tokio runtime (which would panic when dropped inside an existing one).
+        tokio::task::block_in_place(move || {
+            let timeout = std::time::Duration::from_secs(profile.timeout_secs.unwrap_or(30));
+            let mut builder = reqwest::blocking::Client::builder()
+                .timeout(timeout)
+                .danger_accept_invalid_certs(true);
 
-        let client = builder
-            .build()
-            .map_err(|e| format!("HTTP client build error: {}", e))?;
+            if let Some(ref ua) = profile.user_agent {
+                builder = builder.user_agent(ua.as_str());
+            }
 
-        let mut req = client.get(url);
-        if let Some(ref headers) = profile.headers {
-            for (k, v) in headers {
-                if let (Ok(name), Ok(val)) = (
-                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
-                    reqwest::header::HeaderValue::from_str(v),
-                ) {
-                    req = req.header(name, val);
+            let client = builder
+                .build()
+                .map_err(|e| format!("HTTP client build error: {}", e))?;
+
+            let mut req = client.get(&url);
+            if let Some(ref headers) = profile.headers {
+                for (k, v) in headers {
+                    if let (Ok(name), Ok(val)) = (
+                        reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                        reqwest::header::HeaderValue::from_str(v),
+                    ) {
+                        req = req.header(name, val);
+                    }
                 }
             }
-        }
 
-        let response = req
-            .send()
-            .map_err(|e| format!("HTTP request failed for {}: {}", url, e))?;
+            let response = req
+                .send()
+                .map_err(|e| format!("HTTP request failed for {}: {}", url, e))?;
 
-        let status = response.status().as_u16();
-        if status < 200 || status >= 400 {
-            return Err(format!("HTTP {} for {}", status, url));
-        }
+            let status = response.status().as_u16();
+            if status < 200 || status >= 400 {
+                return Err(format!("HTTP {} for {}", status, url));
+            }
 
-        response
-            .text()
-            .map_err(|e| format!("Failed to read response body: {}", e))
+            response
+                .text()
+                .map_err(|e| format!("Failed to read response body: {}", e))
+        })
     }
 }
 

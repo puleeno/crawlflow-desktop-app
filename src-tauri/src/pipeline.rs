@@ -609,6 +609,16 @@ pub async fn execute_repository_pipeline(
     let repo = match RawItemRepository::open(db_path) {
         Ok(r) => {
             r.ensure_tables().ok();
+            // Recover items stuck in 'processing' from a previous crash/restart
+            if let Ok(n) = r.reset_stale_processing_items() {
+                if n > 0 {
+                    log_manager.info(
+                        project_id,
+                        "pipeline",
+                        &format!("Recovered {} stale 'processing' items -> 'pending'", n),
+                    );
+                }
+            }
             r
         }
         Err(e) => {
@@ -744,7 +754,11 @@ pub async fn execute_repository_pipeline(
             if let Some(ref pst) = plugin_source_type {
                 if let Some(engine) = python_engine.as_deref_mut() {
                     let plugin_id = pst.strip_prefix("py-").unwrap_or(pst);
-                    let plugin_config = node.data.get("pluginConfig").cloned().unwrap_or(serde_json::Value::Null);
+                    let plugin_config = node
+                        .data
+                        .get("pluginConfig")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
                     let mut config = match &plugin_config {
                         serde_json::Value::Object(map) => map.clone(),
                         _ => serde_json::Map::new(),
@@ -778,19 +792,29 @@ pub async fn execute_repository_pipeline(
                             );
                             if !plugin_items.is_empty() {
                                 // Convert plugin items to NewRawItem and save to repo
-                                let new_items: Vec<crate::repository::NewRawItem> = plugin_items.iter().map(|item| {
-                                    let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                                    let raw_json = serde_json::to_string(item).unwrap_or_default();
-                                    let hash_input = if !url.is_empty() { url } else { &raw_json };
-                                    let item_hash = simple_hash(hash_input);
-                                    crate::repository::NewRawItem {
-                                        source_url: source_value.to_string(),
-                                        item_type: "product".into(),
-                                        item_hash,
-                                        raw_content: Some(raw_json),
-                                        extracted_url: if url.is_empty() { None } else { Some(url.to_string()) },
-                                    }
-                                }).collect();
+                                let new_items: Vec<crate::repository::NewRawItem> = plugin_items
+                                    .iter()
+                                    .map(|item| {
+                                        let url =
+                                            item.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                                        let raw_json =
+                                            serde_json::to_string(item).unwrap_or_default();
+                                        let hash_input =
+                                            if !url.is_empty() { url } else { &raw_json };
+                                        let item_hash = simple_hash(hash_input);
+                                        crate::repository::NewRawItem {
+                                            source_url: source_value.to_string(),
+                                            item_type: "product".into(),
+                                            item_hash,
+                                            raw_content: Some(raw_json),
+                                            extracted_url: if url.is_empty() {
+                                                None
+                                            } else {
+                                                Some(url.to_string())
+                                            },
+                                        }
+                                    })
+                                    .collect();
 
                                 match repo.save_items(&new_items) {
                                     Ok(r) => {
@@ -808,7 +832,10 @@ pub async fn execute_repository_pipeline(
                                         log_manager.error(
                                             project_id,
                                             "fetching",
-                                            &format!("[node={}] Failed to save plugin items: {}", node_label, e),
+                                            &format!(
+                                                "[node={}] Failed to save plugin items: {}",
+                                                node_label, e
+                                            ),
                                         );
                                     }
                                 }
@@ -1256,7 +1283,7 @@ pub async fn execute_repository_pipeline(
         };
     }
 
-    let finish_actions = extract_finish_actions(config);
+    let finish_actions = extract_finish_actions(config, project_id);
     let log_fn = |msg: &str, level: &str| match level {
         "error" => {
             log_manager.error(project_id, "finish_actions", msg);
@@ -1675,7 +1702,7 @@ fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
     workers
 }
 
-fn extract_finish_actions(config: &PipelineConfig) -> Vec<FinishAction> {
+fn extract_finish_actions(config: &PipelineConfig, project_id: &str) -> Vec<FinishAction> {
     let mut actions = Vec::new();
 
     for node in &config.nodes {
@@ -1734,10 +1761,14 @@ fn extract_finish_actions(config: &PipelineConfig) -> Vec<FinishAction> {
                             .and_then(|v| v.as_str())
                             .unwrap_or("Sheet1");
 
-                        // Substitute {{date}} with current date
-                        let now = chrono_now();
-                        let date_str = &now[..10];
-                        let resolved_file_name = file_name.replace("{{date}}", date_str);
+                        // Substitute {{date}} -> actual calendar date (YYYY-MM-DD)
+                        // Substitute {{project_id}} -> short project id (first 8 chars)
+                        let date_str = chrono_date();
+                        let short_id = &project_id[..project_id.len().min(8)];
+                        let resolved_file_name = file_name
+                            .replace("{{date}}", &date_str)
+                            .replace("{{project_id}}", short_id)
+                            .replace("{{timestamp}}", &chrono_now());
 
                         let export_dir = dirs_next::data_dir()
                             .unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -1983,6 +2014,7 @@ mod tests {
     }
 }
 
+/// Returns current UTC time as unix timestamp seconds (string)
 fn chrono_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -1990,6 +2022,45 @@ fn chrono_now() -> String {
         .unwrap_or_default()
         .as_secs()
         .to_string()
+}
+
+/// Returns current UTC date as YYYY-MM-DD string (for stable daily filenames)
+fn chrono_date() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Simple date calculation from unix timestamp (UTC, no leap seconds)
+    let days = secs / 86400;
+    // Days since 1970-01-01
+    let mut year = 1970u32;
+    let mut remaining_days = days as u32;
+    loop {
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+        let days_in_year = if leap { 366 } else { 365 };
+        if remaining_days < days_in_year {
+            break;
+        }
+        remaining_days -= days_in_year;
+        year += 1;
+    }
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let month_days: &[u32] = if leap {
+        &[31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        &[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    let mut month = 1u32;
+    for &d in month_days {
+        if remaining_days < d {
+            break;
+        }
+        remaining_days -= d;
+        month += 1;
+    }
+    let day = remaining_days + 1;
+    format!("{:04}-{:02}-{:02}", year, month, day)
 }
 
 fn label_of(node: &PipelineNode) -> &str {
