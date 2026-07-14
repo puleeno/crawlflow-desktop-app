@@ -1141,6 +1141,12 @@ def _export_csv(products, filepath):
     mode = "a" if os.path.exists(filepath) else "w"
     has_header = mode == "w"
 
+    # Count existing data rows to continue STT
+    existing_count = 0
+    if mode == "a" and os.path.exists(filepath):
+        with open(filepath, "r", encoding="utf-8-sig") as f:
+            existing_count = sum(1 for _ in f) - 1  # subtract header row
+
     with open(filepath, mode, newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
         if has_header:
@@ -1150,7 +1156,7 @@ def _export_csv(products, filepath):
                 "Thương hiệu", "Tên sách", "Danh mục"
             ])
 
-        count = 0
+        count = existing_count
         for item in products:
             specs = item.get("specs", {})
 
