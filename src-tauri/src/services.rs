@@ -56,7 +56,7 @@ fn is_process_running(pid: u32) -> bool {
 fn is_project_running_in_background(project_id: &str) -> bool {
     let path = dirs_next::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("com.crawlflow.desktop")
+        .join("com.CrawlFlow.desktop")
         .join(format!("{}.run", project_id));
     if !path.exists() {
         return false;
@@ -100,7 +100,7 @@ impl ServiceManager {
         // Only write service_control to SQLite - background service handles execution
         let db_path = dirs_next::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("com.crawlflow.desktop")
+            .join("com.CrawlFlow.desktop")
             .join("crawlflow.db");
         
         if let Ok(conn) = rusqlite::Connection::open(&db_path) {
@@ -120,7 +120,7 @@ impl ServiceManager {
     pub fn stop_service(&self, project_id: &str) -> Result<(), String> {
         let db_path = dirs_next::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("com.crawlflow.desktop")
+            .join("com.CrawlFlow.desktop")
             .join("crawlflow.db");
         
         if let Ok(conn) = rusqlite::Connection::open(&db_path) {
@@ -139,7 +139,7 @@ impl ServiceManager {
     pub fn pause_service(&self, project_id: &str) -> Result<(), String> {
         let db_path = dirs_next::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("com.crawlflow.desktop")
+            .join("com.CrawlFlow.desktop")
             .join("crawlflow.db");
         
         if let Ok(conn) = rusqlite::Connection::open(&db_path) {
@@ -158,7 +158,7 @@ impl ServiceManager {
     pub fn resume_service(&self, project_id: &str) -> Result<(), String> {
         let db_path = dirs_next::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("com.crawlflow.desktop")
+            .join("com.CrawlFlow.desktop")
             .join("crawlflow.db");
         
         if let Ok(conn) = rusqlite::Connection::open(&db_path) {
@@ -178,7 +178,7 @@ impl ServiceManager {
         // Read only from SQLite project_runtime (background service state)
         let db_path = dirs_next::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("com.crawlflow.desktop")
+            .join("com.CrawlFlow.desktop")
             .join("crawlflow.db");
         if let Ok(conn) = rusqlite::Connection::open(&db_path) {
             let row: rusqlite::Result<(String, i64, Option<String>, Option<String>, u64)> = conn.query_row(
@@ -225,7 +225,7 @@ impl ServiceManager {
         // Read from SQLite - list all projects with runtime info
         let db_path = dirs_next::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("com.crawlflow.desktop")
+            .join("com.CrawlFlow.desktop")
             .join("crawlflow.db");
         
         let conn = match rusqlite::Connection::open(&db_path) {

@@ -89,7 +89,7 @@ pub fn shutdown_global_chrome() {
 fn find_chrome() -> Option<PathBuf> {
     // Check configured path from app settings first
     if let Some(data_dir) = dirs_next::data_dir() {
-        let master_db = data_dir.join("com.crawlflow.desktop").join("crawlflow.db");
+        let master_db = data_dir.join("com.CrawlFlow.desktop").join("crawlflow.db");
         if master_db.exists() {
             if let Ok(conn) = rusqlite::Connection::open(&master_db) {
                 if let Ok(mut stmt) =
@@ -160,7 +160,7 @@ fn find_chrome() -> Option<PathBuf> {
 
 fn is_global_headless_enabled() -> bool {
     if let Some(data_dir) = dirs_next::data_dir() {
-        let master_db = data_dir.join("com.crawlflow.desktop").join("crawlflow.db");
+        let master_db = data_dir.join("com.CrawlFlow.desktop").join("crawlflow.db");
         if master_db.exists() {
             if let Ok(conn) = rusqlite::Connection::open(&master_db) {
                 if let Ok(mut stmt) =

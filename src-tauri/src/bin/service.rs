@@ -40,7 +40,7 @@ fn get_app_data_dir() -> PathBuf {
     // Mirrors Tauri v2 data directory logic
     dirs_next::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.crawlflow.desktop")
+        .join("com.CrawlFlow.desktop")
 }
 
 fn master_db_path() -> PathBuf {
@@ -54,7 +54,7 @@ fn project_db_path(db_filename: &str) -> PathBuf {
 fn get_user_plugins_dir() -> PathBuf {
     dirs_next::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.crawlflow.desktop")
+        .join("com.CrawlFlow.desktop")
         .join("plugins")
 }
 

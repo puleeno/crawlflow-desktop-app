@@ -384,7 +384,7 @@ The `crawlflow-service` binary (`src-tauri/src/bin/service.rs`) is the **sole ex
 6. Resets `service_control = "run"` for next cycle
 
 System service integration:
-- **macOS:** launchd (`~/Library/LaunchAgents/com.crawlflow.service.plist`)
+- **macOS:** launchd (`~/Library/LaunchAgents/com.CrawlFlow.service.plist`)
 - **Linux:** systemd (`~/.config/systemd/user/crawlflow.service`)
 - **Windows:** Task Scheduler (`crawlflow-service` task)
 

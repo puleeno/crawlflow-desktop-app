@@ -1842,7 +1842,7 @@ fn extract_finish_actions(config: &PipelineConfig, project_id: &str) -> Vec<Fini
 
                         let export_dir = dirs_next::data_dir()
                             .unwrap_or_else(|| std::path::PathBuf::from("."))
-                            .join("com.crawlflow.desktop")
+                            .join("com.CrawlFlow.desktop")
                             .join("exports");
                         std::fs::create_dir_all(&export_dir).ok();
                         let out_path = export_dir.join(&resolved_file_name);
@@ -1861,7 +1861,7 @@ fn extract_finish_actions(config: &PipelineConfig, project_id: &str) -> Vec<Fini
 
                         let export_dir = dirs_next::data_dir()
                             .unwrap_or_else(|| std::path::PathBuf::from("."))
-                            .join("com.crawlflow.desktop")
+                            .join("com.CrawlFlow.desktop")
                             .join("exports");
                         std::fs::create_dir_all(&export_dir).ok();
                         let out_path = export_dir.join(file_name);

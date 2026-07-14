@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-const SERVICE_IDENTIFIER: &str = "com.crawlflow.desktop-service";
+const SERVICE_IDENTIFIER: &str = "com.CrawlFlow.desktop-service";
 
 fn app_exe_path() -> Option<PathBuf> {
     std::env::current_exe().ok()
@@ -25,7 +25,7 @@ fn service_exe_str() -> String {
 fn data_dir() -> PathBuf {
     dirs_next::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.crawlflow.desktop")
+        .join("com.CrawlFlow.desktop")
 }
 
 fn service_log_dir() -> PathBuf {
@@ -432,7 +432,7 @@ mod tests {
         let plist = SystemServiceManager::generate_plist(
             "/Applications/CrawlFlow.app/Contents/MacOS/crawlflow",
         );
-        assert!(plist.contains("com.crawlflow.desktop-service"));
+        assert!(plist.contains("com.CrawlFlow.desktop-service"));
         assert!(plist.contains("--all"));
         assert!(plist.contains("RunAtLoad"));
         assert!(plist.contains("KeepAlive"));

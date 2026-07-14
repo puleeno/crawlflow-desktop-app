@@ -30,7 +30,7 @@ use tauri::Manager;
 fn get_user_plugins_dir() -> PathBuf {
     dirs_next::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.crawlflow.desktop")
+        .join("com.CrawlFlow.desktop")
         .join("plugins")
 }
 
@@ -182,7 +182,7 @@ pub fn run() {
             {
                 let db_path = dirs_next::data_dir()
                     .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join("com.crawlflow.desktop")
+                    .join("com.CrawlFlow.desktop")
                     .join("crawlflow.db");
                 state.log_manager.set_master_db_path(db_path);
             }

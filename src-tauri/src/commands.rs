@@ -213,7 +213,11 @@ pub async fn export_csv_cmd(request: ExportRequest) -> ExportResult {
 
 // ── Excel export (Rust-side xlsx generation) ──────────────────────
 
-pub fn inner_export_excel(data: &[serde_json::Value], sheet_name: &str, include_header: bool) -> Result<Vec<u8>, String> {
+pub fn inner_export_excel(
+    data: &[serde_json::Value],
+    sheet_name: &str,
+    include_header: bool,
+) -> Result<Vec<u8>, String> {
     let wb = crate::spreadsheet::Workbook::from_json_rows(data, sheet_name, include_header);
     crate::spreadsheet::to_xlsx_bytes(&wb)
 }
@@ -231,22 +235,29 @@ pub async fn export_excel_cmd(request: ExportRequest) -> ExportResult {
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
-    let column_mapping = request.config.get("columnMapping").and_then(|v| v.as_object());
+    let column_mapping = request
+        .config
+        .get("columnMapping")
+        .and_then(|v| v.as_object());
 
     // Apply column mapping to rename fields in the data
     let mapped_data: Vec<serde_json::Value> = if let Some(mapping) = column_mapping {
-        request.data.iter().map(|item| {
-            if let serde_json::Value::Object(obj) = item {
-                let mut new_obj = serde_json::Map::new();
-                for (k, v) in obj.iter() {
-                    let new_key = mapping.get(k).and_then(|v| v.as_str()).unwrap_or(k);
-                    new_obj.insert(new_key.to_string(), v.clone());
+        request
+            .data
+            .iter()
+            .map(|item| {
+                if let serde_json::Value::Object(obj) = item {
+                    let mut new_obj = serde_json::Map::new();
+                    for (k, v) in obj.iter() {
+                        let new_key = mapping.get(k).and_then(|v| v.as_str()).unwrap_or(k);
+                        new_obj.insert(new_key.to_string(), v.clone());
+                    }
+                    serde_json::Value::Object(new_obj)
+                } else {
+                    item.clone()
                 }
-                serde_json::Value::Object(new_obj)
-            } else {
-                item.clone()
-            }
-        }).collect()
+            })
+            .collect()
     } else {
         request.data.clone()
     };
@@ -313,7 +324,8 @@ pub async fn spreadsheet_export_cmd(
 
     let content: (String, String, String) = match format.as_str() {
         "csv" => {
-            let wb = crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header);
+            let wb =
+                crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header);
             match crate::spreadsheet::to_csv_string(&wb) {
                 Ok(csv) => (csv, "text/csv".into(), "csv".into()),
                 Err(e) => {
@@ -326,7 +338,8 @@ pub async fn spreadsheet_export_cmd(
             }
         }
         "ods" => {
-            let wb = crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header);
+            let wb =
+                crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header);
             match crate::spreadsheet::to_ods_bytes(&wb) {
                 Ok(bytes) => {
                     use base64::Engine;
@@ -348,7 +361,8 @@ pub async fn spreadsheet_export_cmd(
         }
         _ => {
             // Default: xlsx
-            let wb = crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header);
+            let wb =
+                crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header);
             match crate::spreadsheet::to_xlsx_bytes(&wb) {
                 Ok(bytes) => {
                     use base64::Engine;
@@ -813,7 +827,7 @@ pub fn stop_system_service_cmd() -> Result<String, String> {
 fn get_user_plugins_dir() -> PathBuf {
     dirs_next::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.crawlflow.desktop")
+        .join("com.CrawlFlow.desktop")
 }
 
 #[tauri::command]
@@ -905,7 +919,7 @@ pub fn get_settings_defaults(processor_id: String) -> Result<serde_json::Value, 
 fn get_project_db_path(project_id: &str) -> PathBuf {
     let data_dir = dirs_next::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("com.crawlflow.desktop");
+        .join("com.CrawlFlow.desktop");
     data_dir.join(format!("project_{}.db", project_id))
 }
 
@@ -964,7 +978,7 @@ pub fn get_raw_items_summary_cmd(
 fn master_db_path() -> PathBuf {
     dirs_next::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("com.crawlflow.desktop")
+        .join("com.CrawlFlow.desktop")
         .join("crawlflow.db")
 }
 

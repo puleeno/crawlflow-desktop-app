@@ -55,7 +55,7 @@ pub fn run() {
 {
   "productName": "CrawlFlow",
   "version": "0.1.0",
-  "identifier": "com.crawlflow.desktop",
+  "identifier": "com.CrawlFlow.desktop",
   "plugins": {
     "updater": {
       "endpoints": [
@@ -75,15 +75,15 @@ pub fn run() {
 >   "pub_date": "2026-07-04T12:00:00Z",
 >   "platforms": {
 >     "darwin-aarch64": {
->       "url": "https://download.crawlflow.com/v1.0.0/crawlflow_aarch64.dmg",
+>       "url": "https://download.CrawlFlow.com/v1.0.0/crawlflow_aarch64.dmg",
 >       "signature": ""
 >     },
 >     "darwin-x86_64": {
->       "url": "https://download.crawlflow.com/v1.0.0/crawlflow_x64.dmg",
+>       "url": "https://download.CrawlFlow.com/v1.0.0/crawlflow_x64.dmg",
 >       "signature": ""
 >     },
 >     "windows-x86_64": {
->       "url": "https://download.crawlflow.com/v1.0.0/crawlflow_x64.msi",
+>       "url": "https://download.CrawlFlow.com/v1.0.0/crawlflow_x64.msi",
 >       "signature": ""
 >     }
 >   }
@@ -387,7 +387,7 @@ aws s3 cp src-tauri/target/release/bundle/dmg/CrawlFlow_0.1.0_aarch64.dmg \
 
 Tạo public URL qua R2 bucket → Settings → Public Access → `https://pub-<hash>.r2.dev/releases/v0.1.0/crawlflow_aarch64.dmg`
 
-Hoặc dùng domain riêng: `https://download.crawlflow.com/releases/v0.1.0/crawlflow_aarch64.dmg`
+Hoặc dùng domain riêng: `https://download.CrawlFlow.com/releases/v0.1.0/crawlflow_aarch64.dmg`
 
 ---
 
@@ -400,7 +400,7 @@ npx wrangler d1 execute crawlflow-db --remote --command="
 INSERT INTO app_versions (version, download_url, checksum_sha256, changelog, is_stable, is_required, created_at)
 VALUES (
   '1.0.0',
-  'https://download.crawlflow.com/releases/v1.0.0/crawlflow_aarch64.dmg',
+  'https://download.CrawlFlow.com/releases/v1.0.0/crawlflow_aarch64.dmg',
   'sha256-checksum-cua-file',
   '- Thêm license system\n- Cập nhật Inspector UI\n- Fix crash khi start service',
   1,
