@@ -550,7 +550,11 @@ impl RawItemRepository {
                     r.dup_count, r.priority, r.worker_id, r.matched, r.status, r.created_at, r.updated_at,
                     p.output
              FROM raw_items r
-             LEFT JOIN processing_log p ON p.item_id = r.id
+             LEFT JOIN (
+                 SELECT item_id, output, MAX(id) AS max_id
+                 FROM processing_log
+                 GROUP BY item_id
+             ) p ON p.item_id = r.id
              WHERE r.status = 'done'
              ORDER BY r.updated_at DESC
              LIMIT ?1"
