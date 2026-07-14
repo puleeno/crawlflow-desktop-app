@@ -1,0 +1,177 @@
+{
+  "crawlflow": {
+    "config": {
+      "desc":
+        "Oreka.vn Shop Crawler - uses Python plugin for data source, with parallel product extraction and spreadsheet export",
+      "name": "Oreka Shop Crawler"
+    },
+    "edges": [
+      {
+        "from": "ds-oreka",
+        "to": "1"
+      },
+      {
+        "from": "1",
+        "to": "repository-node"
+      },
+      {
+        "from": "2",
+        "to": "worker-1"
+      },
+      {
+        "from": "ds-oreka",
+        "to": "repository-node"
+      },
+      {
+        "from": "worker-1",
+        "to": "exp-oreka"
+      },
+      {
+        "from": "exp-oreka",
+        "to": "completion-node"
+      }
+    ],
+    "nodes": [
+      {
+        "data": {
+          "clientHeadless": false,
+          "clientTimeoutSecs": 30,
+          "clientType": "static",
+          "depth": 1,
+          "sourceType": "",
+          "sourceValue": "",
+          "waitForSelector": "",
+          "waitTimeout": 30,
+          "pluginSourceType": "py-oreka-shop-crawler"
+        },
+        "id": "ds-oreka",
+        "label": "Oreka Shop Crawler",
+        "position": { "x": -476.5677795410156, "y": -422.1376953125 },
+        "type": "start-node"
+      },
+      {
+        "data": {
+          "csvDelimiter": "",
+          "csvHasHeader": false,
+          "extractRules": [],
+          "inputType": "html",
+          "itemSelector": "",
+          "jsonItemPath": "",
+          "urlPatterns": [
+            {
+              "enabled": true,
+              "type": "regex",
+              "value": ".*-detail\\/[0-9]{1,}\\/?"
+            }
+          ]
+        },
+        "id": "1",
+        "label": "Pre-processing",
+        "position": { "x": -222.39657592773438, "y": -428.1717834472656 },
+        "type": "preprocessor"
+      },
+      {
+        "data": {},
+        "id": "repository-node",
+        "label": "Repository",
+        "position": { "x": 66.82013702392578, "y": -445.11236572265625 },
+        "type": "repository"
+      },
+      {
+        "data": {
+          "autoStart": false,
+          "clientHeadless": false,
+          "clientTimeoutSecs": 30,
+          "clientType": "static",
+          "extractionRules": [
+            {
+              "attribute": "content",
+              "name": "product_name",
+              "selector": "meta[property='og:title']",
+              "type": "attribute"
+            },
+            {
+              "attribute": "content",
+              "name": "images",
+              "selector": "meta[property='og:image']",
+              "type": "attribute"
+            },
+            {
+              "attribute": "content",
+              "name": "description",
+              "selector": "meta[property='og:description']",
+              "type": "attribute"
+            },
+            {
+              "name": "price",
+              "selector": "span.price",
+              "type": "text"
+            }
+          ],
+          "inputType": "html",
+          "waitForSelector": "",
+          "waitTimeout": 30
+        },
+        "id": "2",
+        "label": "HTML Data Extracting",
+        "position": { "x": -118.97332763671875, "y": -222.75259399414062 },
+        "type": "html-data-extractor"
+      },
+      {
+        "data": {
+          "autoStart": false,
+          "clientHeadless": false,
+          "clientTimeoutSecs": 30,
+          "clientType": "static",
+          "concurrency": 3,
+          "detectionRules": [
+            {
+              "condition": "exists",
+              "id": "1783651265684",
+              "pattern": ".*-detail\\/[0-9]{1,}\\/?",
+              "selector": "",
+              "type": "url-format",
+              "value": ""
+            }
+          ],
+          "extractionRules": [],
+          "inputType": "html",
+          "label": "",
+          "waitForSelector": "",
+          "waitTimeout": 30
+        },
+        "id": "worker-1",
+        "label": "Worker Node",
+        "position": { "x": 289.2432861328125, "y": -445.11236572265625 },
+        "type": "worker"
+      },
+      {
+        "data": {
+          "columnMapping": {
+            "extracted_url": "URL",
+            "product_name": "Tên sản phẩm",
+            "price": "Giá",
+            "description": "Mô tả",
+            "images": "Hình ảnh"
+          },
+          "exportFileName": "san-pham-oreka",
+          "includeHeader": true,
+          "processorType": "excel-export",
+          "sheetName": "Oreka Products",
+          "spreadsheetFormat": "xlsx"
+        },
+        "id": "exp-oreka",
+        "label": "Excel Export",
+        "position": { "x": 531.41943359375, "y": -445.11236572265625 },
+        "type": "processor"
+      },
+      {
+        "data": {},
+        "id": "completion-node",
+        "label": "Completion",
+        "position": { "x": 770.6406860351562, "y": -445.11236572265625 },
+        "type": "completion"
+      }
+    ]
+  }
+}

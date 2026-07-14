@@ -778,8 +778,19 @@ pub async fn execute_repository_pipeline(
                         serde_json::Value::Object(map) => map.clone(),
                         _ => serde_json::Map::new(),
                     };
-                    if !config.contains_key("shop_url") && !source_value.is_empty() {
-                        config.insert("shop_url".into(), serde_json::json!(source_value));
+                    if !config.contains_key("shop_url") {
+                        if !source_value.is_empty() {
+                            config.insert("shop_url".into(), serde_json::json!(source_value));
+                        } else {
+                            log_manager.warn(
+                                project_id,
+                                "fetching",
+                                &format!(
+                                    "[node={}] Plugin '{}' requires shop_url but sourceValue is empty and pluginConfig.shop_url is not set",
+                                    node_label, plugin_id
+                                ),
+                            );
+                        }
                     }
                     config.insert("source_url".into(), serde_json::json!(source_value));
                     config.insert("project_id".into(), serde_json::json!(project_id));
@@ -1614,7 +1625,7 @@ fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
                             field: field.to_string(),
                             pattern: match pattern_type {
                                 "wildcard" => MatchPattern::Wildcard(value.into()),
-                                "regex" => MatchPattern::Regex(value.into()),
+                                "regex" | "url-format" => MatchPattern::Regex(value.into()),
                                 "contains" => MatchPattern::Contains(value.into()),
                                 "startswith" => MatchPattern::StartsWith(value.into()),
                                 "endswith" => MatchPattern::EndsWith(value.into()),
