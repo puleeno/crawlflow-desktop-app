@@ -217,16 +217,6 @@ def register_presets():
     }
     return json.dumps([preset])
 
-import json
-import hashlib
-import time
-import os
-import re
-import urllib.parse
-from datetime import datetime
-from html import unescape
-from html.parser import HTMLParser
-
 
 def _add_page_to_url(url, page_param, page_num):
     parsed = urllib.parse.urlparse(url)
@@ -283,6 +273,15 @@ def _find_apollo_store_id(data):
     return None
 
 
+def _extract_store_slug_from_url(url):
+    """Extract store slug from Oreka store URL."""
+    # Pattern: https://www.oreka.vn/store/SLUG or /store/SLUG
+    match = re.search(r'/store/([A-Za-z0-9\-\.]+)', url)
+    if match:
+        return match.group(1)
+    return None
+
+
 def _extract_store_id_from_next_data(html):
     """Parse JSON trong script __NEXT_DATA__ va lay Store:<id> tu Apollo cache."""
     match = re.search(
@@ -319,6 +318,16 @@ def _extract_store_id_from_html(html):
     store_id = _extract_store_id_from_next_data(html)
     if store_id:
         return store_id
+
+    # Direct fallback for Apollo Store UUID pattern (e.g. Store:950fc091-0766-4b5e-af6a-ad7b5325a1fb)
+    uuid_match = re.search(r'["\']Store:([a-fA-F0-9\-]{36})["\']', html)
+    if uuid_match:
+        return uuid_match.group(1).strip()
+
+    # Fallback to look inside social meta og:image URL pattern (e.g. store-950fc091-0766-4b5e-af6a-ad7b5325a1fb.webp)
+    meta_match = re.search(r'store-([a-fA-F0-9\-]{36})\.', html)
+    if meta_match:
+        return meta_match.group(1).strip()
 
     for script_content in re.findall(r'<script\b[^>]*>(.*?)</script>', html, re.DOTALL | re.IGNORECASE):
         if "storeId" not in script_content and '"store"' not in script_content:
@@ -778,38 +787,30 @@ def fetch_data(config_json):
             result = json.loads(raw) if isinstance(raw, str) else raw
             if result.get("status") == 200:
                 html_body = result.get("body", "")
-                
-                # Dynamic storeId extraction
-                store_id = None
-                
-                # Check NEXT_DATA script tag
-                next_data_match = re.search(
-                    r'<script\s+id=["\']__NEXT_DATA__["\']\s+type=["\']application/json["\'][^>]*>(.*?)</script>',
-                    html_body,
-                    re.DOTALL
-                )
-                if next_data_match:
-                    try:
-                        next_data = json.loads(next_data_match.group(1))
-                        store_id = find_store_id(next_data)
-                    except Exception as e:
-                        crawlflow.log(f"[OrekaShop] Failed to parse __NEXT_DATA__: {e}", "warn")
-                
-                # Regex fallback
+                crawlflow.log(f"[OrekaShop] HTML body length: {len(html_body)} characters", "info")
+
+                # Try robust extractor first (Next.js __NEXT_DATA__ + Apollo cache)
+                store_id = _extract_store_id_from_html(html_body)
+
+                # Regex fallbacks if extractor failed
                 if not store_id:
-                    store_id_match = re.search(r'"storeId"\s*:\s*["\']([^"\']+)["\']', html_body)
-                    if store_id_match:
-                        store_id = store_id_match.group(1).strip()
-                    else:
-                        store_id_match = re.search(r'"store"\s*:\s*\{\s*"id"\s*:\s*["\']([^"\']+)["\']', html_body)
-                        if store_id_match:
-                            store_id = store_id_match.group(1).strip()
-                
+                    m = re.search(r'"storeId"\s*:\s*["\']([^"\']+)["\']', html_body)
+                    if m:
+                        store_id = m.group(1).strip()
+                if not store_id:
+                    m = re.search(r'"store"\s*:\s*\{\s*"id"\s*:\s*["\']([^"\']+)["\']', html_body)
+                    if m:
+                        store_id = m.group(1).strip()
+
                 if store_id:
                     shop_url = f"{base.rstrip('/')}/mua-ban?storeId={store_id}&sort=createdAt&order=desc"
                     crawlflow.log(f"[OrekaShop] Chuyen doi URL cua store thanh: {shop_url}", "info")
                 else:
-                    crawlflow.log("[OrekaShop] Khong tim thay storeId tu page HTML. Tiep tuc voi URL goc.", "warn")
+                    store_slug = _extract_store_slug_from_url(shop_url)
+                    if store_slug:
+                        crawlflow.log(f"[OrekaShop] Khong tim thay storeId. Dung store slug: {store_slug}", "warn")
+                    else:
+                        crawlflow.log("[OrekaShop] Khong tim thay storeId. Tiep tuc voi URL goc.", "warn")
             else:
                 crawlflow.log(f"[OrekaShop] Web request to store page returned status {result.get('status')}", "warn")
         except Exception as e:
@@ -852,8 +853,11 @@ def fetch_data(config_json):
                 total_pages_estimated = min(estimated, max_pages)
                 crawlflow.log(f"[OrekaShop] Uoc tinh {total_pages_estimated} trang", "info")
 
-        # Trich xuat link san pham
-        links = _extract_listing_links(html, base)
+        # Trich xuat link san pham Oreka (/mua-ban-*/.../--detail/<id>)
+        links = _extract_oreka_listing_links(html, base)
+        if not links:
+            # Fallback sang generic extractor cho cac site khac
+            links = set(_extract_listing_links(html, base))
         before = len(product_urls)
         product_urls.update(links)
         new_links = len(product_urls) - before

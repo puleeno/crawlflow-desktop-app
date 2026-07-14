@@ -2094,10 +2094,7 @@ mod tests {
         let workers = extract_workers(&config);
         assert_eq!(workers.len(), 1);
         assert_eq!(workers[0].matching_rules.len(), 1);
-        assert_eq!(
-            workers[0].matching_rules[0].field,
-            "url"
-        );
+        assert_eq!(workers[0].matching_rules[0].field, "url");
         assert!(matches!(
             workers[0].matching_rules[0].pattern,
             MatchPattern::Regex(_)
@@ -2213,12 +2210,48 @@ mod tests {
                 },
             ],
             edges: vec![
-                PipelineEdge { id: "e1".into(), source: "ds-oreka".into(), target: "1".into(), source_handle: None, target_handle: None },
-                PipelineEdge { id: "e2".into(), source: "1".into(), target: "repository-node".into(), source_handle: None, target_handle: None },
-                PipelineEdge { id: "e3".into(), source: "2".into(), target: "worker-1".into(), source_handle: None, target_handle: None },
-                PipelineEdge { id: "e4".into(), source: "ds-oreka".into(), target: "repository-node".into(), source_handle: None, target_handle: None },
-                PipelineEdge { id: "e5".into(), source: "worker-1".into(), target: "exp-oreka".into(), source_handle: None, target_handle: None },
-                PipelineEdge { id: "e6".into(), source: "exp-oreka".into(), target: "completion-node".into(), source_handle: None, target_handle: None },
+                PipelineEdge {
+                    id: "e1".into(),
+                    source: "ds-oreka".into(),
+                    target: "1".into(),
+                    source_handle: None,
+                    target_handle: None,
+                },
+                PipelineEdge {
+                    id: "e2".into(),
+                    source: "1".into(),
+                    target: "repository-node".into(),
+                    source_handle: None,
+                    target_handle: None,
+                },
+                PipelineEdge {
+                    id: "e3".into(),
+                    source: "2".into(),
+                    target: "worker-1".into(),
+                    source_handle: None,
+                    target_handle: None,
+                },
+                PipelineEdge {
+                    id: "e4".into(),
+                    source: "ds-oreka".into(),
+                    target: "repository-node".into(),
+                    source_handle: None,
+                    target_handle: None,
+                },
+                PipelineEdge {
+                    id: "e5".into(),
+                    source: "worker-1".into(),
+                    target: "exp-oreka".into(),
+                    source_handle: None,
+                    target_handle: None,
+                },
+                PipelineEdge {
+                    id: "e6".into(),
+                    source: "exp-oreka".into(),
+                    target: "completion-node".into(),
+                    source_handle: None,
+                    target_handle: None,
+                },
             ],
             settings: serde_json::json!({}),
         };
@@ -2230,7 +2263,7 @@ mod tests {
         let db_path = dir.join("test.db");
 
         // Initialize Python plugin engine with the Oreka shop plugin
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let builtin_plugins_dir = manifest_dir.parent().map(|p| p.join("plugins"));
 
         let mut py_engine = crate::python_plugins::PythonPluginEngine::new(
@@ -2241,7 +2274,7 @@ mod tests {
         let discovered = py_engine.discover().unwrap_or_default();
         eprintln!("Python plugins discovered: {:?}", discovered);
 
-        let enabled: std::collections::HashSet<String> = ["oreka_shop_crawler"]
+        let enabled: std::collections::HashSet<String> = ["oreka-shop-crawler"]
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -2275,18 +2308,19 @@ mod tests {
         );
 
         // Query items from DB to verify
-        let items = repo.query_items(&crate::repository::ItemsQuery {
-            status: None,
-            worker_id: None,
-            search: None,
-            matched: None,
-            limit: 1000,
-            offset: 0,
-            sort_by: None,
-            sort_dir: None,
-        })
-        .map(|p| p.items)
-        .unwrap_or_default();
+        let items = repo
+            .query_items(&crate::repository::ItemsQuery {
+                status: None,
+                worker_id: None,
+                search: None,
+                matched: None,
+                limit: 1000,
+                offset: 0,
+                sort_by: None,
+                sort_dir: None,
+            })
+            .map(|p| p.items)
+            .unwrap_or_default();
 
         eprintln!("Total items in repo: {}", items.len());
         for item in &items {

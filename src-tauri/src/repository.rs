@@ -693,7 +693,7 @@ mod tests {
         .unwrap();
 
         repo.assign_worker(1, "worker-1").unwrap();
-        let ignored = repo.ignore_unmatched().unwrap();
+        let _ignored = repo.ignore_unmatched().unwrap();
         // Item 1 was matched, so no items should be ignored
         let ignored_count = repo.count_by_status("ignored").unwrap();
         assert_eq!(ignored_count, 0);

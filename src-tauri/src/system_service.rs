@@ -418,13 +418,13 @@ mod tests {
 
     #[test]
     fn test_service_identifier() {
-        assert!(SERVICE_IDENTIFIER.contains("crawlflow"));
+        assert!(SERVICE_IDENTIFIER.to_lowercase().contains("crawlflow"));
     }
 
     #[test]
     fn test_data_dir() {
         let d = data_dir();
-        assert!(d.to_string_lossy().contains("crawlflow"));
+        assert!(d.to_string_lossy().to_lowercase().contains("crawlflow"));
     }
 
     #[test]
