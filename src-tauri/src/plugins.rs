@@ -1041,13 +1041,36 @@ pub fn excel_export_plugin(
         .get("sheetName")
         .and_then(|v| v.as_str())
         .unwrap_or("Sheet1");
+    let include_header = config
+        .get("includeHeader")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let column_mapping = config.get("columnMapping").and_then(|v| v.as_object());
+
+    let mapped_data: Vec<serde_json::Value> = if let Some(mapping) = column_mapping {
+        data.iter().map(|item| {
+            if let serde_json::Value::Object(obj) = item {
+                let mut new_obj = serde_json::Map::new();
+                for (k, v) in obj.iter() {
+                    let new_key = mapping.get(k).and_then(|v| v.as_str()).unwrap_or(k);
+                    new_obj.insert(new_key.to_string(), v.clone());
+                }
+                serde_json::Value::Object(new_obj)
+            } else {
+                item.clone()
+            }
+        }).collect()
+    } else {
+        data.clone()
+    };
 
     let file_name = config
         .get("fileName")
         .and_then(|v| v.as_str())
         .unwrap_or("export.xlsx");
 
-    let bytes = inner_export_excel(&data, sheet_name)?;
+    let bytes = inner_export_excel(&mapped_data, sheet_name, include_header)?;
 
     // Write to a temp file
     let out_dir = dirs_next::data_dir()

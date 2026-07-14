@@ -177,7 +177,7 @@ impl ActionEngine {
                 .collect()
         };
 
-        let wb = crate::spreadsheet::Workbook::from_json_rows(&filtered, "Sheet1");
+        let wb = crate::spreadsheet::Workbook::from_json_rows(&filtered, "Sheet1", true);
         match crate::spreadsheet::write(&wb, path) {
             Ok(()) => {
                 let abs_path = std::fs::canonicalize(path)
@@ -281,7 +281,7 @@ impl ActionEngine {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let wb = crate::spreadsheet::Workbook::from_json_rows(&filtered, "Sheet1");
+        let wb = crate::spreadsheet::Workbook::from_json_rows(&filtered, "Sheet1", true);
         match crate::spreadsheet::write_xlsx(&wb, path) {
             Ok(()) => {
                 let abs_path = std::fs::canonicalize(path)

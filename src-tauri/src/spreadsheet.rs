@@ -43,12 +43,41 @@ pub struct Workbook {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 impl Workbook {
-    pub fn from_json_rows(data: &[serde_json::Value], sheet_name: &str) -> Self {
+    pub fn from_json_rows(data: &[serde_json::Value], sheet_name: &str, include_header: bool) -> Self {
         let mut rows = Vec::new();
+        let mut keys: Vec<String> = Vec::new();
+
+        if include_header {
+            for item in data {
+                if let serde_json::Value::Object(obj) = item {
+                    for key in obj.keys() {
+                        if !keys.contains(key) {
+                            keys.push(key.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        if include_header && !keys.is_empty() {
+            let header_cells: Vec<CellValue> = keys.iter().map(|k| CellValue::String(k.clone())).collect();
+            rows.push(Row { cells: header_cells });
+        }
+
         for item in data {
             let cells = match item {
                 serde_json::Value::Array(arr) => arr.iter().map(|v| cell_from_json(v)).collect(),
-                serde_json::Value::Object(obj) => obj.values().map(|v| cell_from_json(v)).collect(),
+                serde_json::Value::Object(obj) => {
+                    if include_header && !keys.is_empty() {
+                        keys.iter().map(|k| {
+                            obj.get(k).map(|v| cell_from_json(v)).unwrap_or(CellValue::Empty)
+                        }).collect()
+                    } else {
+                        let mut sorted_keys: Vec<&String> = obj.keys().collect();
+                        sorted_keys.sort();
+                        sorted_keys.iter().map(|k| cell_from_json(&obj[*k])).collect()
+                    }
+                }
                 _ => vec![CellValue::String(item.to_string())],
             };
             rows.push(Row { cells });
@@ -479,9 +508,26 @@ mod tests {
             {"name": "Bob", "age": 25}
         ]);
         let data: Vec<serde_json::Value> = serde_json::from_value(json).unwrap();
-        let wb = Workbook::from_json_rows(&data, "Test");
+        let wb = Workbook::from_json_rows(&data, "Test", false);
         assert_eq!(wb.sheets.len(), 1);
         assert_eq!(wb.sheets[0].rows.len(), 2);
+    }
+
+    #[test]
+    fn test_from_json_rows_with_header() {
+        let json = serde_json::json!([
+            {"name": "Alice", "age": 30},
+            {"name": "Bob", "age": 25}
+        ]);
+        let data: Vec<serde_json::Value> = serde_json::from_value(json).unwrap();
+        let wb = Workbook::from_json_rows(&data, "Test", true);
+        assert_eq!(wb.sheets.len(), 1);
+        assert_eq!(wb.sheets[0].rows.len(), 3);
+        if let CellValue::String(h) = &wb.sheets[0].rows[0].cells[0] {
+            assert_eq!(h, "age");
+        } else {
+            panic!("Expected header cell to be a string");
+        }
     }
 
     #[test]

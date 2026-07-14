@@ -822,6 +822,7 @@ const App: React.FC = () => {
           userAgent: projectSettings.userAgent,
           concurrency: String(projectSettings.concurrency),
           enabled: String(projectSettings.enabled),
+          executionMode: projectSettings.executionMode,
         });
         const { message } = await import('@tauri-apps/plugin-dialog');
         await message('Project saved successfully!', { title: 'CrawlFlow', kind: 'info' });
@@ -1188,6 +1189,7 @@ const App: React.FC = () => {
           userAgent: state.settings.userAgent || prev.userAgent,
           concurrency: Number(state.settings.concurrency) || prev.concurrency,
           enabled: state.settings.enabled === 'true' || state.settings.enabled === '1' || prev.enabled,
+          executionMode: (state.settings.executionMode as 'parallel' | 'queue') || prev.executionMode,
         }));
       }
       setCurrentProjectId(projectId);

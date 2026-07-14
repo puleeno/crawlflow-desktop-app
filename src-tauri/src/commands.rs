@@ -213,8 +213,8 @@ pub async fn export_csv_cmd(request: ExportRequest) -> ExportResult {
 
 // ── Excel export (Rust-side xlsx generation) ──────────────────────
 
-pub fn inner_export_excel(data: &[serde_json::Value], sheet_name: &str) -> Result<Vec<u8>, String> {
-    let wb = crate::spreadsheet::Workbook::from_json_rows(data, sheet_name);
+pub fn inner_export_excel(data: &[serde_json::Value], sheet_name: &str, include_header: bool) -> Result<Vec<u8>, String> {
+    let wb = crate::spreadsheet::Workbook::from_json_rows(data, sheet_name, include_header);
     crate::spreadsheet::to_xlsx_bytes(&wb)
 }
 
@@ -225,8 +225,33 @@ pub async fn export_excel_cmd(request: ExportRequest) -> ExportResult {
         .get("sheetName")
         .and_then(|v| v.as_str())
         .unwrap_or("Sheet1");
+    let include_header = request
+        .config
+        .get("includeHeader")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
 
-    match inner_export_excel(&request.data, sheet_name) {
+    let column_mapping = request.config.get("columnMapping").and_then(|v| v.as_object());
+
+    // Apply column mapping to rename fields in the data
+    let mapped_data: Vec<serde_json::Value> = if let Some(mapping) = column_mapping {
+        request.data.iter().map(|item| {
+            if let serde_json::Value::Object(obj) = item {
+                let mut new_obj = serde_json::Map::new();
+                for (k, v) in obj.iter() {
+                    let new_key = mapping.get(k).and_then(|v| v.as_str()).unwrap_or(k);
+                    new_obj.insert(new_key.to_string(), v.clone());
+                }
+                serde_json::Value::Object(new_obj)
+            } else {
+                item.clone()
+            }
+        }).collect()
+    } else {
+        request.data.clone()
+    };
+
+    match inner_export_excel(&mapped_data, sheet_name, include_header) {
         Ok(bytes) => {
             use base64::Engine;
             let content = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -281,10 +306,14 @@ pub async fn spreadsheet_export_cmd(
         .get("sheetName")
         .and_then(|v| v.as_str())
         .unwrap_or("Sheet1");
+    let include_header = config
+        .get("includeHeader")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
 
     let content: (String, String, String) = match format.as_str() {
         "csv" => {
-            let wb = crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name);
+            let wb = crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header);
             match crate::spreadsheet::to_csv_string(&wb) {
                 Ok(csv) => (csv, "text/csv".into(), "csv".into()),
                 Err(e) => {
@@ -297,7 +326,7 @@ pub async fn spreadsheet_export_cmd(
             }
         }
         "ods" => {
-            let wb = crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name);
+            let wb = crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header);
             match crate::spreadsheet::to_ods_bytes(&wb) {
                 Ok(bytes) => {
                     use base64::Engine;
@@ -319,7 +348,7 @@ pub async fn spreadsheet_export_cmd(
         }
         _ => {
             // Default: xlsx
-            let wb = crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name);
+            let wb = crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header);
             match crate::spreadsheet::to_xlsx_bytes(&wb) {
                 Ok(bytes) => {
                     use base64::Engine;
@@ -876,8 +905,7 @@ pub fn get_settings_defaults(processor_id: String) -> Result<serde_json::Value, 
 fn get_project_db_path(project_id: &str) -> PathBuf {
     let data_dir = dirs_next::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("crawlflow")
-        .join("projects");
+        .join("com.crawlflow.desktop");
     data_dir.join(format!("project_{}.db", project_id))
 }
 
