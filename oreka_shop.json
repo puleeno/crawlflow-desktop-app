@@ -38,11 +38,12 @@
           "clientTimeoutSecs": 30,
           "clientType": "static",
           "depth": 1,
-          "sourceType": "",
-          "sourceValue": "",
+          "sourceType": "url",
+          "sourceValue": "https://www.oreka.vn/store/C21AVGZS44L3UU",
           "waitForSelector": "",
           "waitTimeout": 30,
-          "pluginSourceType": "py-oreka-shop-crawler"
+          "pluginSourceType": "py-oreka-shop-crawler",
+          "pluginConfig": {}
         },
         "id": "ds-oreka",
         "label": "Oreka Shop Crawler",

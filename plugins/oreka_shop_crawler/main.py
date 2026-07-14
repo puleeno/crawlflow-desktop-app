@@ -73,9 +73,12 @@ def register_presets():
                 "label": "Oreka Shop Source",
                 "position": {"x": 50, "y": 50},
                 "data": {
-                    "pluginSourceType": "py-oreka-shop-crawler",
+                    "pluginSourceType": "oreka-shop-crawler",
                     "sourceType": "url",
                     "sourceValue": "",
+                    "pluginConfig": {
+                        "shop_url": ""
+                    },
                     "urlSettings": {
                         "httpClient": {
                             "clientType": "reqwest",

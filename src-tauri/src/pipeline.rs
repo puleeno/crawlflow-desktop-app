@@ -2074,6 +2074,252 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_workers_with_url_format_type() {
+        let config = PipelineConfig {
+            nodes: vec![make_node(
+                "w-1",
+                "worker",
+                serde_json::json!({
+                    "detectionRules": [
+                        {
+                            "type": "url-format",
+                            "value": ".*-detail\\/[0-9]{1,}\\/?"
+                        }
+                    ]
+                }),
+            )],
+            edges: vec![],
+            settings: serde_json::Value::Null,
+        };
+        let workers = extract_workers(&config);
+        assert_eq!(workers.len(), 1);
+        assert_eq!(workers[0].matching_rules.len(), 1);
+        assert_eq!(
+            workers[0].matching_rules[0].field,
+            "url"
+        );
+        assert!(matches!(
+            workers[0].matching_rules[0].pattern,
+            MatchPattern::Regex(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_with_oreka_shop() {
+        let config = PipelineConfig {
+            nodes: vec![
+                PipelineNode {
+                    id: "ds-oreka".into(),
+                    node_type: "start".into(),
+                    label: Some("Oreka Shop Crawler".into()),
+                    data: serde_json::json!({
+                        "sourceType": "url",
+                        "sourceValue": "https://www.oreka.vn/store/C21AVGZS44L3UU",
+                        "pluginSourceType": "py-oreka-shop-crawler",
+                        "pluginConfig": {},
+                        "clientType": "static",
+                        "clientHeadless": false,
+                        "clientTimeoutSecs": 30,
+                        "waitForSelector": "",
+                        "waitTimeout": 30,
+                    }),
+                    position: None,
+                },
+                PipelineNode {
+                    id: "1".into(),
+                    node_type: "preprocessor".into(),
+                    label: Some("Pre-processing".into()),
+                    data: serde_json::json!({
+                        "inputType": "html",
+                        "urlPatterns": [
+                            {"enabled": true, "type": "regex", "value": ".*-detail\\/[0-9]{1,}\\/?"}
+                        ],
+                        "extractRules": [],
+                        "csvDelimiter": "",
+                        "csvHasHeader": false,
+                        "itemSelector": "",
+                        "jsonItemPath": "",
+                    }),
+                    position: None,
+                },
+                PipelineNode {
+                    id: "repository-node".into(),
+                    node_type: "repository".into(),
+                    label: Some("Repository".into()),
+                    data: serde_json::json!({}),
+                    position: None,
+                },
+                PipelineNode {
+                    id: "worker-1".into(),
+                    node_type: "worker".into(),
+                    label: Some("Worker Node".into()),
+                    data: serde_json::json!({
+                        "clientType": "static",
+                        "clientHeadless": false,
+                        "clientTimeoutSecs": 30,
+                        "concurrency": 3,
+                        "detectionRules": [
+                            {
+                                "type": "url-format",
+                                "value": ".*-detail\\/[0-9]{1,}\\/?"
+                            }
+                        ],
+                        "extractionRules": [],
+                        "inputType": "html",
+                    }),
+                    position: None,
+                },
+                PipelineNode {
+                    id: "2".into(),
+                    node_type: "html-data-extractor".into(),
+                    label: Some("HTML Data Extracting".into()),
+                    data: serde_json::json!({
+                        "extractionRules": [
+                            {"attribute": "content", "name": "product_name", "selector": "meta[property='og:title']", "type": "attribute"},
+                            {"attribute": "content", "name": "images", "selector": "meta[property='og:image']", "type": "attribute"},
+                            {"attribute": "content", "name": "description", "selector": "meta[property='og:description']", "type": "attribute"},
+                            {"name": "price", "selector": "span.price", "type": "text"}
+                        ],
+                        "inputType": "html",
+                    }),
+                    position: None,
+                },
+                PipelineNode {
+                    id: "exp-oreka".into(),
+                    node_type: "processor".into(),
+                    label: Some("Excel Export".into()),
+                    data: serde_json::json!({
+                        "processorType": "generate-excel-file",
+                        "spreadsheetFormat": "xlsx",
+                        "exportFileName": "san-pham-oreka",
+                        "includeHeader": true,
+                        "sheetName": "Oreka Products",
+                        "columnMapping": {
+                            "extracted_url": "URL",
+                            "product_name": "Tên sản phẩm",
+                            "price": "Giá",
+                            "description": "Mô tả",
+                            "images": "Hình ảnh"
+                        }
+                    }),
+                    position: None,
+                },
+                PipelineNode {
+                    id: "completion-node".into(),
+                    node_type: "completion".into(),
+                    label: Some("Completion".into()),
+                    data: serde_json::json!({}),
+                    position: None,
+                },
+            ],
+            edges: vec![
+                PipelineEdge { id: "e1".into(), source: "ds-oreka".into(), target: "1".into(), source_handle: None, target_handle: None },
+                PipelineEdge { id: "e2".into(), source: "1".into(), target: "repository-node".into(), source_handle: None, target_handle: None },
+                PipelineEdge { id: "e3".into(), source: "2".into(), target: "worker-1".into(), source_handle: None, target_handle: None },
+                PipelineEdge { id: "e4".into(), source: "ds-oreka".into(), target: "repository-node".into(), source_handle: None, target_handle: None },
+                PipelineEdge { id: "e5".into(), source: "worker-1".into(), target: "exp-oreka".into(), source_handle: None, target_handle: None },
+                PipelineEdge { id: "e6".into(), source: "exp-oreka".into(), target: "completion-node".into(), source_handle: None, target_handle: None },
+            ],
+            settings: serde_json::json!({}),
+        };
+
+        let dir = std::env::temp_dir()
+            .join("crawlflow-test")
+            .join(&format!("pipeline_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).ok();
+        let db_path = dir.join("test.db");
+
+        // Initialize Python plugin engine with the Oreka shop plugin
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let builtin_plugins_dir = manifest_dir.parent().map(|p| p.join("plugins"));
+
+        let mut py_engine = crate::python_plugins::PythonPluginEngine::new(
+            builtin_plugins_dir.clone(),
+            std::env::temp_dir().join("crawlflow-test-plugins"),
+        );
+
+        let discovered = py_engine.discover().unwrap_or_default();
+        eprintln!("Python plugins discovered: {:?}", discovered);
+
+        let enabled: std::collections::HashSet<String> = ["oreka_shop_crawler"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        py_engine.retain_plugins(&enabled);
+
+        let repo = RawItemRepository::open(&db_path).unwrap();
+        repo.ensure_tables().ok();
+
+        let lm = crate::logs::LogManager::new();
+
+        let project_id = "test-oreka-shop";
+
+        let result = execute_repository_pipeline(
+            &config,
+            &db_path,
+            &Arc::new(lm),
+            project_id,
+            Some(&mut py_engine),
+            None,
+        )
+        .await;
+
+        eprintln!(
+            "Pipeline result: success={}, ingested={}, matched={}, processed={}, failed={}, error={:?}",
+            result.success,
+            result.ingested,
+            result.matched,
+            result.processed,
+            result.failed,
+            result.error
+        );
+
+        // Query items from DB to verify
+        let items = repo.query_items(&crate::repository::ItemsQuery {
+            status: None,
+            worker_id: None,
+            search: None,
+            matched: None,
+            limit: 1000,
+            offset: 0,
+            sort_by: None,
+            sort_dir: None,
+        })
+        .map(|p| p.items)
+        .unwrap_or_default();
+
+        eprintln!("Total items in repo: {}", items.len());
+        for item in &items {
+            eprintln!(
+                "  id={} type={} status={} matched={} source_url={:?} extracted_url={:?}",
+                item.id,
+                item.item_type,
+                item.status,
+                item.matched,
+                item.source_url,
+                item.extracted_url
+            );
+        }
+
+        // Should have at least 1 item (raw source saved)
+        assert!(items.len() >= 1, "Expected at least 1 item from pipeline");
+
+        // Print summary
+        let url_items: Vec<_> = items.iter().filter(|i| i.item_type == "url").collect();
+        let raw_items: Vec<_> = items.iter().filter(|i| i.item_type == "raw").collect();
+        let product_items: Vec<_> = items.iter().filter(|i| i.item_type == "product").collect();
+        eprintln!(
+            "Summary: {} raw, {} url, {} product items",
+            raw_items.len(),
+            url_items.len(),
+            product_items.len()
+        );
+
+        // Cleanup
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn test_topological_levels() {
         let order = vec!["a", "b", "c", "d"];
         let edges = vec![
