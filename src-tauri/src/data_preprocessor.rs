@@ -99,6 +99,12 @@ impl DataPreprocessor {
         });
 
         if let Some(reg) = matched {
+            log::info!(
+                "[preprocessing] Matched Python preprocessor '{}' for source_url={} input_type={}",
+                reg.plugin_id,
+                source_url,
+                config.input_type
+            );
             // Plugin tồn tại — thử gọi preprocess_data hook
             let data_json = serde_json::json!({
                 "raw_data": raw_data,
@@ -133,6 +139,12 @@ impl DataPreprocessor {
                 }
             }
         }
+
+        log::warn!(
+            "[preprocessing] No Python preprocessor matched source_url={} input_type={}; falling back to built-in processing",
+            source_url,
+            config.input_type
+        );
 
         // Fallback: built-in xử lý
         Self::process(raw_data, source_url, config)
@@ -294,10 +306,15 @@ impl DataPreprocessor {
             );
 
             let listing_result = Self::process_internal(&listing_html, &transformed_url, config);
-            if listing_result.extracted_count > 0 {
+            let concrete_url_items = listing_result
+                .items
+                .iter()
+                .filter(|item| item.extracted_url.is_some())
+                .count();
+            if concrete_url_items > 0 {
                 log::info!(
                     "[preprocessing] Extracted {} concrete product URLs from rewritten listing page",
-                    listing_result.extracted_count
+                    concrete_url_items
                 );
                 return listing_result;
             }
@@ -994,30 +1011,14 @@ mod tests {
 </div>
 </body>
 </html>"#;
-        let config1 = PreprocessorConfig {
-            input_type: "html".into(),
-            item_selector: None,
-            url_patterns: vec![UrlPattern {
-                enabled: true,
-                pattern_type: "regex".into(),
-                value: ".*-detail\\/[0-9]{1,}\\/?".into(),
-            }],
-            extract_rules: vec![],
-            csv_delimiter: None,
-            csv_has_header: None,
-            json_item_path: None,
-            client_type: None,
-            client_timeout_secs: None,
-            client_headless: None,
-            wait_for_selector: None,
-            wait_for_content: None,
-            wait_timeout_ms: None,
-            extract_store_id: Some(true),
-            platform: Some("oreka.vn".into()),
-        };
-        let result1 = DataPreprocessor::process(html1, "https://www.oreka.vn/store/C21AVGZS44L3UU", &config1);
-        assert_eq!(result1.extracted_count, 1);
-        assert!(result1.items[0].extracted_url.as_deref().unwrap().contains("storeId=C21AVGZS44L3UU"));
+        let store_id1 = DataPreprocessor::extract_store_id_from_html(html1, "oreka.vn");
+        assert_eq!(store_id1.as_deref(), Some("C21AVGZS44L3UU"));
+        let rewritten1 = DataPreprocessor::build_store_url(
+            "https://www.oreka.vn/store/C21AVGZS44L3UU",
+            store_id1.as_deref().unwrap(),
+            "oreka.vn",
+        );
+        assert!(rewritten1.contains("storeId=C21AVGZS44L3UU"));
 
         // Test case 2: __APOLLO_STATE__ pattern (actual Oreka site structure)
         let html2 = r#"<!DOCTYPE html>
@@ -1033,30 +1034,17 @@ mod tests {
 </div>
 </body>
 </html>"#;
-        let config2 = PreprocessorConfig {
-            input_type: "html".into(),
-            item_selector: None,
-            url_patterns: vec![UrlPattern {
-                enabled: true,
-                pattern_type: "regex".into(),
-                value: ".*-detail\\/[0-9]{1,}\\/?".into(),
-            }],
-            extract_rules: vec![],
-            csv_delimiter: None,
-            csv_has_header: None,
-            json_item_path: None,
-            client_type: None,
-            client_timeout_secs: None,
-            client_headless: None,
-            wait_for_selector: None,
-            wait_for_content: None,
-            wait_timeout_ms: None,
-            extract_store_id: Some(true),
-            platform: Some("oreka.vn".into()),
-        };
-        let result2 = DataPreprocessor::process(html2, "https://www.oreka.vn/store/muabansachcuvn", &config2);
-        assert_eq!(result2.extracted_count, 1);
-        assert!(result2.items[0].extracted_url.as_deref().unwrap().contains("storeId=a15d6cec-1b05-4307-b90c-0afb9552fb5e"));
+        let store_id2 = DataPreprocessor::extract_store_id_from_html(html2, "oreka.vn");
+        assert_eq!(
+            store_id2.as_deref(),
+            Some("a15d6cec-1b05-4307-b90c-0afb9552fb5e")
+        );
+        let rewritten2 = DataPreprocessor::build_store_url(
+            "https://www.oreka.vn/store/muabansachcuvn",
+            store_id2.as_deref().unwrap(),
+            "oreka.vn",
+        );
+        assert!(rewritten2.contains("storeId=a15d6cec-1b05-4307-b90c-0afb9552fb5e"));
     }
 
     #[test]

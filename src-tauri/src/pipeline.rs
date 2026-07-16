@@ -711,6 +711,17 @@ pub async fn execute_repository_pipeline(
             ),
         );
         for item in crawled_items {
+            log_manager.info(
+                project_id,
+                "fetching",
+                &format!(
+                    "Using cached raw item id={} source_url={} raw_content_len={} item_type={}",
+                    item.id,
+                    item.source_url,
+                    item.raw_content.as_ref().map_or(0, |c| c.len()),
+                    item.item_type
+                ),
+            );
             if let Some(raw_content) = item.raw_content {
                 fetched_sources.push(FetchedData {
                     source_url: item.source_url,
@@ -718,6 +729,15 @@ pub async fn execute_repository_pipeline(
                     input_type: "html".into(),
                     chrome_session: None,
                 });
+            } else {
+                log_manager.warn(
+                    project_id,
+                    "fetching",
+                    &format!(
+                        "Cached raw item id={} source_url={} has no raw_content; skipping DB reuse",
+                        item.id, item.source_url
+                    ),
+                );
             }
         }
     } else {
@@ -1124,6 +1144,19 @@ pub async fn execute_repository_pipeline(
                 extract_store_id: None,
                 platform: None,
             });
+
+        log_manager.info(
+            project_id,
+            "preprocessing",
+            &format!(
+                "Preparing preprocessor for source={} input_type={} matched_preprocessor={} extract_store_id={:?} platform={:?}",
+                fetched.source_url,
+                fetched.input_type,
+                preprocessor_nodes.iter().any(|p| p.input_type == fetched.input_type),
+                preproc_config.extract_store_id,
+                preproc_config.platform
+            ),
+        );
 
         let result = if let Some(engine) = python_engine.as_deref_mut() {
             DataPreprocessor::process_with_plugins(
