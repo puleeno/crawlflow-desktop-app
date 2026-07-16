@@ -769,32 +769,23 @@ pub async fn execute_repository_pipeline(
             if let Some(ref pst) = plugin_source_type {
                 if let Some(engine) = python_engine.as_deref_mut() {
                     let plugin_id = pst.strip_prefix("py-").unwrap_or(pst);
-                    let plugin_config = node
-                        .data
+                    let call_config = build_plugin_config(&node.data, &source_value, project_id);
+
+                    // Warn if shop_url is missing from pluginConfig and source_value is empty
+                    let plugin_config_has_shop_url = node.data
                         .get("pluginConfig")
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null);
-                    let mut config = match &plugin_config {
-                        serde_json::Value::Object(map) => map.clone(),
-                        _ => serde_json::Map::new(),
-                    };
-                    if !config.contains_key("shop_url") {
-                        if !source_value.is_empty() {
-                            config.insert("shop_url".into(), serde_json::json!(source_value));
-                        } else {
-                            log_manager.warn(
-                                project_id,
-                                "fetching",
-                                &format!(
-                                    "[node={}] Plugin '{}' requires shop_url but sourceValue is empty and pluginConfig.shop_url is not set",
-                                    node_label, plugin_id
-                                ),
-                            );
-                        }
+                        .and_then(|c| c.get("shop_url"))
+                        .is_some();
+                    if !plugin_config_has_shop_url && source_value.is_empty() {
+                        log_manager.warn(
+                            project_id,
+                            "fetching",
+                            &format!(
+                                "[node={}] Plugin '{}' requires shop_url but sourceValue is empty and pluginConfig.shop_url is not set",
+                                node_label, plugin_id
+                            ),
+                        );
                     }
-                    config.insert("source_url".into(), serde_json::json!(source_value));
-                    config.insert("project_id".into(), serde_json::json!(project_id));
-                    let call_config = serde_json::Value::Object(config);
 
                     log_manager.info(
                         project_id,
@@ -1901,6 +1892,27 @@ fn extract_finish_actions(config: &PipelineConfig, project_id: &str) -> Vec<Fini
     actions
 }
 
+fn build_plugin_config(
+    node_data: &serde_json::Value,
+    source_value: &str,
+    project_id: &str,
+) -> serde_json::Value {
+    let plugin_config = node_data
+        .get("pluginConfig")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let mut config = match &plugin_config {
+        serde_json::Value::Object(map) => map.clone(),
+        _ => serde_json::Map::new(),
+    };
+    if !config.contains_key("shop_url") && !source_value.is_empty() {
+        config.insert("shop_url".into(), serde_json::json!(source_value));
+    }
+    config.insert("source_url".into(), serde_json::json!(source_value));
+    config.insert("project_id".into(), serde_json::json!(project_id));
+    serde_json::Value::Object(config)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2372,6 +2384,73 @@ mod tests {
         assert!(levels[1].contains(&"b".to_string()));
         assert!(levels[1].contains(&"c".to_string()));
         assert_eq!(levels[2], vec!["d"]);
+    }
+
+    #[test]
+    fn test_build_plugin_config_injects_shop_url_from_source_value() {
+        let node_data = serde_json::json!({
+            "sourceType": "url",
+            "sourceValue": "https://www.oreka.vn/store/C21AVGZS44L3UU",
+            "pluginSourceType": "py-oreka-shop-crawler",
+            "pluginConfig": {}
+        });
+        let source_value = "https://www.oreka.vn/store/C21AVGZS44L3UU";
+        let project_id = "test-project";
+        let config = build_plugin_config(&node_data, source_value, project_id);
+        assert_eq!(
+            config.get("shop_url").and_then(|v| v.as_str()),
+            Some("https://www.oreka.vn/store/C21AVGZS44L3UU")
+        );
+        assert_eq!(
+            config.get("source_url").and_then(|v| v.as_str()),
+            Some("https://www.oreka.vn/store/C21AVGZS44L3UU")
+        );
+        assert_eq!(
+            config.get("project_id").and_then(|v| v.as_str()),
+            Some("test-project")
+        );
+    }
+
+    #[test]
+    fn test_build_plugin_config_preserves_existing_shop_url() {
+        let node_data = serde_json::json!({
+            "sourceType": "url",
+            "sourceValue": "https://www.oreka.vn/store/C21AVGZS44L3UU",
+            "pluginSourceType": "py-oreka-shop-crawler",
+            "pluginConfig": {
+                "shop_url": "https://www.oreka.vn/store/EXISTING_SHOP"
+            }
+        });
+        let config = build_plugin_config(&node_data, "", "test-project");
+        assert_eq!(
+            config.get("shop_url").and_then(|v| v.as_str()),
+            Some("https://www.oreka.vn/store/EXISTING_SHOP")
+        );
+    }
+
+    #[test]
+    fn test_build_plugin_config_does_not_inject_when_source_value_empty() {
+        let node_data = serde_json::json!({
+            "sourceType": "url",
+            "sourceValue": "",
+            "pluginSourceType": "py-oreka-shop-crawler",
+            "pluginConfig": {}
+        });
+        let config = build_plugin_config(&node_data, "", "test-project");
+        assert!(config.get("shop_url").is_none());
+    }
+
+    #[test]
+    fn test_build_plugin_config_works_without_plugin_config() {
+        let node_data = serde_json::json!({
+            "sourceType": "url",
+            "sourceValue": "https://example.com"
+        });
+        let config = build_plugin_config(&node_data, "https://example.com", "test-project");
+        assert_eq!(
+            config.get("shop_url").and_then(|v| v.as_str()),
+            Some("https://example.com")
+        );
     }
 }
 

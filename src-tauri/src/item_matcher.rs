@@ -240,4 +240,40 @@ mod tests {
         assert_eq!(urls.len(), 1);
         assert!(urls[0].contains("/product/1"));
     }
+
+    #[test]
+    fn test_oreka_url_extraction_with_regex() {
+        let html = r#"<a href="/mua-ban-dong-ho/moi--detail/1112311">Đồng hồ mới</a>
+                      <a href="https://www.oreka.vn/mua-ban-sach/sach-hay--detail/2223422">Sách hay</a>
+                      <a href="/mua-ban-dien-tu/laptop--detail/3334533">Laptop</a>
+                      <a href="/store/C21AVGZS44L3UU">Cửa hàng</a>
+                      <a href="/blog/post">Blog</a>"#;
+        let patterns = vec![
+            MatchPattern::Regex(".*-detail\\/[0-9]{1,}\\/?".into()),
+        ];
+        let urls = ItemMatcher::extract_matching_urls(html, "https://www.oreka.vn", &patterns);
+        assert_eq!(urls.len(), 3);
+        assert!(urls[0].contains("--detail/1112311"));
+        assert!(urls[1].contains("--detail/2223422"));
+        assert!(urls[2].contains("--detail/3334533"));
+    }
+
+    #[test]
+    fn test_oreka_python_plugin_regex() {
+        let pattern = r##"/mua-ban(?:-[^/"']+)?/[^"']*?--detail/\d+"##;
+        let re = regex::Regex::new(pattern).unwrap();
+        assert!(re.is_match("/mua-ban-dong-ho/moi--detail/1112311"));
+        assert!(re.is_match("https://www.oreka.vn/mua-ban-sach/sach-hay--detail/2223422"));
+        assert!(re.is_match("/mua-ban-dien-tu/laptop--detail/3334533"));
+        assert!(!re.is_match("/store/C21AVGZS44L3UU"));
+        assert!(!re.is_match("/blog/post"));
+    }
+
+    #[test]
+    fn test_extract_matching_urls_empty_html() {
+        let html = "<html><body><p>No links here</p></body></html>";
+        let patterns = vec![MatchPattern::Regex(".*-detail\\/[0-9]{1,}\\/?".into())];
+        let urls = ItemMatcher::extract_matching_urls(html, "https://example.com", &patterns);
+        assert!(urls.is_empty());
+    }
 }

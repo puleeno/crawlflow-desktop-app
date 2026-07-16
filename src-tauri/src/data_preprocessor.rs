@@ -685,4 +685,79 @@ mod tests {
         let result = DataPreprocessor::process(html, "https://example.com", &config);
         assert_eq!(result.extracted_count, 2);
     }
+
+    #[test]
+    fn test_html_url_extraction_with_oreka_regex() {
+        let html = r#"<a href="/mua-ban-dong-ho/moi--detail/1112311">Đồng hồ mới</a>
+                      <a href="https://www.oreka.vn/mua-ban-sach/sach-hay--detail/2223422">Sách hay</a>
+                      <a href="/mua-ban-dien-tu/laptop--detail/3334533">Laptop</a>
+                      <a href="/blog/post">Blog</a>
+                      <a href="/store/C21AVGZS44L3UU">Cửa hàng</a>"#;
+        let config = PreprocessorConfig {
+            input_type: "html".into(),
+            item_selector: None,
+            url_patterns: vec![UrlPattern {
+                enabled: true,
+                pattern_type: "regex".into(),
+                value: ".*-detail\\/[0-9]{1,}\\/?".into(),
+            }],
+            extract_rules: vec![],
+            csv_delimiter: None,
+            csv_has_header: None,
+            json_item_path: None,
+            client_type: None,
+            client_timeout_secs: None,
+            client_headless: None,
+            wait_for_selector: None,
+            wait_for_content: None,
+            wait_timeout_ms: None,
+        };
+        let result = DataPreprocessor::process(html, "https://www.oreka.vn", &config);
+        assert_eq!(result.extracted_count, 3);
+        assert!(result.items[0].extracted_url.as_deref().unwrap().contains("--detail/1112311"));
+        assert!(result.items[1].extracted_url.as_deref().unwrap().contains("--detail/2223422"));
+        assert!(result.items[2].extracted_url.as_deref().unwrap().contains("--detail/3334533"));
+    }
+
+    #[test]
+    fn test_html_url_extraction_with_oreka_store_page() {
+        let html = r#"<!DOCTYPE html>
+<html>
+<head><script id="__NEXT_DATA__" type="application/json">
+{"props":{"pageProps":{"dehydratedState":{"queries":[{"state":{"data":{"storeProfile":{"storeId":"C21AVGZS44L3UU","storeName":"Mộc Bản","sellingCount":10,"soldCount":2}}}}]}}}}}
+</script></head>
+<body>
+<div class="shop-header">Mộc Bản</div>
+<div class="product-listing">
+  <p>Không có kết quả</p>
+  <span>Xem tất cả (0)</span>
+</div>
+</body>
+</html>"#;
+        let config = PreprocessorConfig {
+            input_type: "html".into(),
+            item_selector: None,
+            url_patterns: vec![UrlPattern {
+                enabled: true,
+                pattern_type: "regex".into(),
+                value: ".*-detail\\/[0-9]{1,}\\/?".into(),
+            }],
+            extract_rules: vec![],
+            csv_delimiter: None,
+            csv_has_header: None,
+            json_item_path: None,
+            client_type: None,
+            client_timeout_secs: None,
+            client_headless: None,
+            wait_for_selector: None,
+            wait_for_content: None,
+            wait_timeout_ms: None,
+        };
+        let result = DataPreprocessor::process(html, "https://www.oreka.vn/store/C21AVGZS44L3UU", &config);
+        // Store page has no product links in static HTML (loaded via GraphQL)
+        // The preprocessor falls back to a single "page" item
+        assert_eq!(result.extracted_count, 1);
+        assert_eq!(result.items[0].item_type, "page");
+        assert!(result.items[0].extracted_url.is_none());
+    }
 }
