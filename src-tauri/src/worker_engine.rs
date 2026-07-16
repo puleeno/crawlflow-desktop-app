@@ -1,6 +1,96 @@
-use crate::item_matcher::{ItemMatcher, MatchRule};
+use crate::item_matcher::{ItemMatcher, MatchRule, MatchPattern};
 use crate::repository::{RawItem, RawItemRepository};
+use crate::models::{ProcessorConfig, ExcelStructure};
 use serde::{Deserialize, Serialize};
+
+// ── Worker Factory ─────────────────────────────────────
+
+pub struct WorkerFactory;
+
+impl WorkerFactory {
+    /// Create worker definitions from pipeline node settings
+    pub fn create_workers_from_nodes(
+        nodes: &[crate::pipeline::PipelineNode],
+    ) -> Vec<WorkerDef> {
+        let mut workers = Vec::new();
+        
+        for node in nodes {
+            if node.node_type == "worker" {
+                if let Some(worker_def) = Self::parse_worker_node(node) {
+                    workers.push(worker_def);
+                }
+            }
+        }
+        
+        workers
+    }
+    
+    fn parse_worker_node(node: &crate::pipeline::PipelineNode) -> Option<WorkerDef> {
+        let data = &node.data;
+        
+        // Parse detection rules into matching rules
+        let detection_rules = data.get("detectionRules")
+            .and_then(|v| v.as_array())
+            .map(|rules| {
+                rules.iter().filter_map(|rule| {
+                    let field = rule.get("field")?.as_str().unwrap_or("url");
+                    let pattern_type = rule.get("type")?.as_str()?;
+                    let value = rule.get("value")?.as_str()?;
+                    let negate = rule.get("negate")?.as_bool().unwrap_or(false);
+                    
+                    Some(crate::item_matcher::MatchRule {
+                        field: field.to_string(),
+                        pattern: match pattern_type {
+                            "wildcard" => crate::item_matcher::MatchPattern::Wildcard(value.to_string()),
+                            "regex" | "url-format" => crate::item_matcher::MatchPattern::Regex(value.to_string()),
+                            "contains" => crate::item_matcher::MatchPattern::Contains(value.to_string()),
+                            "startswith" => crate::item_matcher::MatchPattern::StartsWith(value.to_string()),
+                            "endswith" => crate::item_matcher::MatchPattern::EndsWith(value.to_string()),
+                            "always" => crate::item_matcher::MatchPattern::Always,
+                            _ => crate::item_matcher::MatchPattern::Always,
+                        },
+                        negate,
+                    })
+                }).collect()
+            })
+            .unwrap_or_default();
+        
+        // Parse processor chain
+        let processor_chain = data.get("processorChain")
+            .and_then(|v| v.as_array())
+            .map(|chain| {
+                chain.iter().map(|step| {
+                    ProcessorStep {
+                        id: step.get("id")?.as_str().unwrap_or("").to_string(),
+                        processor_type: step.get("processorType")?.as_str().unwrap_or("").to_string(),
+                        config: step.get("config").cloned().unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+                    }
+                }).collect()
+            })
+            .unwrap_or_default();
+        
+        // Parse client profile
+        let client_profile = data.get("clientProfile").map(|v| {
+            serde_json::from_value(v.clone()).unwrap_or_default()
+        });
+        
+        // Parse extract rules
+        let extract_rules = data.get("extractRules")
+            .and_then(|v| v.as_array())
+            .map(|rules| {
+                serde_json::from_value(serde_json::json!(rules)).unwrap_or_default()
+            });
+        
+        Some(WorkerDef {
+            id: node.id.clone(),
+            name: node.label.clone().unwrap_or_else(|| node.id.clone()),
+            matching_rules: detection_rules,
+            processor_chain,
+            client_profile,
+            extract_rules,
+        })
+    }
+}
 
 // ── Worker Definition ─────────────────────────────────────
 
@@ -28,8 +118,13 @@ pub struct ProcessorStep {
 pub struct WorkerEngine;
 
 impl WorkerEngine {
+    /// Chunk raw items into batches for parallel processing
+    pub fn chunk_items(items: Vec<RawItem>, chunk_size: usize) -> Vec<Vec<RawItem>> {
+        items.chunks(chunk_size).map(|chunk| chunk.to_vec()).collect()
+    }
+
     /// Phase 2: Match pending items to workers.
-    /// Items that match a worker are assigned to it.
+    /// Items can match multiple workers (one-to-many relationship).
     /// Items that match no worker are marked 'ignored'.
     pub fn match_items(
         repo: &RawItemRepository,
@@ -38,6 +133,7 @@ impl WorkerEngine {
     ) -> Result<WorkerMatchResult, String> {
         let mut matched = 0i64;
         let mut unmatched = 0i64;
+        let mut total_assignments = 0i64;
 
         for item in items.iter_mut() {
             let item_json = serde_json::json!({
@@ -47,21 +143,27 @@ impl WorkerEngine {
                 "item_type": item.item_type,
             });
 
-            let mut item_matched = false;
+            let mut matched_workers = Vec::new();
             for worker in workers {
                 let result = ItemMatcher::matches(&worker.matching_rules, &item_json);
                 if result.matched {
-                    repo.assign_worker(item.id, &worker.id)?;
-                    item.worker_id = Some(worker.id.clone());
-                    item.matched = 1;
-                    item_matched = true;
-                    matched += 1;
-                    break;
+                    matched_workers.push(worker.id.clone());
                 }
             }
 
-            if !item_matched {
+            if matched_workers.is_empty() {
                 unmatched += 1;
+            } else {
+                // Assign all matching workers to this item
+                for worker_id in &matched_workers {
+                    repo.assign_worker(item.id, worker_id)?;
+                    total_assignments += 1;
+                }
+                
+                // Store first worker ID for backward compatibility
+                item.worker_id = Some(matched_workers[0].clone());
+                item.matched = 1;
+                matched += 1;
             }
         }
 
@@ -73,6 +175,7 @@ impl WorkerEngine {
             matched,
             unmatched,
             ignored,
+            total_assignments,
         })
     }
 
@@ -232,6 +335,180 @@ impl WorkerEngine {
         })
     }
 
+    /// Phase 3 with retry logic: Process items with automatic retry on failure
+    pub fn process_items_with_retry(
+        repo: &RawItemRepository,
+        worker: &WorkerDef,
+        items: &[RawItem],
+        execute_processor: &dyn Fn(
+            &str,
+            &serde_json::Value,
+            &serde_json::Value,
+        ) -> Result<serde_json::Value, String>,
+        max_retries: u32,
+    ) -> Result<ProcessResult, String> {
+        let mut processed = 0i64;
+        let mut failed = 0i64;
+        let mut results = Vec::new();
+
+        for item in items {
+            let mut retry_count = 0;
+            let mut last_error = None;
+            
+            loop {
+                // Step 1 — mark as processing
+                let _ = repo.update_status(item.id, "processing");
+
+                // Step 2 — fetch detail page + parse HTML
+                let parsed_data = match Self::fetch_and_parse_item(item, worker) {
+                    Ok(data) => {
+                        log::info!(
+                            "[worker::{}] Fetched+parsed item {} → {} (attempt {})",
+                            worker.name,
+                            item.id,
+                            item.extracted_url.as_deref().unwrap_or(&item.source_url),
+                            retry_count + 1
+                        );
+                        data
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "[worker::{}] Fetch/parse failed for item {} (attempt {}): {}",
+                            worker.name,
+                            item.id,
+                            retry_count + 1,
+                            e
+                        );
+                        last_error = Some(e.clone());
+                        
+                        if retry_count < max_retries {
+                            retry_count += 1;
+                            std::thread::sleep(std::time::Duration::from_millis(1000 * retry_count as u64));
+                            continue;
+                        }
+                        
+                        let _ = repo.log_processing(
+                            item.id,
+                            Some(&worker.id),
+                            "fetch_detail",
+                            "error",
+                            None,
+                            Some(&e),
+                        );
+                        let _ = repo.update_status(item.id, "error");
+                        failed += 1;
+                        results.push(ProcessItemResult {
+                            item_id: item.id,
+                            source_url: item.source_url.clone(),
+                            success: false,
+                            steps: 0,
+                            output: None,
+                        });
+                        break;
+                    }
+                };
+
+                // Step 3 — run processor chain
+                let mut current_data = parsed_data;
+                let mut step_index = 0usize;
+                let mut item_failed = false;
+
+                for (step_idx, step) in worker.processor_chain.iter().enumerate() {
+                    let _ = repo.log_processing(
+                        item.id,
+                        Some(&worker.id),
+                        &step.processor_type,
+                        "processing",
+                        None,
+                        None,
+                    );
+
+                    match execute_processor(&step.processor_type, &step.config, &current_data) {
+                        Ok(output) => {
+                            current_data = output;
+                            let _ = repo.log_processing(
+                                item.id,
+                                Some(&worker.id),
+                                &step.processor_type,
+                                "done",
+                                Some(&current_data.to_string()),
+                                None,
+                            );
+                            step_index = step_idx;
+                        }
+                        Err(e) => {
+                            last_error = Some(e.clone());
+                            
+                            if retry_count < max_retries {
+                                retry_count += 1;
+                                std::thread::sleep(std::time::Duration::from_millis(1000 * retry_count as u64));
+                                break; // Retry from fetch step
+                            }
+                            
+                            let _ = repo.log_processing(
+                                item.id,
+                                Some(&worker.id),
+                                &step.processor_type,
+                                "error",
+                                None,
+                                Some(&e),
+                            );
+                            log::error!(
+                                "[worker::{}] Processor '{}' failed on item {} (attempt {}): {}",
+                                worker.name,
+                                step.processor_type,
+                                item.id,
+                                retry_count + 1,
+                                e
+                            );
+                            let _ = repo.update_status(item.id, "error");
+                            failed += 1;
+                            item_failed = true;
+                            results.push(ProcessItemResult {
+                                item_id: item.id,
+                                source_url: item.source_url.clone(),
+                                success: false,
+                                steps: step_idx,
+                                output: None,
+                            });
+                            break;
+                        }
+                    }
+                }
+
+                if !item_failed {
+                    // Save final output
+                    let output_str = current_data.to_string();
+                    let _ = repo.log_processing(
+                        item.id,
+                        Some(&worker.id),
+                        "final_output",
+                        "done",
+                        Some(&output_str),
+                        None,
+                    );
+                    let _ = repo.update_status(item.id, "done");
+                    processed += 1;
+                    results.push(ProcessItemResult {
+                        item_id: item.id,
+                        source_url: item.source_url.clone(),
+                        success: true,
+                        steps: step_index + 1,
+                        output: Some(current_data),
+                    });
+                    break; // Success, exit retry loop
+                }
+            }
+        }
+
+        Ok(ProcessResult {
+            total: items.len() as i64,
+            processed,
+            failed,
+            results,
+        })
+    }
+
     // ── Detail Fetch & Parse ──────────────────────────────────
 
     /// Fetch the detail page for a matched item and parse it using the worker's
@@ -371,6 +648,7 @@ pub struct WorkerMatchResult {
     pub matched: i64,
     pub unmatched: i64,
     pub ignored: i64,
+    pub total_assignments: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -49,6 +49,9 @@ pub struct PreprocessorConfig {
     pub wait_for_selector: Option<String>,
     pub wait_for_content: Option<String>,
     pub wait_timeout_ms: Option<u64>,
+    // Store ID extraction for platforms like oreka
+    pub extract_store_id: Option<bool>,
+    pub platform: Option<String>,
 }
 
 /// Preprocessor registration từ plugin — cho phép plugin đăng ký xử lý riêng
@@ -172,6 +175,11 @@ impl DataPreprocessor {
         source_url: &str,
         config: &PreprocessorConfig,
     ) -> PreprocessorResult {
+        // If extract_store_id is enabled, focus on store ID extraction only
+        if config.extract_store_id.unwrap_or(false) {
+            return Self::extract_store_id_only(raw_data, source_url, config);
+        }
+
         // If preprocessor has custom client settings, re-fetch with that client
         if config.client_type.is_some()
             || config.client_timeout_secs.is_some()
@@ -184,6 +192,112 @@ impl DataPreprocessor {
         }
 
         Self::process_internal(raw_data, source_url, config)
+    }
+
+    /// Extract store ID from HTML for platforms like oreka.vn
+    fn extract_store_id_only(
+        raw_data: &str,
+        source_url: &str,
+        config: &PreprocessorConfig,
+    ) -> PreprocessorResult {
+        let platform = config.platform.as_deref().unwrap_or("oreka.vn");
+        
+        // Extract store ID using regex patterns
+        let store_id = Self::extract_store_id_from_html(raw_data, platform);
+        
+        if let Some(store_id) = store_id {
+            // Return transformed URL with store ID
+            let transformed_url = Self::build_store_url(source_url, &store_id, platform);
+            
+            let item = NewRawItem {
+                source_url: transformed_url.clone(),
+                item_type: "url".to_string(),
+                item_hash: format!("{:x}", md5::compute(transformed_url.as_bytes())),
+                raw_content: Some(raw_data.to_string()),
+                extracted_url: Some(transformed_url),
+            };
+            
+            PreprocessorResult {
+                items: vec![item],
+                extracted_count: 1,
+                errors: vec![],
+            }
+        } else {
+            PreprocessorResult {
+                items: vec![],
+                extracted_count: 0,
+                errors: vec![format!("Could not extract store ID from {}", platform)],
+            }
+        }
+    }
+
+    fn extract_store_id_from_html(html: &str, platform: &str) -> Option<String> {
+        match platform {
+            "oreka.vn" => {
+                // Try to extract store ID from various patterns
+                // Pattern 1: __NEXT_DATA__ Apollo cache
+                if let Some(next_data) = Self::extract_next_data(html) {
+                    if let Some(store_id) = Self::find_apollo_store_id(&next_data) {
+                        return Some(store_id);
+                    }
+                }
+                
+                // Pattern 2: Direct UUID pattern
+                let uuid_pattern = regex::Regex::new(r#"Store:([a-fA-F0-9\-]{36})"#).ok()?;
+                if let Some(caps) = uuid_pattern.captures(html) {
+                    return Some(caps.get(1)?.as_str().to_string());
+                }
+                
+                // Pattern 3: storeId in JSON
+                let store_id_pattern = regex::Regex::new(r#""storeId"\s*:\s*"([^"]+)""#).ok()?;
+                if let Some(caps) = store_id_pattern.captures(html) {
+                    return Some(caps.get(1)?.as_str().to_string());
+                }
+                
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn extract_next_data(html: &str) -> Option<serde_json::Value> {
+        let pattern = regex::Regex::new(r#"<script\b[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>"#).ok()?;
+        if let Some(caps) = pattern.captures(html) {
+            let json_str = caps.get(1)?.as_str();
+            serde_json::from_str(json_str).ok()
+        } else {
+            None
+        }
+    }
+
+    fn find_apollo_store_id(data: &serde_json::Value) -> Option<String> {
+        if let Some(obj) = data.as_object() {
+            if let Some(apollo_state) = obj.get("__APOLLO_STATE__").and_then(|v| v.as_object()) {
+                for (key, value) in apollo_state {
+                    if key.starts_with("Store:") {
+                        if let Some(store_id) = value.get("id").and_then(|v| v.as_str()) {
+                            return Some(store_id.to_string());
+                        }
+                        // Use key as fallback
+                        if let Some(store_id) = key.strip_prefix("Store:") {
+                            return Some(store_id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn build_store_url(source_url: &str, store_id: &str, platform: &str) -> String {
+        match platform {
+            "oreka.vn" => {
+                let parsed = url::Url::parse(source_url).unwrap_or_else(|_| url::Url::parse("https://www.oreka.vn").unwrap());
+                let base = format!("{}://{}", parsed.scheme(), parsed.host().unwrap_or("www.oreka.vn"));
+                format!("{}/mua-ban?storeId={}&sort=createdAt&order=desc", base, store_id)
+            }
+            _ => source_url.to_string(),
+        }
     }
 
     /// Re-fetch URL with custom client settings from preprocessor config

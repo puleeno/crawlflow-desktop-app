@@ -171,6 +171,14 @@ export interface FetchDataNodeData {
     sourceType?: string;
     /** Human-readable label shown in the node */
     label?: string;
+    /** URL patterns to filter which URLs to fetch (moved from preprocessor) */
+    urlPatterns?: UrlPattern[];
+    /** Client settings for fetching data */
+    clientType?: string;
+    clientTimeoutSecs?: number;
+    clientHeadless?: boolean;
+    waitForSelector?: string;
+    waitTimeout?: number;
 }
 
 export interface UrlPattern {

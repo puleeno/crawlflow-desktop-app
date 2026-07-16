@@ -2,6 +2,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use crate::models::{ProcessorConfig, ExcelStructure, ExcelColumn};
 
 /// Serialisable metadata about a Python plugin, sent to the frontend.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -528,6 +529,43 @@ impl PythonPluginEngine {
             }
         }
         Ok(data)
+    }
+
+    /// Register processor configurations from Python plugins
+    pub fn register_processor_configs(&mut self) -> Result<Vec<ProcessorConfig>, String> {
+        let mut configs = Vec::new();
+        
+        for (plugin_id, plugin) in &self.plugins {
+            Python::with_gil(|py| -> Result<(), String> {
+                let globals = plugin.ensure_loaded(py)
+                    .map_err(|e| format!("Failed to load plugin: {}", e))?;
+                
+                // Check for register_processors function
+                let func = match globals.get_item("register_processors") {
+                    Ok(Some(f)) if f.is_callable() => f,
+                    _ => return Ok(()), // No processor registration function
+                };
+                
+                let result = func.call0()
+                    .map_err(|e| format!("Python plugin '{}.register_processors' failed: {}", plugin_id, e))?;
+                
+                let result_str: String = result.extract()
+                    .map_err(|e| format!("Failed to extract Python result string: {}", e))?;
+                
+                let processor_configs: Vec<serde_json::Value> = serde_json::from_str(&result_str)
+                    .map_err(|e| format!("Failed to parse Python result JSON: {}", e))?;
+                
+                for config_json in processor_configs {
+                    if let Ok(config) = serde_json::from_value::<ProcessorConfig>(config_json.clone()) {
+                        configs.push(config);
+                    }
+                }
+                
+                Ok(())
+            })?;
+        }
+        
+        Ok(configs)
     }
 }
 

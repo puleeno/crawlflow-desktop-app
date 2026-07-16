@@ -1,4 +1,84 @@
 use serde::{Deserialize, Serialize};
+use crate::item_matcher::MatchRule;
+
+// ── Parsed Data Schema ─────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParsedData {
+    pub id: String,
+    pub raw_item_id: i64,
+    pub worker_id: String,
+    pub processor_id: String,
+    pub data: serde_json::Value,
+    pub schema_version: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessorConfig {
+    pub id: String,
+    pub name: String,
+    pub processor_type: String,
+    pub config: serde_json::Value,
+    pub excel_structure: Option<ExcelStructure>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerConfig {
+    pub id: String,
+    pub name: String,
+    pub matching_rules: Vec<MatchRule>,
+    pub processor_chain: Vec<ProcessorStep>,
+    pub client_profile: Option<ClientProfile>,
+    pub extract_rules: Option<Vec<ExtractRule>>,
+    pub worker_type: String,
+    pub settings: serde_json::Value,
+    pub source_type: String,
+    pub source_value: String,
+    pub plugin_source_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessorStep {
+    pub id: String,
+    pub processor_type: String,
+    pub config: serde_json::Value,
+    pub retry_count: Option<u32>,
+    pub max_retry: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerExecutionResult {
+    pub worker_id: String,
+    pub processed_items: Vec<ParsedDataOutput>,
+    pub errors: Vec<String>,
+    pub retry_failed: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParsedDataOutput {
+    pub raw_item_id: i64,
+    pub extracted_data: serde_json::Value,
+    pub schema_version: String,
+    pub created_at: String,
+    pub processor_id: String,
+    pub worker_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExcelStructure {
+    pub file_name: String,
+    pub sheet_name: String,
+    pub columns: Vec<ExcelColumn>,
+    pub include_header: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExcelColumn {
+    pub field: String,
+    pub header: String,
+    pub data_type: String,
+}
 
 #[cfg(test)]
 mod tests {
