@@ -108,6 +108,14 @@ impl DataPreprocessor {
             let result = python_engine.call_preprocessor_hook(&reg.plugin_id, data_json);
             match result {
                 Ok(items) => {
+                    if items.is_empty() {
+                        log::warn!(
+                            "Plugin preprocessor '{}' returned no items (fallback to built-in)",
+                            reg.plugin_id
+                        );
+                        return Self::process(raw_data, source_url, config);
+                    }
+
                     let count = items.len();
                     return PreprocessorResult {
                         items,
@@ -136,6 +144,24 @@ impl DataPreprocessor {
         source_url: &str,
         config: &PreprocessorConfig,
     ) -> PreprocessorResult {
+        let extract_store_id = config.extract_store_id.unwrap_or(false);
+        let resolved_html = if extract_store_id
+            && (raw_data.trim().is_empty() || !raw_data.trim_start().starts_with('<'))
+        {
+            log::info!(
+                "[preprocessing] Store ID extraction enabled, source HTML missing so refetching before rewrite: {}",
+                source_url
+            );
+            Self::refetch_with_client(source_url, config)
+                .unwrap_or_else(|| raw_data.to_string())
+        } else {
+            raw_data.to_string()
+        };
+
+        if extract_store_id {
+            return Self::extract_store_id_only(&resolved_html, source_url, config);
+        }
+
         // If preprocessor has custom client settings, re-fetch with that client
         if config.client_type.is_some()
             || config.client_timeout_secs.is_some()
@@ -166,7 +192,7 @@ impl DataPreprocessor {
             }
         }
 
-        Self::process_internal(raw_data, source_url, config)
+        Self::process_internal(&resolved_html, source_url, config)
     }
 
     /// Process raw data từ data source theo config, trích xuất items
@@ -175,9 +201,23 @@ impl DataPreprocessor {
         source_url: &str,
         config: &PreprocessorConfig,
     ) -> PreprocessorResult {
+        let extract_store_id = config.extract_store_id.unwrap_or(false);
+        let resolved_html = if extract_store_id
+            && (raw_data.trim().is_empty() || !raw_data.trim_start().starts_with('<'))
+        {
+            log::info!(
+                "[preprocessing] Store ID extraction enabled, source HTML missing so refetching before rewrite: {}",
+                source_url
+            );
+            Self::refetch_with_client(source_url, config)
+                .unwrap_or_else(|| raw_data.to_string())
+        } else {
+            raw_data.to_string()
+        };
+
         // If extract_store_id is enabled, focus on store ID extraction only
-        if config.extract_store_id.unwrap_or(false) {
-            return Self::extract_store_id_only(raw_data, source_url, config);
+        if extract_store_id {
+            return Self::extract_store_id_only(&resolved_html, source_url, config);
         }
 
         // If preprocessor has custom client settings, re-fetch with that client
@@ -191,38 +231,78 @@ impl DataPreprocessor {
             }
         }
 
-        Self::process_internal(raw_data, source_url, config)
+        Self::process_internal(&resolved_html, source_url, config)
     }
 
     /// Extract store ID from HTML for platforms like oreka.vn
+    /// If store ID is found, rewrite the source URL into a store-listing URL
+    /// and try to extract the actual child product URLs from that fetched page.
     fn extract_store_id_only(
         raw_data: &str,
         source_url: &str,
         config: &PreprocessorConfig,
     ) -> PreprocessorResult {
         let platform = config.platform.as_deref().unwrap_or("oreka.vn");
-        
-        // Extract store ID using regex patterns
+
+        log::info!(
+            "[preprocessing] Attempting to resolve storeId from HTML for platform={} source_url={}",
+            platform,
+            source_url
+        );
+
         let store_id = Self::extract_store_id_from_html(raw_data, platform);
-        
+
         if let Some(store_id) = store_id {
-            // Return transformed URL with store ID
+            log::info!(
+                "[preprocessing] Resolved storeId={} from HTML for source_url={}",
+                store_id,
+                source_url
+            );
+
             let transformed_url = Self::build_store_url(source_url, &store_id, platform);
-            
+            log::info!(
+                "[preprocessing] Rewrote store URL to listing format: {}",
+                transformed_url
+            );
+
+            let listing_html = Self::refetch_with_client(&transformed_url, config)
+                .unwrap_or_else(|| raw_data.to_string());
+            log::info!(
+                "[preprocessing] Refetched listing page for rewritten URL ({} bytes)",
+                listing_html.len()
+            );
+
+            let listing_result = Self::process_internal(&listing_html, &transformed_url, config);
+            if listing_result.extracted_count > 0 {
+                log::info!(
+                    "[preprocessing] Extracted {} concrete product URLs from rewritten listing page",
+                    listing_result.extracted_count
+                );
+                return listing_result;
+            }
+
+            log::warn!(
+                "[preprocessing] No concrete product URLs were extracted from rewritten listing page; falling back to a single rewritten URL item"
+            );
             let item = NewRawItem {
                 source_url: transformed_url.clone(),
                 item_type: "url".to_string(),
                 item_hash: format!("{:x}", md5::compute(transformed_url.as_bytes())),
-                raw_content: Some(raw_data.to_string()),
+                raw_content: Some(listing_html),
                 extracted_url: Some(transformed_url),
             };
-            
+
             PreprocessorResult {
                 items: vec![item],
                 extracted_count: 1,
                 errors: vec![],
             }
         } else {
+            log::warn!(
+                "[preprocessing] Could not extract storeId from HTML for platform={} source_url={}",
+                platform,
+                source_url
+            );
             PreprocessorResult {
                 items: vec![],
                 extracted_count: 0,
@@ -835,6 +915,8 @@ mod tests {
             wait_for_selector: None,
             wait_for_content: None,
             wait_timeout_ms: None,
+            extract_store_id: None,
+            platform: None,
         };
         let result = DataPreprocessor::process(html, "https://example.com", &config);
         assert_eq!(result.extracted_count, 2);
@@ -865,6 +947,8 @@ mod tests {
             wait_for_selector: None,
             wait_for_content: None,
             wait_timeout_ms: None,
+            extract_store_id: None,
+            platform: None,
         };
         let result = DataPreprocessor::process(html, "https://www.oreka.vn", &config);
         assert_eq!(result.extracted_count, 3);
