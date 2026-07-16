@@ -778,6 +778,8 @@ mod tests {
             wait_for_selector: None,
             wait_for_content: None,
             wait_timeout_ms: None,
+            extract_store_id: None,
+            platform: None,
         };
         let result = DataPreprocessor::process(csv, "https://example.com/data.csv", &config);
         assert_eq!(result.extracted_count, 2);
@@ -800,6 +802,8 @@ mod tests {
             wait_for_selector: None,
             wait_for_content: None,
             wait_timeout_ms: None,
+            extract_store_id: None,
+            platform: None,
         };
         let result = DataPreprocessor::process(json, "https://example.com/data.json", &config);
         assert_eq!(result.extracted_count, 2);
@@ -869,9 +873,10 @@ mod tests {
         assert!(result.items[2].extracted_url.as_deref().unwrap().contains("--detail/3334533"));
     }
 
-    #[test]
+#[test]
     fn test_html_url_extraction_with_oreka_store_page() {
-        let html = r#"<!DOCTYPE html>
+        // Test case 1: dehydratedState pattern
+        let html1 = r#"<!DOCTYPE html>
 <html>
 <head><script id="__NEXT_DATA__" type="application/json">
 {"props":{"pageProps":{"dehydratedState":{"queries":[{"state":{"data":{"storeProfile":{"storeId":"C21AVGZS44L3UU","storeName":"Mộc Bản","sellingCount":10,"soldCount":2}}}}]}}}}}
@@ -884,7 +889,7 @@ mod tests {
 </div>
 </body>
 </html>"#;
-        let config = PreprocessorConfig {
+        let config1 = PreprocessorConfig {
             input_type: "html".into(),
             item_selector: None,
             url_patterns: vec![UrlPattern {
@@ -902,12 +907,50 @@ mod tests {
             wait_for_selector: None,
             wait_for_content: None,
             wait_timeout_ms: None,
+            extract_store_id: Some(true),
+            platform: Some("oreka.vn".into()),
         };
-        let result = DataPreprocessor::process(html, "https://www.oreka.vn/store/C21AVGZS44L3UU", &config);
-        // Store page has no product links in static HTML (loaded via GraphQL)
-        // The preprocessor falls back to a single "page" item
-        assert_eq!(result.extracted_count, 1);
-        assert_eq!(result.items[0].item_type, "page");
-        assert!(result.items[0].extracted_url.is_none());
+        let result1 = DataPreprocessor::process(html1, "https://www.oreka.vn/store/C21AVGZS44L3UU", &config1);
+        assert_eq!(result1.extracted_count, 1);
+        assert!(result1.items[0].extracted_url.as_deref().unwrap().contains("storeId=C21AVGZS44L3UU"));
+
+        // Test case 2: __APOLLO_STATE__ pattern (actual Oreka site structure)
+        let html2 = r#"<!DOCTYPE html>
+<html>
+<head><script id="__NEXT_DATA__" type="application/json">
+{"props":{"pageProps":{"__APOLLO_STATE__":{"Store:a15d6cec-1b05-4307-b90c-0afb9552fb5e":{"__typename":"Store","id":"a15d6cec-1b05-4307-b90c-0afb9552fb5e","slug":"muabansachcuvn","name":"Muabansachcu.vn"}}}}}}
+</script></head>
+<body>
+<div class="shop-header">Muabansachcu.vn</div>
+<div class="product-listing">
+  <p>Không có kết quả</p>
+  <span>Xem tất cả (0)</span>
+</div>
+</body>
+</html>"#;
+        let config2 = PreprocessorConfig {
+            input_type: "html".into(),
+            item_selector: None,
+            url_patterns: vec![UrlPattern {
+                enabled: true,
+                pattern_type: "regex".into(),
+                value: ".*-detail\\/[0-9]{1,}\\/?".into(),
+            }],
+            extract_rules: vec![],
+            csv_delimiter: None,
+            csv_has_header: None,
+            json_item_path: None,
+            client_type: None,
+            client_timeout_secs: None,
+            client_headless: None,
+            wait_for_selector: None,
+            wait_for_content: None,
+            wait_timeout_ms: None,
+            extract_store_id: Some(true),
+            platform: Some("oreka.vn".into()),
+        };
+        let result2 = DataPreprocessor::process(html2, "https://www.oreka.vn/store/muabansachcuvn", &config2);
+        assert_eq!(result2.extracted_count, 1);
+        assert!(result2.items[0].extracted_url.as_deref().unwrap().contains("storeId=a15d6cec-1b05-4307-b90c-0afb9552fb5e"));
     }
 }
