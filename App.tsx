@@ -298,24 +298,206 @@ const App: React.FC = () => {
   }, [nodes, setNodes, setEdges]);
 
 
-  // Effect to recenter repository node
-  useEffect(() => {
-    const startNodes = nodes.filter(n => n.type === 'start');
-    const repoNode = nodes.find(n => n.id === REPOSITORY_NODE_ID);
 
-    if (startNodes.length > 0 && repoNode) {
-      const newAvgX = startNodes.reduce((sum, node) => sum + node.position.x, 0) / startNodes.length;
-      if (repoNode.position.x !== newAvgX) {
-        setNodes(nds =>
-          nds.map(n =>
-            n.id === REPOSITORY_NODE_ID
-              ? { ...n, position: { ...n.position, x: newAvgX } }
-              : n
-          )
-        );
+  // NOTE: The repository node recenter effect has been removed.
+  // The repository node is positioned automatically when first created (based on
+  // the average X of all start nodes), but after that users are free to drag it
+  // anywhere on the canvas.
+
+  // Effect to automatically migrate loaded projects to the new FetchData architecture:
+  // Ensures every start/dataSource node has a corresponding fetchData node,
+  // and corrects any direct connections to the Repository node.
+  useEffect(() => {
+    let nodesUpdated = false;
+    let edgesUpdated = false;
+
+    // 1. Check/Add FetchData node for each Start node
+    const startNodes = nodes.filter(n => n.type === 'start');
+    const newNodes = [...nodes];
+
+    startNodes.forEach(startNode => {
+      const fetchNodeId = getFetchNodeId(startNode.id);
+      const fetchNodeExists = newNodes.some(n => n.id === fetchNodeId);
+
+      if (!fetchNodeExists) {
+        const sourceType = (startNode.data as any).sourceType || 'url';
+        newNodes.push({
+          id: fetchNodeId,
+          type: 'fetchData',
+          position: {
+            x: startNode.position.x,
+            y: startNode.position.y + 150,
+          },
+          data: { sourceType, label: `Fetch Data (${sourceType})` },
+          deletable: false,
+        });
+        nodesUpdated = true;
       }
+    });
+
+    // 2. Fix edges:
+    // We will build a new list of edges by filtering out any direct connections
+    // from start/preprocessor nodes to the Repository node.
+    let currentEdges = [...edges];
+
+    // Identify start/preprocessor nodes
+    const startNodeIds = new Set(startNodes.map(n => n.id));
+    const preprocessorNodes = newNodes.filter(n => n.type === 'preprocessor');
+    const preprocessorNodeIds = new Set(preprocessorNodes.map(n => n.id));
+
+    // Filter out direct edges to repository from start or preprocessor nodes,
+    // and remove old direct Start -> FetchData edges if a preprocessor is present.
+    const filteredEdges = currentEdges.filter(e => {
+      if (e.target === REPOSITORY_NODE_ID) {
+        if (startNodeIds.has(e.source) || preprocessorNodeIds.has(e.source)) {
+          edgesUpdated = true;
+          return false; // remove direct legacy edge to Repository
+        }
+      }
+
+      // If a start node has a preprocessor, remove the direct Start -> FetchData edge
+      const startNodeId = startNodeIds.has(e.source) ? e.source : null;
+      if (startNodeId && e.target === getFetchNodeId(startNodeId)) {
+        const hasPrep = currentEdges.some(pe => pe.source === startNodeId && preprocessorNodeIds.has(pe.target));
+        if (hasPrep) {
+          edgesUpdated = true;
+          return false; // remove direct Start -> FetchData edge when preprocessor is present
+        }
+      }
+
+      return true;
+    });
+
+    // Construct the correct list of edges and ensure all fetchData nodes are linked
+    const newEdges = [...filteredEdges];
+
+    startNodes.forEach(startNode => {
+      const fetchNodeId = getFetchNodeId(startNode.id);
+
+      // Determine if this start node has a preprocessor
+      const preprocessorEdge = newEdges.find(e => e.source === startNode.id && preprocessorNodeIds.has(e.target));
+
+      if (preprocessorEdge) {
+        // Source is preprocessor
+        const prepId = preprocessorEdge.target;
+
+        // Ensure Preprocessor -> FetchData exists
+        const prepToFetchExists = newEdges.some(e => e.source === prepId && e.target === fetchNodeId);
+        if (!prepToFetchExists) {
+          newEdges.push({
+            id: `e-${prepId}-${fetchNodeId}`,
+            source: prepId,
+            target: fetchNodeId,
+            animated: true,
+          });
+          edgesUpdated = true;
+        }
+      } else {
+        // No preprocessor: Ensure Start -> FetchData exists
+        const startToFetchExists = newEdges.some(e => e.source === startNode.id && e.target === fetchNodeId);
+        if (!startToFetchExists) {
+          newEdges.push({
+            id: `e-${startNode.id}-${fetchNodeId}`,
+            source: startNode.id,
+            target: fetchNodeId,
+            animated: true,
+          });
+          edgesUpdated = true;
+        }
+      }
+
+      // Ensure FetchData -> Repository exists
+      const fetchToRepoExists = newEdges.some(e => e.source === fetchNodeId && e.target === REPOSITORY_NODE_ID);
+      if (!fetchToRepoExists) {
+        newEdges.push({
+          id: `e-${fetchNodeId}-${REPOSITORY_NODE_ID}`,
+          source: fetchNodeId,
+          target: REPOSITORY_NODE_ID,
+          animated: true,
+        });
+        edgesUpdated = true;
+      }
+    });
+
+    // 3. De-duplicate edges based on source and target to resolve any double references
+    const seen = new Set<string>();
+    const uniqueEdges: Edge[] = [];
+    newEdges.forEach(e => {
+      const key = `${e.source}->${e.target}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueEdges.push(e);
+      } else {
+        edgesUpdated = true;
+      }
+    });
+
+    // 4. Adjust vertical layout positions to prevent overlap or missing nodes.
+    // If there are preprocessor nodes, shift their corresponding FetchData and Repository nodes.
+    let positionAdjusted = false;
+    const adjustedNodes = newNodes.map(node => {
+      if (node.type === 'fetchData') {
+        const startNodeId = node.id.replace('fetch-data-', '');
+        const hasPrep = newEdges.some(e => e.source === startNodeId && preprocessorNodeIds.has(e.target));
+        // If has preprocessor and at/near the default (200), shift it down to 370
+        if (hasPrep && node.position.y === 200) {
+          positionAdjusted = true;
+          return {
+            ...node,
+            position: { x: node.position.x, y: 370 }
+          };
+        }
+      }
+      if (node.id === REPOSITORY_NODE_ID && node.position.y === 360) {
+        const hasShiftedFetch = newNodes.some(n => n.type === 'fetchData' && n.position.y === 370);
+        if (hasShiftedFetch) {
+          positionAdjusted = true;
+          return {
+            ...node,
+            position: { x: node.position.x, y: 540 }
+          };
+        }
+      }
+      return node;
+    });
+
+    // Deep check nodes change to prevent infinite setState recursion loops
+    const nodesChanged =
+      adjustedNodes.length !== nodes.length ||
+      adjustedNodes.some((n, i) => {
+        const orig = nodes[i];
+        return (
+          !orig ||
+          n.id !== orig.id ||
+          n.type !== orig.type ||
+          n.position.x !== orig.position.x ||
+          n.position.y !== orig.position.y ||
+          JSON.stringify(n.data) !== JSON.stringify(orig.data)
+        );
+      });
+
+    // Deep check edges change
+    const edgesChanged =
+      uniqueEdges.length !== edges.length ||
+      uniqueEdges.some((e, i) => {
+        const orig = edges[i];
+        return (
+          !orig ||
+          e.id !== orig.id ||
+          e.source !== orig.source ||
+          e.target !== orig.target
+        );
+      });
+
+    if (nodesChanged) {
+      setNodes(adjustedNodes);
     }
-  }, [nodes, setNodes]);
+    if (edgesChanged) {
+      setEdges(uniqueEdges);
+    }
+  }, [nodes, edges, setNodes, setEdges]);
+
+
 
   // Effect to manage the Completion node and its connections
   useEffect(() => {
@@ -429,25 +611,42 @@ const App: React.FC = () => {
     const sourceNode = nodes.find(n => n.id === params.source);
     const targetNode = nodes.find(n => n.id === params.target);
 
-    if (sourceNode?.type === 'repository' && targetNode?.type !== 'worker') {
-      console.warn("Connection prevented: Raw Items Repository can only connect to a Worker node.");
-      return;
-    }
-
+    // Data source can only connect to preprocessor or fetch data
     if (sourceNode?.type === 'start' && targetNode?.type !== 'preprocessor' && targetNode?.type !== 'fetchData') {
       console.warn("Connection prevented: Data Source can only connect to a Preprocessor or Fetch Data node.");
       return;
     }
 
-    if (sourceNode?.type === 'preprocessor' && targetNode?.type !== 'fetchData' && targetNode?.type !== 'repository') {
-      console.warn("Connection prevented: Preprocessor can only connect to a Fetch Data or Repository node.");
+    // Preprocessor can only connect to fetch data
+    if (sourceNode?.type === 'preprocessor' && targetNode?.type !== 'fetchData') {
+      console.warn("Connection prevented: Preprocessor can only connect to a Fetch Data node.");
       return;
     }
 
+    // Fetch data can only connect to repository
     if (sourceNode?.type === 'fetchData' && targetNode?.type !== 'repository') {
       console.warn("Connection prevented: Fetch Data node can only connect to the Raw Items Repository.");
       return;
     }
+
+    // Repository can only connect to worker or data extractor
+    if (sourceNode?.type === 'repository' && targetNode?.type !== 'worker' && !targetNode?.type?.includes('extractor')) {
+      console.warn("Connection prevented: Raw Items Repository can only connect to a Worker or Data Extractor node.");
+      return;
+    }
+
+    // Worker can only connect to data extractor or processor
+    if (sourceNode?.type === 'worker' && !targetNode?.type?.includes('extractor') && !targetNode?.type?.includes('processor')) {
+      console.warn("Connection prevented: Worker can only connect to a Data Extractor or Processor node.");
+      return;
+    }
+
+    // Data extractor can only connect to processor
+    if (sourceNode?.type?.includes('extractor') && !targetNode?.type?.includes('processor')) {
+      console.warn("Connection prevented: Data Extractor can only connect to a Processor node.");
+      return;
+    }
+
 
     setEdges((eds) => addEdge(params, eds));
   }, [nodes, setEdges]);
@@ -528,13 +727,7 @@ const App: React.FC = () => {
         position: { x: startNodePosition.x, y: LEVEL_Y_POSITIONS.fetchData },
         data: { sourceType, label: `Fetch Data (${sourceType})` },
         deletable: false,
-        draggable: false,
       };
-
-      const repoNodeExists = nodes.some(n => n.id === REPOSITORY_NODE_ID);
-
-      const currentStartXSum = startNodes.reduce((sum, node) => sum + node.position.x, 0);
-      const newAvgX = (currentStartXSum + startNodePosition.x) / (startNodes.length + 1);
 
       // start → fetchData edge
       const startToFetchEdge: Edge = {
@@ -543,7 +736,9 @@ const App: React.FC = () => {
         target: fetchNodeId,
         animated: true,
       };
+
       // fetchData → repository edge
+      const repoNodeExists = nodes.some(n => n.id === REPOSITORY_NODE_ID);
       const fetchToRepoEdge: Edge = {
         id: `e-${fetchNodeId}-${REPOSITORY_NODE_ID}`,
         source: fetchNodeId,
@@ -555,22 +750,14 @@ const App: React.FC = () => {
         const newRepoNode: Node = {
           id: REPOSITORY_NODE_ID,
           type: 'repository',
-          position: { x: newAvgX, y: LEVEL_Y_POSITIONS.repository },
+          position: { x: startNodePosition.x, y: LEVEL_Y_POSITIONS.repository },
           data: {},
           deletable: false,
-          draggable: false,
         };
-
         setNodes((nds) => nds.concat(newStartNode, newFetchNode, newRepoNode));
-        setEdges((eds) => eds.concat([startToFetchEdge, fetchToRepoEdge]));
+        setEdges((eds) => addEdge(fetchToRepoEdge, addEdge(startToFetchEdge, eds)));
       } else {
-        setNodes((nds) =>
-          nds.map(n =>
-            n.id === REPOSITORY_NODE_ID
-              ? { ...n, position: { x: newAvgX, y: LEVEL_Y_POSITIONS.repository } }
-              : n
-          ).concat(newStartNode, newFetchNode)
-        );
+        setNodes((nds) => nds.concat(newStartNode, newFetchNode));
         setEdges((eds) => addEdge(fetchToRepoEdge, addEdge(startToFetchEdge, eds)));
       }
 
@@ -589,7 +776,7 @@ const App: React.FC = () => {
         type: 'preprocessor',
         position: {
           x: startX,
-          y: startY + NODE_V_SPACING * 0.5,
+          y: startY + 150, // Nice 150px spacing below start node
         },
         data,
       };
@@ -601,7 +788,31 @@ const App: React.FC = () => {
         e.source === sourceNode.id && e.target === fetchNodeId
       );
 
-      setNodes((nds) => nds.concat(newNode));
+      // Shift the fetchData and repository nodes down to avoid overlapping
+      setNodes((nds) => {
+        return nds.map((node) => {
+          if (node.id === fetchNodeId) {
+            return {
+              ...node,
+              position: {
+                x: node.position.x,
+                y: startY + 320, // Push fetchData node down below preprocessor
+              }
+            };
+          }
+          if (node.id === REPOSITORY_NODE_ID) {
+            return {
+              ...node,
+              position: {
+                x: node.position.x,
+                y: Math.max(node.position.y, startY + 490), // Push repository node down further
+              }
+            };
+          }
+          return node;
+        }).concat(newNode);
+      });
+
       setEdges((eds) => {
         let updated = eds;
         if (oldStartToFetchEdge) {
@@ -797,10 +1008,32 @@ const App: React.FC = () => {
   };
 
   const deleteNode = useCallback((nodeId: string) => {
-    setNodes((nds) => nds.filter((node) => node.id !== nodeId));
-    setEdges((eds) => eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
+    // Determine node type and fetchNodeId before state updates to avoid stale state
+    const nodeToDelete = nodes.find(n => n.id === nodeId);
+    const isStartNode = nodeToDelete?.type === 'start';
+    const fetchNodeId = isStartNode ? getFetchNodeId(nodeId) : null;
+    
+    setNodes((nds) => {
+      if (isStartNode && fetchNodeId) {
+        return nds.filter((node) => node.id !== nodeId && node.id !== fetchNodeId);
+      }
+      return nds.filter((node) => node.id !== nodeId);
+    });
+    
+    setEdges((eds) => {
+      if (isStartNode && fetchNodeId) {
+        return eds.filter((edge) => 
+          edge.source !== nodeId && 
+          edge.target !== nodeId && 
+          edge.source !== fetchNodeId && 
+          edge.target !== fetchNodeId
+        );
+      }
+      return eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId);
+    });
+    
     setSelectedNode(null);
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, nodes]);
 
   const updateProjectSettings = useCallback((update: Partial<ProjectSettings>) => {
     setProjectSettings(prev => ({ ...prev, ...update }));
