@@ -144,7 +144,14 @@ impl DataPreprocessor {
         source_url: &str,
         config: &PreprocessorConfig,
     ) -> PreprocessorResult {
-        let extract_store_id = config.extract_store_id.unwrap_or(false);
+        let auto_extract_store_id = Self::should_auto_extract_store_id(source_url, config);
+        let extract_store_id = config.extract_store_id.unwrap_or(auto_extract_store_id);
+        if auto_extract_store_id && config.extract_store_id.is_none() {
+            log::info!(
+                "[preprocessing] Inferred store-ID rewrite flow from Oreka store URL: {}",
+                source_url
+            );
+        }
         let resolved_html = if extract_store_id
             && (raw_data.trim().is_empty() || !raw_data.trim_start().starts_with('<'))
         {
@@ -201,7 +208,14 @@ impl DataPreprocessor {
         source_url: &str,
         config: &PreprocessorConfig,
     ) -> PreprocessorResult {
-        let extract_store_id = config.extract_store_id.unwrap_or(false);
+        let auto_extract_store_id = Self::should_auto_extract_store_id(source_url, config);
+        let extract_store_id = config.extract_store_id.unwrap_or(auto_extract_store_id);
+        if auto_extract_store_id && config.extract_store_id.is_none() {
+            log::info!(
+                "[preprocessing] Inferred store-ID rewrite flow from Oreka store URL: {}",
+                source_url
+            );
+        }
         let resolved_html = if extract_store_id
             && (raw_data.trim().is_empty() || !raw_data.trim_start().starts_with('<'))
         {
@@ -232,6 +246,13 @@ impl DataPreprocessor {
         }
 
         Self::process_internal(&resolved_html, source_url, config)
+    }
+
+    fn should_auto_extract_store_id(source_url: &str, config: &PreprocessorConfig) -> bool {
+        let platform = config.platform.as_deref().unwrap_or("").to_ascii_lowercase();
+        let source_is_oreka_store = source_url.contains("oreka.vn/store/")
+            || source_url.contains("oreka.vn/mua-ban?");
+        source_is_oreka_store && (platform.contains("oreka") || source_url.contains("oreka.vn"))
     }
 
     /// Extract store ID from HTML for platforms like oreka.vn
@@ -1036,5 +1057,52 @@ mod tests {
         let result2 = DataPreprocessor::process(html2, "https://www.oreka.vn/store/muabansachcuvn", &config2);
         assert_eq!(result2.extracted_count, 1);
         assert!(result2.items[0].extracted_url.as_deref().unwrap().contains("storeId=a15d6cec-1b05-4307-b90c-0afb9552fb5e"));
+    }
+
+    #[test]
+    fn test_oreka_store_url_infers_store_id_rewrite_even_without_explicit_flags() {
+        let html = r#"<!DOCTYPE html>
+<html>
+<head><script id="__NEXT_DATA__" type="application/json">
+{"props":{"pageProps":{"dehydratedState":{"queries":[{"state":{"data":{"storeProfile":{"storeId":"C21AVGZS44L3UU","storeName":"Mộc Bản","sellingCount":10,"soldCount":2}}}}]}}}}}
+</script></head>
+<body>
+<div class="shop-header">Mộc Bản</div>
+</body>
+</html>"#;
+
+        let config = PreprocessorConfig {
+            input_type: "html".into(),
+            item_selector: None,
+            url_patterns: vec![],
+            extract_rules: vec![],
+            csv_delimiter: None,
+            csv_has_header: None,
+            json_item_path: None,
+            client_type: None,
+            client_timeout_secs: None,
+            client_headless: None,
+            wait_for_selector: None,
+            wait_for_content: None,
+            wait_timeout_ms: None,
+            extract_store_id: None,
+            platform: None,
+        };
+
+        let should_extract = DataPreprocessor::should_auto_extract_store_id(
+            "https://www.oreka.vn/store/C21AVGZS44L3UU",
+            &config,
+        );
+        assert!(should_extract);
+
+        let store_id = DataPreprocessor::extract_store_id_from_html(html, "oreka.vn");
+        assert_eq!(store_id.as_deref(), Some("C21AVGZS44L3UU"));
+
+        let rewritten = DataPreprocessor::build_store_url(
+            "https://www.oreka.vn/store/C21AVGZS44L3UU",
+            "C21AVGZS44L3UU",
+            "oreka.vn",
+        );
+        assert!(rewritten.contains("storeId=C21AVGZS44L3UU"));
     }
 }
