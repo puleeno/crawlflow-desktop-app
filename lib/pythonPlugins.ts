@@ -130,6 +130,8 @@ class PythonPluginBridge {
                 inputFormats: ['html', 'xml', 'json'],
                 configFields: [
                     { key: '_plugin_id', label: 'Plugin', type: 'string', defaultValue: meta.id },
+                    { key: 'filter_enabled', label: 'Enable Filter', type: 'boolean', defaultValue: false },
+                    { key: 'filter_config', label: 'Filter Config (JSON)', type: 'textarea', placeholder: '{"field":"price","operator":"greater_than","value":100}' },
                 ],
                 parse: async (input, _config) => {
                     const html = typeof input === 'string' ? input : String(input);
@@ -139,6 +141,18 @@ class PythonPluginBridge {
                         hookName: 'parse_data',
                         data: [],
                         config: { html, ...config },
+                    });
+                    return result as any[];
+                },
+                filter: async (data, config) => {
+                    if (!config.filter_enabled) return data;
+                    const filterConfig = typeof config.filter_config === 'string' 
+                        ? JSON.parse(config.filter_config) 
+                        : config.filter_config;
+                    const result: any = await invoke('call_python_filter_cmd', {
+                        pluginId: meta.id,
+                        data,
+                        config: filterConfig,
                     });
                     return result as any[];
                 },

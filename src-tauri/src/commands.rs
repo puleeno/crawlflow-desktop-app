@@ -493,6 +493,17 @@ pub fn call_python_data_source_cmd(
 }
 
 #[tauri::command]
+pub fn call_python_filter_cmd(
+    state: State<'_, AppState>,
+    plugin_id: String,
+    data: Vec<serde_json::Value>,
+    config: serde_json::Value,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut engine = state.plugin_engine.lock().unwrap();
+    engine.call_filter_hook(&plugin_id, data, config)
+}
+
+#[tauri::command]
 pub fn call_python_export_cmd(
     state: State<'_, AppState>,
     plugin_id: String,

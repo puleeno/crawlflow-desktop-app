@@ -467,6 +467,48 @@ impl PythonPluginEngine {
         })
     }
 
+    /// Call `filter_data` hook in a Python plugin.
+    /// Input: Vec<serde_json::Value> (parsed data), config
+    /// Output: Vec<serde_json::Value> (filtered data)
+    pub fn call_filter_hook(
+        &mut self,
+        plugin_id: &str,
+        data: Vec<serde_json::Value>,
+        config: serde_json::Value,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let plugin = self
+            .plugins
+            .get_mut(plugin_id)
+            .ok_or_else(|| format!("Python plugin '{}' not found", plugin_id))?;
+
+        Python::with_gil(|py| -> Result<Vec<serde_json::Value>, String> {
+            let globals = plugin
+                .ensure_loaded(py)
+                .map_err(|e| format!("Failed to load plugin: {}", e))?;
+
+            let func = match globals.get_item("filter_data") {
+                Ok(Some(f)) if f.is_callable() => f,
+                _ => return Ok(data), // If filter function doesn't exist, return data as-is
+            };
+
+            let data_json = serde_json::to_string(&data)
+                .map_err(|e| format!("Serialisation error: {}", e))?;
+            let config_json = serde_json::to_string(&config)
+                .map_err(|e| format!("Serialisation error: {}", e))?;
+
+            let result = func
+                .call1((data_json, config_json))
+                .map_err(|e| format!("Python plugin '{}.filter_data' failed: {}", plugin_id, e))?;
+
+            let result_str: String = result
+                .extract()
+                .map_err(|e| format!("Failed to extract Python result string: {}", e))?;
+
+            serde_json::from_str(&result_str)
+                .map_err(|e| format!("Failed to parse Python result JSON: {}", e))
+        })
+    }
+
     /// Run a processing pipeline: for each step, delegate to the Python plugin.
     pub fn run_pipeline(
         &mut self,

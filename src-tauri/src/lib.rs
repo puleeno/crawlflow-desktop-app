@@ -97,6 +97,7 @@ pub fn run() {
             commands::list_python_plugins_cmd,
             commands::execute_python_hook_cmd,
             commands::call_python_data_source_cmd,
+            commands::call_python_filter_cmd,
             commands::call_python_export_cmd,
             commands::run_python_pipeline_cmd,
             commands::reload_python_plugins_cmd,

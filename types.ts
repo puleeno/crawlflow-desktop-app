@@ -474,6 +474,7 @@ export interface ParserDefinition {
     inputFormats: string[];
     configFields: PluginConfigField[];
     parse: (input: string | any, config: Record<string, any>) => Promise<any[]>;
+    filter?: (data: any[], config: Record<string, any>) => Promise<any[]>;
 }
 
 export interface CrawlFlowPlugin {

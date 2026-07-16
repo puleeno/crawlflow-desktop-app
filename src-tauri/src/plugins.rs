@@ -144,6 +144,16 @@ impl PluginEngine {
             .call_hook(plugin_id, hook_name, data, config)
     }
 
+    pub fn call_filter_hook(
+        &mut self,
+        plugin_id: &str,
+        data: Vec<serde_json::Value>,
+        config: serde_json::Value,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        self.python_engine
+            .call_filter_hook(plugin_id, data, config)
+    }
+
     pub fn call_python_data_source(
         &mut self,
         plugin_id: &str,
