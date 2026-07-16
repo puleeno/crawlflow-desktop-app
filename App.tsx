@@ -36,6 +36,7 @@ import FilterNode from './components/nodes/FilterNode';
 import HTMLDataExtractorNode, { CSVExtractorNode, JSONExtractorNode, XMLExtractorNode, MySQLExtractorNode } from './components/nodes/DataMappingNode';
 import ProcessorNode from './components/nodes/ProcessorNode';
 import PreprocessorNode from './components/nodes/PreprocessorNode';
+import FetchDataNode from './components/nodes/FetchDataNode';
 import CompletionNode from './components/nodes/CompletionNode';
 import ShapeNode from './components/nodes/ShapeNode';
 import { Bars3Icon, Cog6ToothIcon, HomeIcon, PlusIcon, PlayIcon, StopIcon, PauseIcon, TableCellsIcon } from './components/icons';
@@ -50,12 +51,15 @@ import { NodeData, ProjectSettings, HTMLDataExtractorNodeData, ShapeNodeData, Sh
 
 const REPOSITORY_NODE_ID = 'repository-node';
 const COMPLETION_NODE_ID = 'completion-node';
+/** Returns the fixed fetch-data node ID for a given start-node ID. */
+const getFetchNodeId = (startNodeId: string) => `fetch-data-${startNodeId}`;
 
 // Layout Constants for automatic positioning (Vertical Layout)
 const LEVEL_Y_POSITIONS = {
   start: 50,
-  repository: 300,
-  worker: 550,
+  fetchData: 200,
+  repository: 360,
+  worker: 610,
 };
 const NODE_H_SPACING = 350; // Spacing between nodes on the same horizontal level
 const NODE_V_SPACING = 250;   // Spacing between generic parent-child nodes
@@ -430,13 +434,18 @@ const App: React.FC = () => {
       return;
     }
 
-    if (sourceNode?.type === 'start' && targetNode?.type !== 'preprocessor' && targetNode?.type !== 'repository') {
-      console.warn("Connection prevented: Data Source can only connect to a Preprocessor or Repository node.");
+    if (sourceNode?.type === 'start' && targetNode?.type !== 'preprocessor' && targetNode?.type !== 'fetchData') {
+      console.warn("Connection prevented: Data Source can only connect to a Preprocessor or Fetch Data node.");
       return;
     }
 
-    if (sourceNode?.type === 'preprocessor' && targetNode?.type !== 'repository') {
-      console.warn("Connection prevented: Preprocessor can only connect to a Repository node.");
+    if (sourceNode?.type === 'preprocessor' && targetNode?.type !== 'fetchData' && targetNode?.type !== 'repository') {
+      console.warn("Connection prevented: Preprocessor can only connect to a Fetch Data or Repository node.");
+      return;
+    }
+
+    if (sourceNode?.type === 'fetchData' && targetNode?.type !== 'repository') {
+      console.warn("Connection prevented: Fetch Data node can only connect to the Raw Items Repository.");
       return;
     }
 
@@ -510,14 +519,34 @@ const App: React.FC = () => {
         data,
       };
 
+      // Each data source gets its own fixed Fetch Data node
+      const fetchNodeId = getFetchNodeId(newStartNode.id);
+      const sourceType = (data as any).sourceType ?? 'url';
+      const newFetchNode: Node = {
+        id: fetchNodeId,
+        type: 'fetchData',
+        position: { x: startNodePosition.x, y: LEVEL_Y_POSITIONS.fetchData },
+        data: { sourceType, label: `Fetch Data (${sourceType})` },
+        deletable: false,
+        draggable: false,
+      };
+
       const repoNodeExists = nodes.some(n => n.id === REPOSITORY_NODE_ID);
 
       const currentStartXSum = startNodes.reduce((sum, node) => sum + node.position.x, 0);
       const newAvgX = (currentStartXSum + startNodePosition.x) / (startNodes.length + 1);
 
-      const startToRepoEdge: Edge = {
-        id: `e-${newStartNode.id}-${REPOSITORY_NODE_ID}`,
+      // start → fetchData edge
+      const startToFetchEdge: Edge = {
+        id: `e-${newStartNode.id}-${fetchNodeId}`,
         source: newStartNode.id,
+        target: fetchNodeId,
+        animated: true,
+      };
+      // fetchData → repository edge
+      const fetchToRepoEdge: Edge = {
+        id: `e-${fetchNodeId}-${REPOSITORY_NODE_ID}`,
+        source: fetchNodeId,
         target: REPOSITORY_NODE_ID,
         animated: true,
       };
@@ -532,25 +561,26 @@ const App: React.FC = () => {
           draggable: false,
         };
 
-        setNodes((nds) => nds.concat(newStartNode, newRepoNode));
-        setEdges((eds) => eds.concat([startToRepoEdge]));
+        setNodes((nds) => nds.concat(newStartNode, newFetchNode, newRepoNode));
+        setEdges((eds) => eds.concat([startToFetchEdge, fetchToRepoEdge]));
       } else {
         setNodes((nds) =>
           nds.map(n =>
             n.id === REPOSITORY_NODE_ID
               ? { ...n, position: { x: newAvgX, y: LEVEL_Y_POSITIONS.repository } }
               : n
-          ).concat(newStartNode)
+          ).concat(newStartNode, newFetchNode)
         );
-        setEdges((eds) => addEdge(startToRepoEdge, eds));
+        setEdges((eds) => addEdge(fetchToRepoEdge, addEdge(startToFetchEdge, eds)));
       }
 
       return;
     }
 
     // Preprocessor Node Logic
+    // When a preprocessor is added between a start node and the fetch node:
+    // start → preprocessor → fetchData → repository
     if (type === 'preprocessor' && sourceNode?.type === 'start') {
-      const preprocessorNodes = nodes.filter(n => n.type === 'preprocessor');
       const newNodeId = getId();
       const startX = sourceNode.position.x;
       const startY = sourceNode.position.y;
@@ -559,21 +589,23 @@ const App: React.FC = () => {
         type: 'preprocessor',
         position: {
           x: startX,
-          y: startY + NODE_V_SPACING * 0.6,
+          y: startY + NODE_V_SPACING * 0.5,
         },
         data,
       };
 
-      // Remove old start → repository edge, add start → preprocessor and preprocessor → repository
-      const oldStartEdge = edges.find(e =>
-        e.source === sourceNode.id && nodes.some(n => n.id === e.target && n.type === 'repository')
+      const fetchNodeId = getFetchNodeId(sourceNode.id);
+
+      // Remove old start → fetchData edge, insert preprocessor between start and fetchData
+      const oldStartToFetchEdge = edges.find(e =>
+        e.source === sourceNode.id && e.target === fetchNodeId
       );
 
       setNodes((nds) => nds.concat(newNode));
       setEdges((eds) => {
         let updated = eds;
-        if (oldStartEdge) {
-          updated = updated.filter(e => e.id !== oldStartEdge.id);
+        if (oldStartToFetchEdge) {
+          updated = updated.filter(e => e.id !== oldStartToFetchEdge.id);
         }
         updated = addEdge({
           id: `e-${sourceNode.id}-${newNodeId}`,
@@ -582,9 +614,9 @@ const App: React.FC = () => {
           animated: true,
         }, updated);
         updated = addEdge({
-          id: `e-${newNodeId}-${REPOSITORY_NODE_ID}`,
+          id: `e-${newNodeId}-${fetchNodeId}`,
           source: newNodeId,
-          target: REPOSITORY_NODE_ID,
+          target: fetchNodeId,
           animated: true,
         }, updated);
         return updated;
@@ -916,6 +948,7 @@ const App: React.FC = () => {
     worker: (props) => <WorkerNode {...props} />,
     loop: (props) => <LoopNode {...props} />,
     repository: (props) => <RepositoryNode {...props} />,
+    fetchData: (props) => <FetchDataNode {...props} />,
     reception: (props) => <FilterNode {...props} />,
     'html-data-extractor': (props) => <HTMLDataExtractorNode {...props} />,
     'csv-extractor': (props) => <CSVExtractorNode {...props} />,

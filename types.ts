@@ -7,21 +7,21 @@ export type DataSourceType = 'url' | 'api' | 'xml' | 'csv' | 'json' | 'mysql';
 export type FileInputMethod = 'paste' | 'upload' | 'cloudUrl';
 
 export interface MySQLConnection {
-  host?: string;
-  port?: string;
-  user?: string;
-  password?: string;
-  database?: string;
+    host?: string;
+    port?: string;
+    user?: string;
+    password?: string;
+    database?: string;
 }
 
 export interface ProjectSettings {
-  name: string;
-  description: string;
-  enabled: boolean;
-  crawlDelay: number;
-  userAgent: string;
-  concurrency: number;
-  executionMode: 'parallel' | 'queue';
+    name: string;
+    description: string;
+    enabled: boolean;
+    crawlDelay: number;
+    userAgent: string;
+    concurrency: number;
+    executionMode: 'parallel' | 'queue';
 }
 
 
@@ -31,47 +31,47 @@ export type CrawlScope = 'current-url' | 'entire-website';
 export type DomainImportPolicy = 'all' | 'whitelist-only';
 
 export interface HeaderPair {
-  key: string;
-  value: string;
+    key: string;
+    value: string;
 }
 
 export interface HttpClientConfig {
-  clientType: 'reqwest' | 'chrome';
-  userAgent?: string;
-  timeoutSecs?: number;
-  proxyUrl?: string;
-  headers?: HeaderPair[];
-  chromeArgs?: string[];
-  waitForSelector?: string;
-  headless?: boolean;
+    clientType: 'reqwest' | 'chrome';
+    userAgent?: string;
+    timeoutSecs?: number;
+    proxyUrl?: string;
+    headers?: HeaderPair[];
+    chromeArgs?: string[];
+    waitForSelector?: string;
+    headless?: boolean;
 }
 
 export interface URLSourceSettings {
-  scope: CrawlScope;
-  excludeExtensions: string[];
-  excludePatterns: string[];
-  whitelistPatterns: string[];
-  domainPolicy: DomainImportPolicy;
-  domainWhitelist: string[];
-  httpClient?: HttpClientConfig;
+    scope: CrawlScope;
+    excludeExtensions: string[];
+    excludePatterns: string[];
+    whitelistPatterns: string[];
+    domainPolicy: DomainImportPolicy;
+    domainWhitelist: string[];
+    httpClient?: HttpClientConfig;
 }
 
 export type APIAuthType = 'none' | 'api-key' | 'bearer' | 'basic';
 export type APIKeyLocation = 'header' | 'query';
 
 export interface APIKeyAuth {
-  location: APIKeyLocation;
-  keyName: string;
-  keyValue: string;
+    location: APIKeyLocation;
+    keyName: string;
+    keyValue: string;
 }
 
 export interface BearerTokenAuth {
-  token: string;
+    token: string;
 }
 
 export interface BasicAuth {
-  username: string;
-  password: string;
+    username: string;
+    password: string;
 }
 
 export type APIPaginationType = 'none' | 'page' | 'offset-limit' | 'next-url';
@@ -93,50 +93,50 @@ export interface NextURLPagination {
 }
 
 export interface APISourceSettings {
-  authType: APIAuthType;
-  authDetails: APIKeyAuth | BearerTokenAuth | BasicAuth | {};
-  paginationType: APIPaginationType;
-  paginationDetails: PagePagination | OffsetLimitPagination | NextURLPagination | {};
+    authType: APIAuthType;
+    authDetails: APIKeyAuth | BearerTokenAuth | BasicAuth | {};
+    paginationType: APIPaginationType;
+    paginationDetails: PagePagination | OffsetLimitPagination | NextURLPagination | {};
 }
 
 export interface XMLSourceSettings {
-  scanUrls: boolean;
-  domainPolicy: DomainImportPolicy;
-  domainWhitelist: string[];
+    scanUrls: boolean;
+    domainPolicy: DomainImportPolicy;
+    domainWhitelist: string[];
 }
 
 export type JSONDataHandling = 'raw' | 'scan-urls';
 export type JSONURLSource = 'all-values' | 'specific-key';
 
 export interface JSONSourceSettings {
-  dataHandling: JSONDataHandling;
-  urlSource?: JSONURLSource;
-  urlKey?: string;
-  domainPolicy?: DomainImportPolicy;
-  domainWhitelist?: string[];
+    dataHandling: JSONDataHandling;
+    urlSource?: JSONURLSource;
+    urlKey?: string;
+    domainPolicy?: DomainImportPolicy;
+    domainWhitelist?: string[];
 }
 
 export interface StartNodeData {
-  sourceType: DataSourceType;
-  sourceValue: string | MySQLConnection;
-  inputMethod?: FileInputMethod;
-  fileName?: string;
-  
-  // New detailed settings
-  urlSettings?: URLSourceSettings;
-  apiSettings?: APISourceSettings;
-  xmlSettings?: XMLSourceSettings;
-  jsonSettings?: JSONSourceSettings;
+    sourceType: DataSourceType;
+    sourceValue: string | MySQLConnection;
+    inputMethod?: FileInputMethod;
+    fileName?: string;
 
-  // Plugin data source
-  pluginSourceType?: string;
-  pluginConfig?: Record<string, any>;
+    // New detailed settings
+    urlSettings?: URLSourceSettings;
+    apiSettings?: APISourceSettings;
+    xmlSettings?: XMLSourceSettings;
+    jsonSettings?: JSONSourceSettings;
+
+    // Plugin data source
+    pluginSourceType?: string;
+    pluginConfig?: Record<string, any>;
 }
 // --- END OF NEW TYPES ---
 
 
 export interface ClickNodeData {
-  selector: string;
+    selector: string;
 }
 
 export type ExtractFrom = 'html-element' | 'json-ld' | 'html-comment';
@@ -158,34 +158,42 @@ export interface ExtractionRule {
 
 
 export interface LoopNodeData {
-  iteratorSelector: string;
+    iteratorSelector: string;
 }
 
 export interface RepositoryNodeData {
-  // This node serves as a structural element and may not need specific data.
+    // This node serves as a structural element and may not need specific data.
+}
+
+/** Represents the Fetch/Get Data step – auto-created alongside the data source. */
+export interface FetchDataNodeData {
+    /** The origin data source type (url, api, csv, json, xml, mysql, plugin, etc.) */
+    sourceType?: string;
+    /** Human-readable label shown in the node */
+    label?: string;
 }
 
 export interface UrlPattern {
-  enabled: boolean;
-  type: 'wildcard' | 'regex' | 'contains' | 'startswith' | 'endswith' | 'always';
-  value: string;
+    enabled: boolean;
+    type: 'wildcard' | 'regex' | 'contains' | 'startswith' | 'endswith' | 'always';
+    value: string;
 }
 
 export interface ExtractRule {
-  type: string;
-  value: string;
-  attribute?: string | null;
+    type: string;
+    value: string;
+    attribute?: string | null;
 }
 
 export interface PreprocessorNodeData {
-  inputType: 'html' | 'csv' | 'json' | 'xml' | 'text';
-  itemSelector?: string;
-  urlPatterns: UrlPattern[];
-  extractRules: ExtractRule[];
-  csvDelimiter?: string;
-  csvHasHeader?: boolean;
-  jsonItemPath?: string;
-  pluginId?: string;
+    inputType: 'html' | 'csv' | 'json' | 'xml' | 'text';
+    itemSelector?: string;
+    urlPatterns: UrlPattern[];
+    extractRules: ExtractRule[];
+    csvDelimiter?: string;
+    csvHasHeader?: boolean;
+    jsonItemPath?: string;
+    pluginId?: string;
 }
 
 // FIX: Added missing ReceptionNodeData and ReceptionRule types to resolve import errors.
@@ -274,7 +282,7 @@ export interface SendToApiSettings {
 }
 
 export interface GenerateCsvSettings {
-    fileName: string; 
+    fileName: string;
     delimiter: ',' | ';' | '\t';
     includeHeader: boolean;
     autoMapHeaders: boolean;
@@ -298,7 +306,7 @@ export interface GenerateExcelSettings {
 }
 
 // Discriminated Union for ProcessorNodeData
-export type ProcessorNodeData = 
+export type ProcessorNodeData =
     | { processorType: 'save-to-database'; settings: SaveToDbSettings; }
     | { processorType: 'send-to-api'; settings: SendToApiSettings; }
     | { processorType: 'generate-csv-file'; settings: GenerateCsvSettings; }
@@ -346,9 +354,9 @@ export interface DataSourceTypeRule extends BaseWorkerRule {
 export type WorkerRule = URLFormatRule | HTMLContainsRule | DOMValueRule | TagAttributeRule | DataSourceTypeRule;
 
 export interface WorkerNodeData {
-  detectionRules: WorkerRule[];
-  detectionLogic: 'and' | 'or';
-  priority: number;
+    detectionRules: WorkerRule[];
+    detectionLogic: 'and' | 'or';
+    priority: number;
 }
 
 // FIX: Added CompletionNodeData interface to fix import error.
@@ -360,27 +368,28 @@ export interface CompletionNodeData {
 export type ShapeType = 'rectangle' | 'circle' | 'ellipse' | 'frame' | 'package';
 
 export interface ShapeNodeData {
-  shapeType: ShapeType;
-  label: string;
-  width: number;
-  height: number;
-  backgroundColor: string;
-  borderColor: string;
-  textColor: string;
+    shapeType: ShapeType;
+    label: string;
+    width: number;
+    height: number;
+    backgroundColor: string;
+    borderColor: string;
+    textColor: string;
 }
 
 
 // FIX: Added ReceptionNodeData to the NodeData union type.
 // FIX: Added CompletionNodeData to the NodeData union type to resolve import error.
-export type NodeData = 
-    | StartNodeData 
-    | ClickNodeData 
-    | LoopNodeData 
-    | RepositoryNodeData 
-    | PreprocessorNodeData 
-    | ReceptionNodeData 
-    | WorkerNodeData 
-    | HTMLDataExtractorNodeData 
+export type NodeData =
+    | StartNodeData
+    | ClickNodeData
+    | LoopNodeData
+    | RepositoryNodeData
+    | FetchDataNodeData
+    | PreprocessorNodeData
+    | ReceptionNodeData
+    | WorkerNodeData
+    | HTMLDataExtractorNodeData
     | CSVExtractorNodeData
     | JSONExtractorNodeData
     | XMLExtractorNodeData

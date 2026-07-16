@@ -515,7 +515,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onCl
         <div>
           <h2 className="text-xl font-bold text-gray-800 border-b pb-2">Data Preprocessing</h2>
           <p className="text-sm text-gray-600 mt-2 mb-4">
-            Add a Preprocessor to extract items (URLs, records) from raw data before storing in the repository.
+            Add a Preprocessor to extract items (URLs, records) from raw data before the <strong>Fetch Data</strong> step stores them in the repository.
           </p>
           <div className="flex flex-col gap-3">
             <button
@@ -526,6 +526,9 @@ const Sidebar: React.FC<SidebarProps> = ({ onAddNode, selectedNode, isOpen, onCl
               <span className="font-semibold">Add Preprocessor</span>
             </button>
           </div>
+          <p className="text-xs text-gray-400 mt-3 italic">
+            💡 A <strong>Fetch / Get Data</strong> node is automatically placed after the preprocessor (or directly after the data source) to make the fetch step explicit in the flow.
+          </p>
         </div>
       )
     }

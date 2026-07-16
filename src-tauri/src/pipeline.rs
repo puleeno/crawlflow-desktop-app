@@ -388,6 +388,23 @@ fn process_node(
             (input, format!("Stored {} items", count))
         }
 
+        // The fetchData node is a structural step that makes the data-fetching phase
+        // explicit in the flow diagram. The actual HTTP/file fetch is performed by
+        // the repository pipeline (Phase 1a). Here we simply pass items through.
+        "fetchData" => {
+            let count = input.len();
+            log_manager.info(
+                project_id,
+                node_id,
+                &format!(
+                    "[{}] Fetch / Get Data: forwarding {} items to repository",
+                    label_of(node),
+                    count
+                ),
+            );
+            (input, format!("Fetched & forwarded {} items", count))
+        }
+
         "processor" => {
             let processor_type = node
                 .data
@@ -772,7 +789,8 @@ pub async fn execute_repository_pipeline(
                     let call_config = build_plugin_config(&node.data, &source_value, project_id);
 
                     // Warn if shop_url is missing from pluginConfig and source_value is empty
-                    let plugin_config_has_shop_url = node.data
+                    let plugin_config_has_shop_url = node
+                        .data
                         .get("pluginConfig")
                         .and_then(|c| c.get("shop_url"))
                         .is_some();
