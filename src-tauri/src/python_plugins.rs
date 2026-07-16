@@ -535,7 +535,7 @@ impl PythonPluginEngine {
     pub fn register_processor_configs(&mut self) -> Result<Vec<ProcessorConfig>, String> {
         let mut configs = Vec::new();
         
-        for (plugin_id, plugin) in &self.plugins {
+        for (plugin_id, plugin) in &mut self.plugins {
             Python::with_gil(|py| -> Result<(), String> {
                 let globals = plugin.ensure_loaded(py)
                     .map_err(|e| format!("Failed to load plugin: {}", e))?;

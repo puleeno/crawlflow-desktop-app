@@ -292,8 +292,10 @@ impl DataPreprocessor {
     fn build_store_url(source_url: &str, store_id: &str, platform: &str) -> String {
         match platform {
             "oreka.vn" => {
-                let parsed = url::Url::parse(source_url).unwrap_or_else(|_| url::Url::parse("https://www.oreka.vn").unwrap());
-                let base = format!("{}://{}", parsed.scheme(), parsed.host().unwrap_or("www.oreka.vn"));
+                let parsed = url::Url::parse(source_url)
+                    .unwrap_or_else(|_| url::Url::parse("https://www.oreka.vn").unwrap());
+                let host = parsed.host_str().unwrap_or("www.oreka.vn");
+                let base = format!("{}://{}", parsed.scheme(), host);
                 format!("{}/mua-ban?storeId={}&sort=createdAt&order=desc", base, store_id)
             }
             _ => source_url.to_string(),

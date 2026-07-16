@@ -1120,6 +1120,8 @@ pub async fn execute_repository_pipeline(
                 wait_for_selector: None,
                 wait_for_content: None,
                 wait_timeout_ms: None,
+                extract_store_id: None,
+                platform: None,
             });
 
         let result = if let Some(engine) = python_engine.as_deref_mut() {
@@ -1631,6 +1633,10 @@ fn extract_preprocessors(config: &PipelineConfig) -> Vec<PreprocessorConfig> {
                     .and_then(|v| v.as_str())
                     .map(String::from),
                 wait_timeout_ms: data.get("waitTimeoutMs").and_then(|v| v.as_u64()),
+                extract_store_id: data
+                    .get("extractStoreId")
+                    .and_then(|v| v.as_bool()),
+                platform: data.get("platform").and_then(|v| v.as_str()).map(String::from),
             })
         })
         .collect()

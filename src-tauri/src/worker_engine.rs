@@ -56,18 +56,31 @@ impl WorkerFactory {
             .unwrap_or_default();
         
         // Parse processor chain
-        let processor_chain = data.get("processorChain")
+        let processor_chain = data
+            .get("processorChain")
             .and_then(|v| v.as_array())
             .map(|chain| {
-                chain.iter().map(|step| {
-                    crate::models::ProcessorStep {
-                        id: step.get("id")?.as_str().unwrap_or("").to_string(),
-                        processor_type: step.get("processorType")?.as_str().unwrap_or("").to_string(),
-                        config: step.get("config").cloned().unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
-                        retry_count: step.get("retryCount")?.as_u64().map(|v| v as u32),
-                        max_retry: step.get("maxRetry")?.as_u64().unwrap_or(3) as u32,
-                    }
-                }).collect()
+                chain
+                    .iter()
+                    .filter_map(|step| {
+                        let id = step.get("id")?.as_str().unwrap_or("").to_string();
+                        let processor_type = step
+                            .get("processorType")?
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string();
+                        let config = step
+                            .get("config")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+                        Some(ProcessorStep {
+                            id,
+                            processor_type,
+                            config,
+                        })
+                    })
+                    .collect()
             })
             .unwrap_or_default();
         
