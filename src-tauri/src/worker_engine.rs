@@ -198,6 +198,20 @@ impl WorkerEngine {
             }
 
             if !item_failed {
+                // Save the final extracted output to processing_log so that
+                // get_done_items() can retrieve it for Excel/CSV export.
+                // Without this, the export only sees raw repository fields
+                // (id, source_url, status, text) instead of the configured
+                // Data Extractor fields (title, price, images, etc.).
+                let output_str = current_data.to_string();
+                let _ = repo.log_processing(
+                    item.id,
+                    Some(&worker.id),
+                    "final_output",
+                    "done",
+                    Some(&output_str),
+                    None,
+                );
                 let _ = repo.update_status(item.id, "done");
                 processed += 1;
                 results.push(ProcessItemResult {

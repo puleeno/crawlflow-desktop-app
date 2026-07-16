@@ -1494,24 +1494,50 @@ async fn execute_pagination_in_pipeline(
 fn parse_extract_rules_array(arr: &[serde_json::Value]) -> Vec<crate::models::ExtractRule> {
     arr.iter()
         .filter_map(|r| {
+            // Support both legacy format { field, selector, attribute } and
+            // frontend ExtractionRule format { name, extractFrom, selector, extract, attribute, jsonPath }
             let field = r
                 .get("field")
                 .or_else(|| r.get("name"))
                 .and_then(|v| v.as_str())?
                 .to_string();
-            let selector = r
-                .get("selector")
-                .or_else(|| r.get("value"))
-                .and_then(|v| v.as_str())?
-                .to_string();
-            let attribute = r
-                .get("attribute")
+
+            // Determine the CSS selector or JSON path
+            let extract_from = r
+                .get("extractFrom")
                 .and_then(|v| v.as_str())
-                .map(String::from);
+                .unwrap_or("html-element");
+            let selector = if extract_from == "json-ld" {
+                // For JSON-LD, use jsonPath as the "selector" (handled by crawler)
+                r.get("jsonPath")
+                    .or_else(|| r.get("selector"))
+                    .or_else(|| r.get("value"))
+                    .and_then(|v| v.as_str())?
+                    .to_string()
+            } else {
+                r.get("selector")
+                    .or_else(|| r.get("value"))
+                    .and_then(|v| v.as_str())?
+                    .to_string()
+            };
+
+            // Determine attribute: if extract == 'attribute', use the attribute field
+            let extract_mode = r.get("extract").and_then(|v| v.as_str()).unwrap_or("text");
+            let attribute = if extract_mode == "attribute" {
+                r.get("attribute")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            } else {
+                r.get("attribute")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            };
+
             let extract_multiple = r
                 .get("extractMultiple")
                 .or_else(|| r.get("extract_multiple"))
                 .and_then(|v| v.as_bool());
+
             Some(crate::models::ExtractRule {
                 field,
                 selector,
@@ -1759,22 +1785,44 @@ fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
 
                 if !rules_from_extractor.is_empty() {
                     log::info!(
-                        "[extract_workers] Merged {} extract rules from html-data-extractor '{}' into worker '{}'",
+                        "[extract_workers] Merged {} extract rules from upstream html-data-extractor '{}' into worker '{}'",
                         rules_from_extractor.len(),
                         ext_node.id,
                         node.id
                     );
                     extract_rules.extend(rules_from_extractor);
                 }
+            }
+        }
 
-                // Also pick up client settings from the extractor node if not already set on the worker
-                if client_profile.client_type == "reqwest" {
-                    if let Some(url_settings) = ext_node.data.get("urlSettings") {
-                        if let Some(http_client) = url_settings.get("httpClient") {
-                            // Already configured on worker — we only inherit if not overridden
-                            let _ = http_client; // just noting we could merge here
-                        }
-                    }
+        // --- Also pull rules from DOWNSTREAM extractor nodes (in the processor_chain) ---
+        // UI typically connects: Repository → Worker → HTML Data Extractor → Processor
+        // so the extractor is a child/downstream node, not an input to the worker.
+        for step in &processor_chain {
+            if let Some(ext_node) = config.nodes.iter().find(|n| {
+                n.id == step.id
+                    && (n.node_type == "html-data-extractor"
+                        || n.node_type == "htmlDataExtractor"
+                        || n.node_type == "extractor")
+            }) {
+                let rules_from_downstream = ext_node
+                    .data
+                    .get("customRules")
+                    .or_else(|| ext_node.data.get("extractRules"))
+                    .or_else(|| ext_node.data.get("parserRules"))
+                    .or_else(|| ext_node.data.get("rules"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| parse_extract_rules_array(arr))
+                    .unwrap_or_default();
+
+                if !rules_from_downstream.is_empty() {
+                    log::info!(
+                        "[extract_workers] Merged {} extract rules from downstream html-data-extractor '{}' into worker '{}'",
+                        rules_from_downstream.len(),
+                        ext_node.id,
+                        node.id
+                    );
+                    extract_rules.extend(rules_from_downstream);
                 }
             }
         }
