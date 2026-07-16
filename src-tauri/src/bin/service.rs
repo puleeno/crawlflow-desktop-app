@@ -102,10 +102,17 @@ fn create_python_plugin_engine(
     let mut engine =
         crawlflow_lib::python_plugins::PythonPluginEngine::new(get_builtin_plugins_dir(), user_dir);
     let discovered = engine.discover()?;
-    engine.retain_plugins(enabled_plugin_ids);
+
+    // If the extensions table is empty on first run, keep all discovered plugins available.
+    // This allows project-specific plugin sources such as oreka-shop-crawler to run even
+    // before the user manually toggles the plugin in the UI.
+    if !enabled_plugin_ids.is_empty() {
+        engine.retain_plugins(enabled_plugin_ids);
+    }
+
     let enabled_discovered: Vec<_> = discovered
         .into_iter()
-        .filter(|plugin_id| enabled_plugin_ids.contains(plugin_id))
+        .filter(|plugin_id| enabled_plugin_ids.is_empty() || enabled_plugin_ids.contains(plugin_id))
         .collect();
     println!("[SERVICE] Python plugins initialized: {:?}", enabled_discovered);
     Ok(engine)

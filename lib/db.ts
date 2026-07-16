@@ -15,11 +15,125 @@ export function setTauriAvailable(val: boolean) {
     tauriAvailable = val;
 }
 
+const MASTER_SCHEMA_SQL = [
+    `CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        db_path TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'disabled',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS extensions (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        version TEXT DEFAULT '1.0.0',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        installed_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS project_runtime (
+        project_id TEXT PRIMARY KEY,
+        runner_status TEXT NOT NULL DEFAULT 'stopped',
+        runner_pid INTEGER,
+        runner_type TEXT DEFAULT 'service',
+        service_control TEXT NOT NULL DEFAULT 'run',
+        edit_pid INTEGER,
+        cycle_count INTEGER NOT NULL DEFAULT 0,
+        last_run_at TEXT,
+        last_error TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS raw_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_url TEXT NOT NULL,
+        item_type TEXT NOT NULL DEFAULT 'url',
+        item_hash TEXT NOT NULL,
+        raw_content TEXT,
+        extracted_url TEXT,
+        dup_count INTEGER NOT NULL DEFAULT 1,
+        priority INTEGER NOT NULL DEFAULT 0,
+        worker_id TEXT,
+        matched INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_raw_items_hash ON raw_items(item_hash)`,
+    `CREATE INDEX IF NOT EXISTS idx_raw_items_status ON raw_items(status)`,
+    `CREATE INDEX IF NOT EXISTS idx_raw_items_matched ON raw_items(matched)`,
+    `CREATE INDEX IF NOT EXISTS idx_raw_items_worker ON raw_items(worker_id)`,
+    `CREATE TABLE IF NOT EXISTS processing_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id INTEGER NOT NULL,
+        worker_id TEXT,
+        processor_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        output TEXT,
+        error TEXT,
+        started_at TEXT,
+        finished_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_processing_log_item ON processing_log(item_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_processing_log_worker ON processing_log(worker_id)`,
+    `CREATE TABLE IF NOT EXISTS parsed_data (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        raw_item_id INTEGER NOT NULL,
+        worker_id TEXT NOT NULL,
+        processor_id TEXT NOT NULL,
+        data TEXT NOT NULL,
+        schema_version TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (raw_item_id) REFERENCES raw_items(id),
+        UNIQUE(id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_parsed_data_raw_item ON parsed_data(raw_item_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_parsed_data_worker ON parsed_data(worker_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_parsed_data_processor ON parsed_data(processor_id)`,
+    `CREATE TABLE IF NOT EXISTS process_request_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        worker_id TEXT NOT NULL,
+        raw_item_id INTEGER NOT NULL,
+        processor_id TEXT NOT NULL,
+        processor_type TEXT NOT NULL,
+        input_data TEXT,
+        input_config TEXT,
+        output_data TEXT,
+        retry_count INTEGER DEFAULT 0,
+        max_retry INTEGER DEFAULT 3,
+        status TEXT NOT NULL DEFAULT 'pending',
+        error_message TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        finished_at TEXT,
+        FOREIGN KEY (raw_item_id) REFERENCES raw_items(id),
+        FOREIGN KEY (worker_id) REFERENCES workers(id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_process_request_history_worker ON process_request_history(worker_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_process_request_history_item ON process_request_history(raw_item_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_process_request_history_status ON process_request_history(status)`,
+];
+
+export async function ensureMasterDbSchema(db: any): Promise<void> {
+    for (const sql of MASTER_SCHEMA_SQL) {
+        await db.execute(sql);
+    }
+}
+
 export async function getMasterDb(): Promise<any> {
     if (!isTauri()) throw new Error('Not in Tauri environment');
 
     const { default: Database } = await import('@tauri-apps/plugin-sql');
-    return await Database.load('sqlite:crawlflow.db');
+    const db = await Database.load('sqlite:crawlflow.db');
+    await ensureMasterDbSchema(db);
+    return db;
 }
 
 export async function getProjectDb(projectId: string): Promise<any> {
