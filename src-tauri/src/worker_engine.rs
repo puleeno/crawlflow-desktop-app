@@ -60,10 +60,12 @@ impl WorkerFactory {
             .and_then(|v| v.as_array())
             .map(|chain| {
                 chain.iter().map(|step| {
-                    ProcessorStep {
+                    crate::models::ProcessorStep {
                         id: step.get("id")?.as_str().unwrap_or("").to_string(),
                         processor_type: step.get("processorType")?.as_str().unwrap_or("").to_string(),
                         config: step.get("config").cloned().unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+                        retry_count: step.get("retryCount")?.as_u64().map(|v| v as u32),
+                        max_retry: step.get("maxRetry")?.as_u64().unwrap_or(3) as u32,
                     }
                 }).collect()
             })
