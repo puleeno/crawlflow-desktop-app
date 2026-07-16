@@ -32,6 +32,7 @@ impl PluginEngine {
         self.plugins.insert(plugin.id.clone(), plugin);
     }
 
+    #[allow(dead_code)]
     pub fn get_plugin(&self, id: &str) -> Option<&RustPlugin> {
         self.plugins.get(id)
     }
@@ -188,11 +189,13 @@ impl PluginEngine {
     // ── Preprocessors ─────────────────────────────────────────────
 
     /// Collect preprocessor registrations từ tất cả Python plugins
+    #[allow(dead_code)]
     pub fn list_preprocessors(&mut self) -> Vec<crate::data_preprocessor::PreprocessorRegistration> {
         self.python_engine.collect_preprocessors()
     }
 
     /// Execute preprocessor: dispatch to plugin's preprocess_data hook hoặc fallback
+    #[allow(dead_code)]
     pub fn execute_preprocessor(
         &mut self,
         raw_data: &str,

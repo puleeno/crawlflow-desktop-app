@@ -30,6 +30,7 @@ pub struct NewRawItem {
     pub extracted_url: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessingLogEntry {
     pub id: i64,
@@ -322,6 +323,7 @@ impl RawItemRepository {
     }
 
     /// Reset items pending lai sau khi xử lý lỗi
+    #[allow(dead_code)]
     pub fn reset_failed_items(&self) -> Result<i64, String> {
         let count = self
             .conn

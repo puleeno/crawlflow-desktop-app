@@ -94,14 +94,6 @@ impl LogManager {
         format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", 1970 + days / 365, 1, 1, hours, mins, sec, millis)
     }
 
-    fn now_epoch() -> String {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .to_string()
-    }
-
     pub fn emit(
         &self,
         project_id: &str,

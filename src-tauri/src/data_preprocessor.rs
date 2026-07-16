@@ -271,21 +271,55 @@ impl DataPreprocessor {
     }
 
     fn find_apollo_store_id(data: &serde_json::Value) -> Option<String> {
-        if let Some(obj) = data.as_object() {
-            if let Some(apollo_state) = obj.get("__APOLLO_STATE__").and_then(|v| v.as_object()) {
-                for (key, value) in apollo_state {
-                    if key.starts_with("Store:") {
-                        if let Some(store_id) = value.get("id").and_then(|v| v.as_str()) {
-                            return Some(store_id.to_string());
-                        }
-                        // Use key as fallback
-                        if let Some(store_id) = key.strip_prefix("Store:") {
-                            return Some(store_id.to_string());
-                        }
+        // Pattern 1: props.pageProps.__APOLLO_STATE__ (actual Next.js structure from Oreka)
+        if let Some(apollo_state) = data
+            .get("props")
+            .and_then(|v| v.as_object())
+            .and_then(|obj| obj.get("pageProps"))
+            .and_then(|v| v.as_object())
+            .and_then(|obj| obj.get("__APOLLO_STATE__"))
+            .and_then(|v| v.as_object())
+        {
+            for (key, value) in apollo_state {
+                if key.starts_with("Store:") {
+                    if let Some(store_id) = value.get("id").and_then(|v| v.as_str()) {
+                        return Some(store_id.to_string());
+                    }
+                    // Use key as fallback
+                    if let Some(store_id) = key.strip_prefix("Store:") {
+                        return Some(store_id.to_string());
                     }
                 }
             }
         }
+
+        // Pattern 2: props.pageProps.dehydratedState.queries[].state.data.storeProfile.storeId (test case)
+        if let Some(dehydrated) = data
+            .get("props")
+            .and_then(|v| v.as_object())
+            .and_then(|obj| obj.get("pageProps"))
+            .and_then(|v| v.as_object())
+            .and_then(|obj| obj.get("dehydratedState"))
+            .and_then(|v| v.as_object())
+            .and_then(|obj| obj.get("queries"))
+            .and_then(|v| v.as_array())
+        {
+            for query in dehydrated {
+                if let Some(store_id) = query
+                    .get("state")
+                    .and_then(|v| v.as_object())
+                    .and_then(|obj| obj.get("data"))
+                    .and_then(|v| v.as_object())
+                    .and_then(|obj| obj.get("storeProfile"))
+                    .and_then(|v| v.as_object())
+                    .and_then(|obj| obj.get("storeId"))
+                    .and_then(|v| v.as_str())
+                {
+                    return Some(store_id.to_string());
+                }
+            }
+        }
+
         None
     }
 

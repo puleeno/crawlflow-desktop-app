@@ -69,6 +69,7 @@ pub fn get_progress(project_id: &str) -> Option<ProgressInfo> {
     PROGRESS.lock().ok().and_then(|map| map.get(project_id).cloned())
 }
 
+#[allow(dead_code)]
 pub fn init_progress(project_id: &str) {
     if let Ok(mut map) = PROGRESS.lock() {
         map.entry(project_id.to_string()).or_insert_with(|| {
@@ -79,6 +80,7 @@ pub fn init_progress(project_id: &str) {
     }
 }
 
+#[allow(dead_code)]
 pub fn remove_progress(project_id: &str) {
     if let Ok(mut map) = PROGRESS.lock() {
         map.remove(project_id);

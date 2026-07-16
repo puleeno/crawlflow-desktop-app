@@ -1,12 +1,13 @@
-use crate::item_matcher::{ItemMatcher, MatchRule, MatchPattern};
+use crate::item_matcher::{ItemMatcher, MatchRule};
 use crate::repository::{RawItem, RawItemRepository};
-use crate::models::{ProcessorConfig, ExcelStructure};
 use serde::{Deserialize, Serialize};
 
 // ── Worker Factory ─────────────────────────────────────
 
+#[allow(dead_code)]
 pub struct WorkerFactory;
 
+#[allow(dead_code)]
 impl WorkerFactory {
     /// Create worker definitions from pipeline node settings
     pub fn create_workers_from_nodes(
@@ -134,6 +135,7 @@ pub struct WorkerEngine;
 
 impl WorkerEngine {
     /// Chunk raw items into batches for parallel processing
+    #[allow(dead_code)]
     pub fn chunk_items(items: Vec<RawItem>, chunk_size: usize) -> Vec<Vec<RawItem>> {
         items.chunks(chunk_size).map(|chunk| chunk.to_vec()).collect()
     }
@@ -351,6 +353,7 @@ impl WorkerEngine {
     }
 
     /// Phase 3 with retry logic: Process items with automatic retry on failure
+    #[allow(dead_code)]
     pub fn process_items_with_retry(
         repo: &RawItemRepository,
         worker: &WorkerDef,
@@ -368,8 +371,7 @@ impl WorkerEngine {
 
         for item in items {
             let mut retry_count = 0;
-            let mut last_error = None;
-            
+
             loop {
                 // Step 1 — mark as processing
                 let _ = repo.update_status(item.id, "processing");
@@ -394,8 +396,6 @@ impl WorkerEngine {
                             retry_count + 1,
                             e
                         );
-                        last_error = Some(e.clone());
-                        
                         if retry_count < max_retries {
                             retry_count += 1;
                             std::thread::sleep(std::time::Duration::from_millis(1000 * retry_count as u64));
@@ -452,8 +452,6 @@ impl WorkerEngine {
                             step_index = step_idx;
                         }
                         Err(e) => {
-                            last_error = Some(e.clone());
-                            
                             if retry_count < max_retries {
                                 retry_count += 1;
                                 std::thread::sleep(std::time::Duration::from_millis(1000 * retry_count as u64));

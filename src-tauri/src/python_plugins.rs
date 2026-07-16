@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::models::{ProcessorConfig, ExcelStructure, ExcelColumn};
+use crate::models::ProcessorConfig;
 
 /// Serialisable metadata about a Python plugin, sent to the frontend.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

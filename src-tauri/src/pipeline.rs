@@ -224,6 +224,7 @@ fn topological_levels(order: &[String], edges: &[PipelineEdge]) -> Vec<Vec<Strin
     levels
 }
 
+#[allow(dead_code)]
 fn node_inputs(
     node_id: &str,
     edges: &[PipelineEdge],

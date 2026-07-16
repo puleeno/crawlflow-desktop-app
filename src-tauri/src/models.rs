@@ -3,6 +3,7 @@ use crate::item_matcher::MatchRule;
 
 // ── Parsed Data Schema ─────────────────────────────────────
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedData {
     pub id: String,
@@ -23,6 +24,7 @@ pub struct ProcessorConfig {
     pub excel_structure: Option<ExcelStructure>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerConfig {
     pub id: String,
@@ -38,6 +40,7 @@ pub struct WorkerConfig {
     pub plugin_source_type: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessorStep {
     pub id: String,
@@ -47,6 +50,7 @@ pub struct ProcessorStep {
     pub max_retry: u32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerExecutionResult {
     pub worker_id: String,
@@ -55,6 +59,7 @@ pub struct WorkerExecutionResult {
     pub retry_failed: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedDataOutput {
     pub raw_item_id: i64,
@@ -365,6 +370,7 @@ pub struct ProcessResult {
     pub error: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParseRequest {
     pub parser_id: String,
@@ -381,6 +387,7 @@ pub struct PluginInfo {
     pub capabilities: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PresetDefinition {
     pub id: String,
