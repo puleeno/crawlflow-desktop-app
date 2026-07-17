@@ -667,14 +667,14 @@ def _has_next_page(html, current_page):
 
     # 3. aria-label next/sau/tiep
     if re.search(
-        r'aria-label=["\'][^"\']*(next|sau|tiep theo|trang sau)[^"\'']*["\']',
+        r'aria-label=["\'][^"\']*(next|sau|tiep theo|trang sau)[^"\']*(?:["\']|$)',
         html, re.IGNORECASE
     ):
         return True
 
     # 4. class next/forward/after tren <a> hoac <button>
     if re.search(
-        r'<(?:a|button)[^>]*class=["\'][^"\']*(\bnext\b|\bforward\b|\bafter\b)[^"\'']*["\']',
+        r'<(?:a|button)[^>]*class=["\'][^"\']*(\bnext\b|\bforward\b|\bafter\b)[^"\']*["\']',
         html, re.IGNORECASE
     ):
         return True
