@@ -142,6 +142,8 @@ mod tests {
                 selector: "h1".into(),
                 attribute: None,
                 extract_multiple: None,
+                extract_from: None,
+                json_path: None,
             }]),
             client_profile: None,
         };
@@ -330,7 +332,7 @@ pub struct HeaderPair {
     pub value: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExtractRule {
     #[serde(alias = "name")]
     pub field: String,
@@ -338,6 +340,10 @@ pub struct ExtractRule {
     pub attribute: Option<String>,
     #[serde(alias = "extractMultiple")]
     pub extract_multiple: Option<bool>,
+    #[serde(alias = "extractFrom")]
+    pub extract_from: Option<String>,
+    #[serde(alias = "jsonPath")]
+    pub json_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

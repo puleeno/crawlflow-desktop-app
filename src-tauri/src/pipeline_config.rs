@@ -68,6 +68,8 @@ pub(crate) fn parse_extract_rules_array(arr: &[Value]) -> Vec<ModelsExtractRule>
                 selector,
                 attribute,
                 extract_multiple,
+                extract_from: Some(extract_from.to_string()),
+                json_path: r.get("jsonPath").and_then(|v| v.as_str()).map(String::from),
             })
         })
         .collect()

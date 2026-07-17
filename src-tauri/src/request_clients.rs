@@ -1262,6 +1262,8 @@ mod tests {
             selector: "h1".into(),
             attribute: None,
             extract_multiple: None,
+            extract_from: None,
+            json_path: None,
         }];
         let result = rt.block_on(fetch_with_client(
             "http://0.0.0.0:1",

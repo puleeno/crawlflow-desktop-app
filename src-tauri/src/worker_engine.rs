@@ -818,6 +818,8 @@ pub(crate) fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
                             .data
                             .get("processorConfig")
                             .cloned()
+                            .or_else(|| n.data.get("settings").cloned())
+                            .or_else(|| n.data.get("config").cloned())
                             .unwrap_or(serde_json::Value::Null),
                     });
                 }

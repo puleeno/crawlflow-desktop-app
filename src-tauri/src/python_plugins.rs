@@ -683,6 +683,8 @@ fn py_extract_html(html: String, rules: String) -> PyResult<String> {
                 selector: "".into(),
                 attribute: None,
                 extract_multiple: None,
+                extract_from: None,
+                json_path: None,
             })
         })
         .collect();
