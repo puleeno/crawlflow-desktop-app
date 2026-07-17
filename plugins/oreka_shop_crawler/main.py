@@ -595,17 +595,53 @@ def _extract_oreka_listing_links(html, base_url):
     return links
 
 
-def _extract_total_pages(html):
-    """Uoc luong tong so trang tu phan tu phan trang."""
-    numbers = re.findall(r'<a[^>]*>(?:<span[^>]*>)?(\d+)(?:</span>)?</a>', html)
-    if numbers:
-        return max(int(n) for n in numbers if n.isdigit())
-    # Kiem tra text "Page X of Y"
-    m = re.search(r'(?:page|trang|cua)\s*(\d+)\s*(?:of|trên|cua)\s*(\d+)', html, re.IGNORECASE)
-    if m:
-        return int(m.group(2))
-    # Mặc dinh 20 pages
-    return 20
+def _has_next_page(html, current_page):
+    """Kiem tra xem trang hien tai co link/nut sang trang tiep theo khong.
+
+    Chien luoc (theo thu tu uu tien):
+    1. rel="next"  — chuan HTML, chinh xac nhat.
+    2. aria-label chua "next" / "sau" / "tiep".
+    3. class chua "next" / "forward" / "after" tren the <a> hoac <button>.
+    4. Text cua link la ky tu phan trang pho bien: ›, », >, "Next", "Sau", "Tiep".
+    5. Link co ?page=<current+1> hoac &page=<current+1> trong href.
+    """
+    next_page_num = current_page + 1
+
+    # 1. rel="next"
+    if re.search(r'rel=["\']next["\']', html, re.IGNORECASE):
+        return True
+
+    # 2. aria-label next/sau/tiep
+    if re.search(
+        r'aria-label=["\'][^"\']*(next|sau|tiep theo|trang sau)[^"\'']*["\']',
+        html, re.IGNORECASE
+    ):
+        return True
+
+    # 3. class next/forward/after tren <a> hoac <button>
+    if re.search(
+        r'<(?:a|button)[^>]*class=["\'][^"\']*(\bnext\b|\bforward\b|\bafter\b)[^"\'']*["\']',
+        html, re.IGNORECASE
+    ):
+        return True
+
+    # 4. Text pho bien cua nut next (›, », >, Next, Sau, Tiep)
+    #    Tim trong <a> hoac <button> / <span> co class lien quan
+    next_text_pattern = re.compile(
+        r'<(?:a|button|li)[^>]*>[^<]{0,40}(?:›|»|&rsaquo;|&raquo;|\bNext\b|\bSau\b|\bTiep\b)[^<]{0,10}</(?:a|button|li)>',
+        re.IGNORECASE
+    )
+    if next_text_pattern.search(html):
+        return True
+
+    # 5. Ton tai href voi ?page=<N+1> hoac &page=<N+1>
+    if re.search(
+        r'href=["\'][^"\'']*[?&]page=' + str(next_page_num) + r'["\'/&]',
+        html, re.IGNORECASE
+    ):
+        return True
+
+    return False
 
 
 def _parse_product_from_html(html, url):
@@ -846,12 +882,8 @@ def fetch_data(config_json):
 
         html = result.get("body", "")
 
-        # Uoc luong tong so trang tu page 1
-        if page == 1:
-            estimated = _extract_total_pages(html)
-            if estimated > 0:
-                total_pages_estimated = min(estimated, max_pages)
-                crawlflow.log(f"[OrekaShop] Uoc tinh {total_pages_estimated} trang", "info")
+        # Kiem tra con trang tiep theo khong
+        has_next = _has_next_page(html, page)
 
         # Trich xuat link san pham Oreka (/mua-ban-*/.../--detail/<id>)
         links = _extract_oreka_listing_links(html, base)
@@ -876,11 +908,14 @@ def fetch_data(config_json):
             "message": f"Dang tim san pham... trang {page}/{total_pages_estimated}",
         })
 
-        crawlflow.log(f"[OrekaShop] Trang {page}: tim thay {new_links} san pham moi (tong: {len(product_urls)})", "info")
+        crawlflow.log(f"[OrekaShop] Trang {page}: tim thay {new_links} san pham moi (tong: {len(product_urls)}), has_next={has_next}", "info")
 
-        # Kiem tra neu khong co link moi => het
+        # Dung neu khong con next page hoac khong co them link moi
+        if not has_next:
+            crawlflow.log(f"[OrekaShop] Khong tim thay nut trang tiep theo o trang {page}, dung phan trang", "info")
+            break
         if new_links == 0 and page > 1:
-            crawlflow.log(f"[OrekaShop] Khong tim thay san pham moi o trang {page}, dung phan trang", "info")
+            crawlflow.log(f"[OrekaShop] Khong tim thay san pham moi o trang {page} du co next, dung phan trang", "info")
             break
 
         time.sleep(delay_ms / 1000.0)
