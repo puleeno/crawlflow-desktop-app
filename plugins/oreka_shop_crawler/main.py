@@ -1271,14 +1271,20 @@ def _export_csv(products, filepath):
 def _update_progress(project_id, data):
     """Cap nhat progress vao Rust backend."""
     try:
+        def _to_u64(v):
+            try:
+                return int(round(float(v))) if v is not None else 0
+            except (TypeError, ValueError):
+                return 0
+
         info = {
-            "items_total": data.get("items_total", 0),
-            "items_processed": data.get("items_processed", 0),
-            "items_success": data.get("items_success", 0),
-            "items_failed": data.get("items_failed", 0),
-            "progress_pct": data.get("progress_pct", 0.0),
-            "avg_time_ms": data.get("avg_time_ms", 0.0),
-            "total_time_ms": data.get("total_time_ms", 0),
+            "items_total": _to_u64(data.get("items_total", 0)),
+            "items_processed": _to_u64(data.get("items_processed", 0)),
+            "items_success": _to_u64(data.get("items_success", 0)),
+            "items_failed": _to_u64(data.get("items_failed", 0)),
+            "progress_pct": float(data.get("progress_pct", 0.0) or 0.0),
+            "avg_time_ms": float(data.get("avg_time_ms", 0.0) or 0.0),
+            "total_time_ms": _to_u64(data.get("total_time_ms", 0)),
             "started_at": data.get("started_at", ""),
             "message": data.get("message", ""),
         }
