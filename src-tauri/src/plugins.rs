@@ -224,6 +224,7 @@ pub fn execute_processor_static(
         "filter" | "rust-filter" => filter_plugin(data, config),
         "sort" | "rust-sort" => sort_plugin(data, config),
         "limit" | "rust-limit" => limit_plugin(data, config),
+        "excel-export" | "rust-excel-export" => excel_export_plugin(data, config),
         _ => return ProcessResult { success: true, data, error: None },
     };
     match result {
@@ -1083,18 +1084,36 @@ pub fn excel_export_plugin(
         .and_then(|v| v.as_str())
         .unwrap_or("export.xlsx");
 
-    let bytes = inner_export_excel(&mapped_data, sheet_name, include_header)?;
+    let bytes = inner_export_excel(&mapped_data, sheet_name, include_header)
+        .map_err(|e| format!("Excel generation failed ({} rows): {}", mapped_data.len(), e))?;
 
     // Write to a temp file
     let out_dir = dirs_next::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("com.CrawlFlow.desktop")
         .join("exports");
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("Failed to create exports dir: {}", e))?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| {
+        format!(
+            "Failed to create exports dir '{}': {}",
+            out_dir.to_string_lossy(),
+            e
+        )
+    })?;
 
     let out_path = out_dir.join(file_name);
-    std::fs::write(&out_path, &bytes).map_err(|e| format!("Failed to write Excel file: {}", e))?;
+    std::fs::write(&out_path, &bytes).map_err(|e| {
+        format!(
+            "Failed to write Excel file '{}': {}",
+            out_path.to_string_lossy(),
+            e
+        )
+    })?;
+    log::info!(
+        "[excel_export_plugin] wrote {} bytes to {} ({} rows)",
+        bytes.len(),
+        out_path.to_string_lossy(),
+        mapped_data.len()
+    );
 
     Ok(vec![serde_json::json!({
         "success": true,

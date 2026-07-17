@@ -3,8 +3,36 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
+use std::sync::LazyLock;
 use tauri::{AppHandle, Emitter};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Global reference to the active LogManager and the project currently running,
+/// so that Python plugin logs (via `crawlflow.log`) can be persisted to the DB
+/// and streamed to the UI instead of being lost to the Rust logger only.
+static ACTIVE_LOG_CONTEXT: LazyLock<RwLock<Option<(Arc<LogManager>, String)>>> =
+    LazyLock::new(|| RwLock::new(None));
+
+/// Register the LogManager + project id that Python plugin logs should route to.
+/// Called at the start of a pipeline run.
+pub fn set_active_log_context(log_manager: Arc<LogManager>, project_id: &str) {
+    *ACTIVE_LOG_CONTEXT.write().unwrap() = Some((log_manager, project_id.to_string()));
+}
+
+/// Clear the active log context at the end of a pipeline run.
+pub fn clear_active_log_context() {
+    *ACTIVE_LOG_CONTEXT.write().unwrap() = None;
+}
+
+/// Route a log message coming from a Python plugin to the active LogManager.
+/// Falls back to the Rust logger when no pipeline context is active.
+pub fn log_from_plugin(level: &str, message: &str) {
+    if let Some((ref lm, ref project_id)) = *ACTIVE_LOG_CONTEXT.read().unwrap() {
+        lm.emit(project_id, level, "PythonPlugin", message, None);
+    } else {
+        log::info!("[PythonPlugin] [{}] {}", level, message);
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
@@ -86,12 +114,31 @@ impl LogManager {
             .unwrap_or_default();
         let secs = d.as_secs();
         let millis = d.subsec_millis();
-        let days = secs / 86400;
+        let days = (secs / 86400) as i64;
         let time_secs = secs % 86400;
         let hours = time_secs / 3600;
         let mins = (time_secs % 3600) / 60;
         let sec = time_secs % 60;
-        format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", 1970 + days / 365, 1, 1, hours, mins, sec, millis)
+        let (year, month, day) = Self::civil_from_days(days);
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+            year, month, day, hours, mins, sec, millis
+        )
+    }
+
+    /// Convert days since 1970-01-01 to a (year, month, day) tuple.
+    /// Based on Howard Hinnant's civil-from-days algorithm.
+    fn civil_from_days(z: i64) -> (i64, u32, u32) {
+        let z = z + 719468;
+        let era = if z >= 0 { z } else { z - 146096 } / 146097;
+        let doe = z - era * 146097;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+        let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+        (if m <= 2 { y + 1 } else { y }, m, d)
     }
 
     pub fn emit(

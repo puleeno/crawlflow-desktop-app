@@ -259,9 +259,13 @@ pub fn execute_pipeline_with_mode(
     let node_outputs: Arc<RwLock<HashMap<String, Vec<serde_json::Value>>>> =
         Arc::new(RwLock::new(HashMap::new()));
 
+    // Route Python plugin logs (crawlflow.log) to this project's LogManager.
+    crate::logs::set_active_log_context(log_manager.clone(), project_id);
+
     let order = match topological_sort(&config.nodes, &config.edges) {
         Ok(o) => o,
         Err(e) => {
+            crate::logs::clear_active_log_context();
             return ExecutionResult {
                 success: false,
                 steps: vec![],
@@ -342,6 +346,8 @@ pub fn execute_pipeline_with_mode(
             final_output.len()
         ),
     );
+
+    crate::logs::clear_active_log_context();
 
     ExecutionResult {
         success: true,
@@ -434,6 +440,39 @@ fn process_node(
                 "rust-limit" => {
                     let cfg = processor_config;
                     plugins::limit_plugin(input, cfg)
+                }
+                "rust-excel-export" | "excel-export" => {
+                    log_manager.info(
+                        project_id,
+                        node_id,
+                        &format!(
+                            "[{}] Excel export starting: {} items, config={}",
+                            label_of(node),
+                            input_count,
+                            processor_config
+                        ),
+                    );
+                    let cfg = processor_config.clone();
+                    match plugins::excel_export_plugin(input.clone(), cfg) {
+                        Ok(output) => {
+                            let file = output
+                                .first()
+                                .and_then(|v| v.get("file"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("<unknown>");
+                            log_manager.info(
+                                project_id,
+                                node_id,
+                                &format!(
+                                    "[{}] Excel export wrote file: {}",
+                                    label_of(node),
+                                    file
+                                ),
+                            );
+                            Ok(output)
+                        }
+                        Err(e) => Err(e),
+                    }
                 }
                 _ => {
                     log_manager.warn(

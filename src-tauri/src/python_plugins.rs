@@ -4,6 +4,27 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use crate::models::ProcessorConfig;
 
+/// Format a Python exception including its full traceback, so plugin failures
+/// are debuggable instead of showing only a one-line message.
+fn format_pyerr(py: Python<'_>, err: &PyErr) -> String {
+    let mut out = format!("{}", err.value(py));
+
+    if let Some(tb) = err.traceback(py) {
+        match tb.format() {
+            Ok(formatted) => {
+                out = format!("{}\nTraceback:\n{}", out, formatted);
+            }
+            Err(_) => {}
+        }
+    }
+
+    if let Some(cause) = err.cause(py) {
+        out = format!("{}\nCaused by: {}", out, cause.value(py));
+    }
+
+    out
+}
+
 /// Serialisable metadata about a Python plugin, sent to the frontend.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PythonPluginMeta {
@@ -289,7 +310,7 @@ impl PythonPluginEngine {
 
             let result = func
                 .call1((data_json, config_json))
-                .map_err(|e| format!("Python hook '{}.{}' failed: {}", plugin_id, hook_name, e))?;
+                .map_err(|e| format!("Python hook '{}.{}' failed: {}", plugin_id, hook_name, format_pyerr(py, &e)))?;
 
             let result_str: String = result
                 .extract()
@@ -326,7 +347,7 @@ impl PythonPluginEngine {
 
             let result = func
                 .call1((config_json,))
-                .map_err(|e| format!("Python plugin '{}.fetch_data' failed: {}", plugin_id, e))?;
+                .map_err(|e| format!("Python plugin '{}.fetch_data' failed: {}", plugin_id, format_pyerr(py, &e)))?;
 
             let result_str: String = result
                 .extract()
@@ -366,7 +387,7 @@ impl PythonPluginEngine {
 
             let result = func
                 .call1((data_json, config_json))
-                .map_err(|e| format!("Python plugin '{}.export_data' failed: {}", plugin_id, e))?;
+                .map_err(|e| format!("Python plugin '{}.export_data' failed: {}", plugin_id, format_pyerr(py, &e)))?;
 
             let output: String = result
                 .extract()
@@ -457,7 +478,7 @@ impl PythonPluginEngine {
 
             let result = func
                 .call1((data_json,))
-                .map_err(|e| format!("Python plugin '{}.preprocess_data' failed: {}", plugin_id, e))?;
+                .map_err(|e| format!("Python plugin '{}.preprocess_data' failed: {}", plugin_id, format_pyerr(py, &e)))?;
 
             let result_str: String = result
                 .extract()
@@ -499,7 +520,7 @@ impl PythonPluginEngine {
 
             let result = func
                 .call1((data_json, config_json))
-                .map_err(|e| format!("Python plugin '{}.filter_data' failed: {}", plugin_id, e))?;
+                .map_err(|e| format!("Python plugin '{}.filter_data' failed: {}", plugin_id, format_pyerr(py, &e)))?;
 
             let result_str: String = result
                 .extract()
@@ -646,7 +667,7 @@ fn py_fetch_url(url: String, headers: Option<Vec<(String, String)>>) -> PyResult
 #[pyfunction(name = "log", signature = (message, level=None))]
 fn py_log(message: String, level: Option<String>) {
     let lvl = level.unwrap_or_else(|| "info".to_string());
-    log::info!("[PythonPlugin] [{}] {}", lvl, message);
+    crate::logs::log_from_plugin(&lvl, &message);
 }
 
 #[pyfunction]
