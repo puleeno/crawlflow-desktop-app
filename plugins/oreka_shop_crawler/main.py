@@ -583,15 +583,54 @@ def _extract_listing_links(html, base_url):
 
 
 def _extract_oreka_listing_links(html, base_url):
-    """Lay URL chi tiet san pham Oreka: /mua-ban-*/...--detail/<product_id>."""
+    """Lay URL chi tiet san pham Oreka.
+
+    Uu tien 1: Lay tu JSON-LD @type=ItemList (chinh xac nhat, Oreka nhung day).
+    Uu tien 2: Lay tu the <a href> co pattern /mua-ban-*/...-detail/<id>.
+    """
+    import json as _json
     links = set()
+    origin = "/".join(base_url.rstrip("/").split("/")[:3])  # https://www.oreka.vn
+
+    # --- Uu tien 1: JSON-LD ItemList ---
+    for ld_text in re.findall(
+        r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html, re.DOTALL | re.IGNORECASE
+    ):
+        try:
+            data = _json.loads(ld_text)
+            # Ho tro ca object don va @graph array
+            nodes = []
+            if isinstance(data, list):
+                nodes = data
+            elif isinstance(data, dict):
+                nodes = data.get("@graph", [data])
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                if node.get("@type") == "ItemList":
+                    for item in node.get("itemListElement", []):
+                        url = item.get("url", "")
+                        if url:
+                            full = urllib.parse.urljoin(origin + "/", url.lstrip("/"))
+                            links.add(full)
+        except Exception:
+            pass
+
+    if links:
+        return links
+
+    # --- Uu tien 2: <a href> regex ---
+    # Pattern: /mua-ban-<category>/<slug>-detail/<id>
     pattern = re.compile(
-        r'''["']((?:https?://[^"']+)?/mua-ban(?:-[^/"']+)?/[^"']*?--detail/\d+(?:\?[^"']*)?)["']''',
+        r'href=["\']((https?://[^"\'/][^"\']*)?' +
+        r'/mua-ban(?:-[^/"\' ]+)?/[^"\' ]*-detail/\d+(?:\?[^"\' ]*)?)["\']',
         re.IGNORECASE,
     )
     for match in pattern.finditer(unescape(html)):
         href = match.group(1)
-        links.add(urllib.parse.urljoin(base_url.rstrip("/") + "/", href))
+        links.add(urllib.parse.urljoin(origin + "/", href.lstrip("/")))
+
     return links
 
 
@@ -600,10 +639,10 @@ def _has_next_page(html, current_page):
 
     Chien luoc (theo thu tu uu tien):
     1. rel="next"  — chuan HTML, chinh xac nhat.
-    2. aria-label chua "next" / "sau" / "tiep".
-    3. class chua "next" / "forward" / "after" tren the <a> hoac <button>.
-    4. Text cua link la ky tu phan trang pho bien: ›, », >, "Next", "Sau", "Tiep".
-    5. Link co ?page=<current+1> hoac &page=<current+1> trong href.
+    2. Ton tai href chua ?page=<N+1> hoac &page=<N+1>  — chinh xac voi Oreka.
+    3. aria-label chua "next" / "sau" / "tiep".
+    4. class chua "next" / "forward" / "after" tren the <a> hoac <button>.
+    5. Text cua link la ky tu phan trang pho bien: ›, », Next, Sau, Tiep.
     """
     next_page_num = current_page + 1
 
@@ -611,34 +650,41 @@ def _has_next_page(html, current_page):
     if re.search(r'rel=["\']next["\']', html, re.IGNORECASE):
         return True
 
-    # 2. aria-label next/sau/tiep
+    # 2. Href co page=<N+1> — Oreka render link nay trong SSR HTML
+    if re.search(
+        r'href=["\'][^"\']*[?&]page=' + str(next_page_num) + r'(?:[&"\'/]|$)',
+        html, re.IGNORECASE
+    ):
+        return True
+
+    # 2b. Oreka specific: nut next la <a> chua <img alt="arrow-right">
+    #     href cua nut nay luon tro den trang tiep theo
+    if re.search(
+        r'<a\b[^>]*href=[^>]+>\s*(?:<[^>]+>\s*)*<img[^>]+alt=["\']arrow-right["\']',
+        html, re.IGNORECASE | re.DOTALL
+    ):
+        return True
+
+    # 3. aria-label next/sau/tiep
     if re.search(
         r'aria-label=["\'][^"\']*(next|sau|tiep theo|trang sau)[^"\'']*["\']',
         html, re.IGNORECASE
     ):
         return True
 
-    # 3. class next/forward/after tren <a> hoac <button>
+    # 4. class next/forward/after tren <a> hoac <button>
     if re.search(
         r'<(?:a|button)[^>]*class=["\'][^"\']*(\bnext\b|\bforward\b|\bafter\b)[^"\'']*["\']',
         html, re.IGNORECASE
     ):
         return True
 
-    # 4. Text pho bien cua nut next (›, », >, Next, Sau, Tiep)
-    #    Tim trong <a> hoac <button> / <span> co class lien quan
+    # 5. Text pho bien cua nut next (›, », Next, Sau, Tiep)
     next_text_pattern = re.compile(
         r'<(?:a|button|li)[^>]*>[^<]{0,40}(?:›|»|&rsaquo;|&raquo;|\bNext\b|\bSau\b|\bTiep\b)[^<]{0,10}</(?:a|button|li)>',
         re.IGNORECASE
     )
     if next_text_pattern.search(html):
-        return True
-
-    # 5. Ton tai href voi ?page=<N+1> hoac &page=<N+1>
-    if re.search(
-        r'href=["\'][^"\'']*[?&]page=' + str(next_page_num) + r'["\'/&]',
-        html, re.IGNORECASE
-    ):
         return True
 
     return False
