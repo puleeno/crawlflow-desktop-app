@@ -271,7 +271,12 @@ pub(crate) fn build_plugin_config(
         Value::Object(map) => map.clone(),
         _ => serde_json::Map::new(),
     };
-    if !config.contains_key("shop_url") && !source_value.is_empty() {
+    let shop_url_empty = config
+        .get("shop_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true);
+    if shop_url_empty && !source_value.is_empty() {
         config.insert("shop_url".into(), serde_json::json!(source_value));
     }
     config.insert("source_url".into(), serde_json::json!(source_value));

@@ -2,10 +2,10 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
 use std::sync::LazyLock;
-use tauri::{AppHandle, Emitter};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Emitter};
 
 /// Global reference to the active LogManager and the project currently running,
 /// so that Python plugin logs (via `crawlflow.log`) can be persisted to the DB
@@ -22,6 +22,21 @@ pub fn set_active_log_context(log_manager: Arc<LogManager>, project_id: &str) {
 /// Clear the active log context at the end of a pipeline run.
 pub fn clear_active_log_context() {
     *ACTIVE_LOG_CONTEXT.write().unwrap() = None;
+}
+
+pub struct LogContextGuard;
+
+impl LogContextGuard {
+    pub fn new(log_manager: Arc<LogManager>, project_id: &str) -> Self {
+        set_active_log_context(log_manager, project_id);
+        Self
+    }
+}
+
+impl Drop for LogContextGuard {
+    fn drop(&mut self) {
+        clear_active_log_context();
+    }
 }
 
 /// Route a log message coming from a Python plugin to the active LogManager.

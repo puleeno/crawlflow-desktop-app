@@ -259,12 +259,11 @@ pub fn execute_pipeline_with_mode(
         Arc::new(RwLock::new(HashMap::new()));
 
     // Route Python plugin logs (crawlflow.log) to this project's LogManager.
-    crate::logs::set_active_log_context(log_manager.clone(), project_id);
+    let _log_guard = crate::logs::LogContextGuard::new(log_manager.clone(), project_id);
 
     let order = match topological_sort(&config.nodes, &config.edges) {
         Ok(o) => o,
         Err(e) => {
-            crate::logs::clear_active_log_context();
             return ExecutionResult {
                 success: false,
                 steps: vec![],
@@ -345,8 +344,6 @@ pub fn execute_pipeline_with_mode(
             final_output.len()
         ),
     );
-
-    crate::logs::clear_active_log_context();
 
     ExecutionResult {
         success: true,
@@ -462,11 +459,7 @@ fn process_node(
                             log_manager.info(
                                 project_id,
                                 node_id,
-                                &format!(
-                                    "[{}] Excel export wrote file: {}",
-                                    label_of(node),
-                                    file
-                                ),
+                                &format!("[{}] Excel export wrote file: {}", label_of(node), file),
                             );
                             Ok(output)
                         }
@@ -649,6 +642,8 @@ pub async fn execute_repository_pipeline(
     mut python_engine: Option<&mut PythonPluginEngine>,
     cancellation: Option<&Arc<AtomicBool>>,
 ) -> RepositoryPipelineResult {
+    let _log_guard = crate::logs::LogContextGuard::new(log_manager.clone(), project_id);
+
     log_manager.info(
         project_id,
         "pipeline",
@@ -845,7 +840,11 @@ pub async fn execute_repository_pipeline(
             if let Some(ref pst) = plugin_source_type {
                 if let Some(engine) = python_engine.as_deref_mut() {
                     let plugin_id = pst.strip_prefix("py-").unwrap_or(pst);
-                    let call_config = crate::pipeline_config::build_plugin_config(&node.data, &source_value, project_id);
+                    let call_config = crate::pipeline_config::build_plugin_config(
+                        &node.data,
+                        &source_value,
+                        project_id,
+                    );
 
                     // Warn if shop_url is missing from pluginConfig and source_value is empty
                     let plugin_config_has_shop_url = node
@@ -895,7 +894,8 @@ pub async fn execute_repository_pipeline(
                                             serde_json::to_string(item).unwrap_or_default();
                                         let hash_input =
                                             if !url.is_empty() { url } else { &raw_json };
-                                        let item_hash = crate::pipeline_config::simple_hash(hash_input);
+                                        let item_hash =
+                                            crate::pipeline_config::simple_hash(hash_input);
                                         crate::repository::NewRawItem {
                                             source_url: source_value.to_string(),
                                             item_type: "product".into(),
@@ -967,7 +967,8 @@ pub async fn execute_repository_pipeline(
                     let wait_timeout_ms = node.data.get("waitTimeoutMs").and_then(|v| v.as_u64());
 
                     // Check for pagination config
-                    let pagination_config = crate::pipeline_config::extract_pagination_config(&node.data);
+                    let pagination_config =
+                        crate::pipeline_config::extract_pagination_config(&node.data);
                     let has_pagination = pagination_config.is_some();
 
                     if has_pagination {
@@ -1854,7 +1855,6 @@ pub struct FetchDataConfig {
     pub item_selector: Option<String>,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2339,7 +2339,8 @@ mod tests {
         });
         let source_value = "https://www.oreka.vn/store/C21AVGZS44L3UU";
         let project_id = "test-project";
-        let config = crate::pipeline_config::build_plugin_config(&node_data, source_value, project_id);
+        let config =
+            crate::pipeline_config::build_plugin_config(&node_data, source_value, project_id);
         assert_eq!(
             config.get("shop_url").and_then(|v| v.as_str()),
             Some("https://www.oreka.vn/store/C21AVGZS44L3UU")
@@ -2389,7 +2390,11 @@ mod tests {
             "sourceType": "url",
             "sourceValue": "https://example.com"
         });
-        let config = crate::pipeline_config::build_plugin_config(&node_data, "https://example.com", "test-project");
+        let config = crate::pipeline_config::build_plugin_config(
+            &node_data,
+            "https://example.com",
+            "test-project",
+        );
         assert_eq!(
             config.get("shop_url").and_then(|v| v.as_str()),
             Some("https://example.com")
