@@ -79,6 +79,36 @@ pub struct PreprocessorResult {
 pub struct DataPreprocessor;
 
 impl DataPreprocessor {
+    pub fn process_internal_pub(
+        raw_data: &str,
+        source_url: &str,
+        config: &PreprocessorConfig,
+    ) -> PreprocessorResult {
+        Self::process_internal(raw_data, source_url, config)
+    }
+
+    pub fn extract_store_id_pub(html: &str, platform_or_url: &str) -> Option<String> {
+        let platform = if platform_or_url.contains("oreka") {
+            "oreka.vn"
+        } else {
+            "oreka.vn"
+        };
+        Self::extract_store_id_from_html(html, platform)
+    }
+
+    pub fn build_listing_url_pub(source_url: &str, store_id: &str) -> String {
+        let platform = if source_url.contains("oreka") {
+            "oreka.vn"
+        } else {
+            "oreka.vn"
+        };
+        Self::build_store_url(source_url, store_id, platform)
+    }
+
+    pub fn refetch_pub(url: &str, config: &PreprocessorConfig) -> Option<String> {
+        Self::refetch_with_client(url, config)
+    }
+
     /// Process raw data với plugin dispatch:
     /// 1. Nếu có plugin preprocessor phù hợp → gọi plugin's `preprocess_data`
     /// 2. Fallback vào built-in xử lý
@@ -171,8 +201,7 @@ impl DataPreprocessor {
                 "[preprocessing] Store ID extraction enabled, source HTML missing so refetching before rewrite: {}",
                 source_url
             );
-            Self::refetch_with_client(source_url, config)
-                .unwrap_or_else(|| raw_data.to_string())
+            Self::refetch_with_client(source_url, config).unwrap_or_else(|| raw_data.to_string())
         } else {
             raw_data.to_string()
         };
@@ -235,8 +264,7 @@ impl DataPreprocessor {
                 "[preprocessing] Store ID extraction enabled, source HTML missing so refetching before rewrite: {}",
                 source_url
             );
-            Self::refetch_with_client(source_url, config)
-                .unwrap_or_else(|| raw_data.to_string())
+            Self::refetch_with_client(source_url, config).unwrap_or_else(|| raw_data.to_string())
         } else {
             raw_data.to_string()
         };
@@ -261,9 +289,13 @@ impl DataPreprocessor {
     }
 
     fn should_auto_extract_store_id(source_url: &str, config: &PreprocessorConfig) -> bool {
-        let platform = config.platform.as_deref().unwrap_or("").to_ascii_lowercase();
-        let source_is_oreka_store = source_url.contains("oreka.vn/store/")
-            || source_url.contains("oreka.vn/mua-ban?");
+        let platform = config
+            .platform
+            .as_deref()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let source_is_oreka_store =
+            source_url.contains("oreka.vn/store/") || source_url.contains("oreka.vn/mua-ban?");
         source_is_oreka_store && (platform.contains("oreka") || source_url.contains("oreka.vn"))
     }
 
@@ -359,19 +391,19 @@ impl DataPreprocessor {
                         return Some(store_id);
                     }
                 }
-                
+
                 // Pattern 2: Direct UUID pattern
                 let uuid_pattern = regex::Regex::new(r#"Store:([a-fA-F0-9\-]{36})"#).ok()?;
                 if let Some(caps) = uuid_pattern.captures(html) {
                     return Some(caps.get(1)?.as_str().to_string());
                 }
-                
+
                 // Pattern 3: storeId in JSON
                 let store_id_pattern = regex::Regex::new(r#""storeId"\s*:\s*"([^"]+)""#).ok()?;
                 if let Some(caps) = store_id_pattern.captures(html) {
                     return Some(caps.get(1)?.as_str().to_string());
                 }
-                
+
                 None
             }
             _ => None,
@@ -379,7 +411,8 @@ impl DataPreprocessor {
     }
 
     fn extract_next_data(html: &str) -> Option<serde_json::Value> {
-        let pattern = regex::Regex::new(r#"<script\b[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>"#).ok()?;
+        let pattern =
+            regex::Regex::new(r#"<script\b[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>"#).ok()?;
         if let Some(caps) = pattern.captures(html) {
             let json_str = caps.get(1)?.as_str();
             serde_json::from_str(json_str).ok()
@@ -448,7 +481,10 @@ impl DataPreprocessor {
                     .unwrap_or_else(|_| url::Url::parse("https://www.oreka.vn").unwrap());
                 let host = parsed.host_str().unwrap_or("www.oreka.vn");
                 let base = format!("{}://{}", parsed.scheme(), host);
-                format!("{}/mua-ban?storeId={}&sort=createdAt&order=desc", base, store_id)
+                format!(
+                    "{}/mua-ban?storeId={}&sort=createdAt&order=desc",
+                    base, store_id
+                )
             }
             _ => source_url.to_string(),
         }
@@ -990,12 +1026,24 @@ mod tests {
         };
         let result = DataPreprocessor::process(html, "https://www.oreka.vn", &config);
         assert_eq!(result.extracted_count, 3);
-        assert!(result.items[0].extracted_url.as_deref().unwrap().contains("--detail/1112311"));
-        assert!(result.items[1].extracted_url.as_deref().unwrap().contains("--detail/2223422"));
-        assert!(result.items[2].extracted_url.as_deref().unwrap().contains("--detail/3334533"));
+        assert!(result.items[0]
+            .extracted_url
+            .as_deref()
+            .unwrap()
+            .contains("--detail/1112311"));
+        assert!(result.items[1]
+            .extracted_url
+            .as_deref()
+            .unwrap()
+            .contains("--detail/2223422"));
+        assert!(result.items[2]
+            .extracted_url
+            .as_deref()
+            .unwrap()
+            .contains("--detail/3334533"));
     }
 
-#[test]
+    #[test]
     fn test_html_url_extraction_with_oreka_store_page() {
         // Test case 1: dehydratedState pattern
         let html1 = r#"<!DOCTYPE html>

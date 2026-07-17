@@ -1083,9 +1083,18 @@ pub async fn execute_repository_pipeline(
     }
 
     // ── Phase 1b: Data Preprocessing ────────────────────────
-    log_manager.info(project_id, "pipeline", "Phase 1b: Data Preprocessing");
+    // Preprocessor role:
+    //   - Extract store IDs / rewrite source URLs (platform-specific, e.g., Oreka)
+    //   - NOT responsible for extracting product URLs (that belongs to fetchData node)
+    log_manager.info(
+        project_id,
+        "pipeline",
+        "Phase 1b: Data Preprocessing (store-ID / URL rewrite)",
+    );
 
     let preprocessor_nodes = extract_preprocessors(config);
+    // fetchData node carries the URL patterns for extracting product URLs from listing pages
+    let fetch_data_config = extract_fetch_data_config(config);
 
     macro_rules! close_chrome_sessions {
         ($sources:expr) => {
@@ -1101,6 +1110,18 @@ pub async fn execute_repository_pipeline(
             }
         };
     }
+
+    // New two-stage approach:
+    // Stage A: preprocessor resolves store IDs and rewrites listing URLs.
+    //          It now produces a list of (listing_url, listing_html) pairs.
+    // Stage B: fetchData node URL patterns are applied to each listing page to
+    //          extract individual product URLs → saved as raw items.
+
+    struct ListingPage {
+        listing_url: String,
+        listing_html: String,
+    }
+    let mut listing_pages: Vec<ListingPage> = Vec::new();
 
     for fetched in &fetched_sources {
         if is_cancelled() {
@@ -1122,7 +1143,7 @@ pub async fn execute_repository_pipeline(
             };
         }
 
-        // Tìm preprocessor node phù hợp cho source này (theo input_type)
+        // Find matching preprocessor config for this source
         let preproc_config = preprocessor_nodes
             .iter()
             .find(|p| p.input_type == fetched.input_type)
@@ -1145,31 +1166,201 @@ pub async fn execute_repository_pipeline(
                 platform: None,
             });
 
+        let auto_extract_store_id = fetched.source_url.contains("oreka.vn/store/")
+            || fetched.source_url.contains("oreka.vn/mua-ban?");
+        let do_store_id = preproc_config
+            .extract_store_id
+            .unwrap_or(auto_extract_store_id);
+
         log_manager.info(
             project_id,
             "preprocessing",
             &format!(
-                "Preparing preprocessor for source={} input_type={} matched_preprocessor={} extract_store_id={:?} platform={:?}",
-                fetched.source_url,
-                fetched.input_type,
-                preprocessor_nodes.iter().any(|p| p.input_type == fetched.input_type),
-                preproc_config.extract_store_id,
-                preproc_config.platform
+                "Stage A: source={} input_type={} do_store_id={} platform={:?}",
+                fetched.source_url, fetched.input_type, do_store_id, preproc_config.platform
             ),
         );
 
-        let result = if let Some(engine) = python_engine.as_deref_mut() {
-            DataPreprocessor::process_with_plugins(
-                &fetched.raw_data,
-                &fetched.source_url,
-                &preproc_config,
-                engine,
-            )
+        if do_store_id {
+            // Stage A: Platform-specific preprocessing (Oreka store-ID extraction + URL rewrite)
+            // The preprocessor fetches the store page, extracts storeId, builds the listing URL.
+            // Then we hand that listing URL + html to Stage B.
+            let listing_url_result = if let Some(engine) = python_engine.as_deref_mut() {
+                // Python plugin preprocessor: returns listing URL items
+                let data_json = serde_json::json!({
+                    "raw_data": fetched.raw_data,
+                    "source_url": fetched.source_url,
+                    "config": preproc_config,
+                });
+                match engine.call_preprocessor_hook("oreka-shop-crawler", data_json) {
+                    Ok(items) if !items.is_empty() => {
+                        // Plugin returned items (product URLs already resolved)
+                        // Save them directly and skip Stage B
+                        let save_result = repo.save_items(&items);
+                        match save_result {
+                            Ok(r) => {
+                                total_ingested += r.inserted;
+                                log_manager.info(
+                                    project_id,
+                                    "preprocessing",
+                                    &format!(
+                                        "[Python preprocessor] saved {} new product URLs ({} dup)",
+                                        r.inserted, r.duplicated
+                                    ),
+                                );
+                            }
+                            Err(e) => {
+                                log_manager.error(
+                                    project_id,
+                                    "preprocessing",
+                                    &format!("Save failed: {}", e),
+                                );
+                            }
+                        }
+                        continue; // Skip Stage B for this source
+                    }
+                    Ok(_) => {
+                        log_manager.warn(
+                            project_id,
+                            "preprocessing",
+                            "Python preprocessor returned no items; falling back to built-in stage A",
+                        );
+                        // Fallback to built-in
+                        resolve_listing_url_builtin(
+                            &fetched.raw_data,
+                            &fetched.source_url,
+                            &preproc_config,
+                            project_id,
+                            log_manager,
+                        )
+                    }
+                    Err(e) => {
+                        log_manager.warn(
+                            project_id,
+                            "preprocessing",
+                            &format!(
+                                "Python preprocessor failed ({}); falling back to built-in",
+                                e
+                            ),
+                        );
+                        resolve_listing_url_builtin(
+                            &fetched.raw_data,
+                            &fetched.source_url,
+                            &preproc_config,
+                            project_id,
+                            log_manager,
+                        )
+                    }
+                }
+            } else {
+                resolve_listing_url_builtin(
+                    &fetched.raw_data,
+                    &fetched.source_url,
+                    &preproc_config,
+                    project_id,
+                    log_manager,
+                )
+            };
+
+            if let Some((listing_url, listing_html)) = listing_url_result {
+                log_manager.info(
+                    project_id,
+                    "preprocessing",
+                    &format!(
+                        "Resolved listing URL: {} ({} bytes)",
+                        listing_url,
+                        listing_html.len()
+                    ),
+                );
+                listing_pages.push(ListingPage {
+                    listing_url,
+                    listing_html,
+                });
+            } else {
+                log_manager.warn(
+                    project_id,
+                    "preprocessing",
+                    &format!(
+                        "Could not resolve listing URL for source: {}",
+                        fetched.source_url
+                    ),
+                );
+            }
         } else {
-            // Use async version to support re-fetching with custom client settings
-            DataPreprocessor::process_async(&fetched.raw_data, &fetched.source_url, &preproc_config)
-                .await
+            // No store-ID rewriting needed — use the fetched HTML directly as a listing page
+            listing_pages.push(ListingPage {
+                listing_url: fetched.source_url.clone(),
+                listing_html: fetched.raw_data.clone(),
+            });
+        }
+    }
+
+    // Stage B: Apply fetchData node URL patterns to extract product URLs from listing pages
+    log_manager.info(
+        project_id,
+        "pipeline",
+        &format!(
+            "Phase 1b Stage B: extracting product URLs from {} listing pages using fetchData patterns ({} patterns)",
+            listing_pages.len(),
+            fetch_data_config.url_patterns.len()
+        ),
+    );
+
+    for listing in &listing_pages {
+        if listing.listing_html.is_empty() {
+            log_manager.warn(
+                project_id,
+                "preprocessing",
+                &format!(
+                    "Listing page {} has empty HTML, skipping URL extraction",
+                    listing.listing_url
+                ),
+            );
+            continue;
+        }
+
+        // Use fetchData URL patterns to extract product URLs
+        let extraction_config = if fetch_data_config.url_patterns.is_empty() {
+            // No fetchData patterns — fall back to preprocessor patterns if any
+            preprocessor_nodes
+                .iter()
+                .find(|p| p.input_type == "html")
+                .cloned()
+                .unwrap_or_else(|| PreprocessorConfig {
+                    input_type: "html".into(),
+                    item_selector: None,
+                    url_patterns: vec![],
+                    extract_rules: vec![],
+                    csv_delimiter: None,
+                    csv_has_header: None,
+                    json_item_path: None,
+                    client_type: None,
+                    client_timeout_secs: None,
+                    client_headless: None,
+                    wait_for_selector: None,
+                    wait_for_content: None,
+                    wait_timeout_ms: None,
+                    extract_store_id: Some(false),
+                    platform: None,
+                })
+        } else {
+            fetch_data_config.clone()
         };
+
+        let result = DataPreprocessor::process_internal_pub(
+            &listing.listing_html,
+            &listing.listing_url,
+            &extraction_config,
+        );
+
+        log_manager.info(
+            project_id,
+            "preprocessing",
+            &format!(
+                "Stage B: listing_url={} → {} URLs extracted",
+                listing.listing_url, result.extracted_count
+            ),
+        );
 
         match repo.save_items(&result.items) {
             Ok(r) => {
@@ -1178,8 +1369,8 @@ pub async fn execute_repository_pipeline(
                     project_id,
                     "preprocessing",
                     &format!(
-                        "Source {}: {} extracted, {} new, {} dup",
-                        fetched.source_url, result.extracted_count, r.inserted, r.duplicated
+                        "Saved from listing {}: {} new, {} dup",
+                        listing.listing_url, r.inserted, r.duplicated
                     ),
                 );
             }
@@ -1253,7 +1444,11 @@ pub async fn execute_repository_pipeline(
     );
 
     // ── Phase 3: Processing ──────────────────────────────────
-    log_manager.info(project_id, "pipeline", "Phase 3: Chain of Processors");
+    log_manager.info(
+        project_id,
+        "pipeline",
+        "Phase 3: Worker Processing (chain of processors)",
+    );
 
     let mut total_processed = 0i64;
     let mut total_failed = 0i64;
@@ -1293,7 +1488,7 @@ pub async fn execute_repository_pipeline(
             };
         }
 
-        let items = match repo.get_matched_items(&worker.id, 1000) {
+        let items = match repo.get_matched_items_for_worker(&worker.id, 1000) {
             Ok(items) => items,
             Err(e) => {
                 log_manager.error(
@@ -1306,29 +1501,68 @@ pub async fn execute_repository_pipeline(
         };
 
         if items.is_empty() {
+            log_manager.info(
+                project_id,
+                "processing",
+                &format!("Worker '{}': no matched items to process", worker.name),
+            );
             continue;
         }
 
-        match WorkerEngine::process_items(&repo, worker, &items, &process_fn) {
-            Ok(result) => {
-                total_processed += result.processed;
-                total_failed += result.failed;
-                log_manager.info(
-                    project_id,
-                    "processing",
-                    &format!(
-                        "Worker '{}': {} processed, {} failed",
-                        worker.name, result.processed, result.failed
-                    ),
-                );
-            }
-            Err(e) => {
-                total_failed += items.len() as i64;
-                log_manager.error(
-                    project_id,
-                    "processing",
-                    &format!("Worker '{}' error: {}", worker.name, e),
-                );
+        log_manager.info(
+            project_id,
+            "processing",
+            &format!(
+                "Worker '{}': processing {} items (max_retries={})",
+                worker.name,
+                items.len(),
+                worker.max_retries
+            ),
+        );
+
+        // Chunk items for processing
+        let chunk_size = worker.chunk_size.max(1);
+        let chunks = WorkerEngine::chunk_items(items.clone(), chunk_size);
+        log_manager.info(
+            project_id,
+            "processing",
+            &format!(
+                "Worker '{}': {} items split into {} chunk(s) of size {}",
+                worker.name,
+                items.len(),
+                chunks.len(),
+                chunk_size
+            ),
+        );
+
+        for chunk in &chunks {
+            match WorkerEngine::process_items_with_retry(
+                &repo,
+                worker,
+                chunk,
+                &process_fn,
+                worker.max_retries,
+            ) {
+                Ok(result) => {
+                    total_processed += result.processed;
+                    total_failed += result.failed;
+                    log_manager.info(
+                        project_id,
+                        "processing",
+                        &format!(
+                            "Worker '{}' chunk: {} processed, {} failed",
+                            worker.name, result.processed, result.failed
+                        ),
+                    );
+                }
+                Err(e) => {
+                    total_failed += chunk.len() as i64;
+                    log_manager.error(
+                        project_id,
+                        "processing",
+                        &format!("Worker '{}' chunk error: {}", worker.name, e),
+                    );
+                }
             }
         }
     }
@@ -1403,6 +1637,65 @@ fn simple_hash(input: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     input.hash(&mut hasher);
     format!("{:x}", hasher.finish())
+}
+
+/// Stage A helper: extract store ID from HTML and fetch the listing page.
+/// Returns (listing_url, listing_html) or None if extraction failed.
+fn resolve_listing_url_builtin(
+    raw_html: &str,
+    source_url: &str,
+    config: &PreprocessorConfig,
+    project_id: &str,
+    log_manager: &Arc<LogManager>,
+) -> Option<(String, String)> {
+    use crate::data_preprocessor::DataPreprocessor;
+
+    let store_id = DataPreprocessor::extract_store_id_pub(raw_html, source_url);
+    if let Some(ref sid) = store_id {
+        log_manager.info(
+            project_id,
+            "preprocessing",
+            &format!(
+                "[Stage A] Extracted storeId={} from source={}",
+                sid, source_url
+            ),
+        );
+    } else {
+        log_manager.warn(
+            project_id,
+            "preprocessing",
+            &format!(
+                "[Stage A] Could not extract storeId from source={}",
+                source_url
+            ),
+        );
+        return None;
+    }
+
+    let store_id = store_id.unwrap();
+    let listing_url = DataPreprocessor::build_listing_url_pub(source_url, &store_id);
+
+    log_manager.info(
+        project_id,
+        "preprocessing",
+        &format!("[Stage A] Fetching listing page: {}", listing_url),
+    );
+
+    let listing_html = DataPreprocessor::refetch_pub(&listing_url, config).unwrap_or_default();
+
+    if listing_html.is_empty() {
+        log_manager.warn(
+            project_id,
+            "preprocessing",
+            &format!(
+                "[Stage A] Listing page returned empty HTML for: {}",
+                listing_url
+            ),
+        );
+        return None;
+    }
+
+    Some((listing_url, listing_html))
 }
 
 // ── Pagination Helpers ─────────────────────────────────────
@@ -1523,6 +1816,13 @@ async fn execute_pagination_in_pipeline(
 }
 
 // ── Config Extractors ─────────────────────────────────────
+
+/// FetchData node config — holds URL patterns for extracting product URLs from listing pages.
+#[derive(Debug, Clone)]
+pub struct FetchDataConfig {
+    pub url_patterns: Vec<UrlPattern>,
+    pub item_selector: Option<String>,
+}
 
 /// Parse a JSON array of extract rule objects into `ExtractRule` structs.
 /// Supports both `{ field, selector, attribute }` (pipeline format) and
@@ -1667,13 +1967,90 @@ fn extract_preprocessors(config: &PipelineConfig) -> Vec<PreprocessorConfig> {
                     .and_then(|v| v.as_str())
                     .map(String::from),
                 wait_timeout_ms: data.get("waitTimeoutMs").and_then(|v| v.as_u64()),
-                extract_store_id: data
-                    .get("extractStoreId")
-                    .and_then(|v| v.as_bool()),
-                platform: data.get("platform").and_then(|v| v.as_str()).map(String::from),
+                extract_store_id: data.get("extractStoreId").and_then(|v| v.as_bool()),
+                platform: data
+                    .get("platform")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
             })
         })
         .collect()
+}
+
+/// Extract FetchData node config (URL patterns for product URL extraction)
+fn extract_fetch_data_config(config: &PipelineConfig) -> PreprocessorConfig {
+    for node in &config.nodes {
+        if node.node_type == "fetchData" || node.node_type == "fetch_data" {
+            let data = &node.data;
+            return PreprocessorConfig {
+                input_type: "html".into(),
+                item_selector: data
+                    .get("itemSelector")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                url_patterns: data
+                    .get("urlPatterns")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|p| {
+                                Some(UrlPattern {
+                                    enabled: p
+                                        .get("enabled")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(true),
+                                    pattern_type: p
+                                        .get("type")
+                                        .and_then(|v| v.as_str())?
+                                        .to_string(),
+                                    value: p.get("value").and_then(|v| v.as_str())?.to_string(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                extract_rules: vec![],
+                csv_delimiter: None,
+                csv_has_header: None,
+                json_item_path: None,
+                client_type: data
+                    .get("clientType")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                client_timeout_secs: data.get("clientTimeoutSecs").and_then(|v| v.as_u64()),
+                client_headless: data.get("clientHeadless").and_then(|v| v.as_bool()),
+                wait_for_selector: data
+                    .get("waitForSelector")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                wait_for_content: data
+                    .get("waitForContent")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                wait_timeout_ms: data.get("waitTimeoutMs").and_then(|v| v.as_u64()),
+                extract_store_id: Some(false),
+                platform: None,
+            };
+        }
+    }
+    // No fetchData node found — return empty config
+    PreprocessorConfig {
+        input_type: "html".into(),
+        item_selector: None,
+        url_patterns: vec![],
+        extract_rules: vec![],
+        csv_delimiter: None,
+        csv_has_header: None,
+        json_item_path: None,
+        client_type: None,
+        client_timeout_secs: None,
+        client_headless: None,
+        wait_for_selector: None,
+        wait_for_content: None,
+        wait_timeout_ms: None,
+        extract_store_id: Some(false),
+        platform: None,
+    }
 }
 
 fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
@@ -1867,6 +2244,52 @@ fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
             }
         }
 
+        // Extract max_retries and chunk_size from worker settings
+        let max_retries = node
+            .data
+            .get("maxRetries")
+            .or_else(|| node.data.get("max_retries"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3) as u32;
+
+        let chunk_size = node
+            .data
+            .get("chunkSize")
+            .or_else(|| node.data.get("chunk_size"))
+            .or_else(|| node.data.get("concurrency"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10) as usize;
+
+        // Collect column mapping for Excel/CSV export from processor chain nodes
+        let mut column_mapping: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+        for step in &processor_chain {
+            if let Some(proc_node) = config.nodes.iter().find(|n| n.id == step.id) {
+                let mapping = proc_node
+                    .data
+                    .get("settings")
+                    .and_then(|s| s.get("columnMapping"))
+                    .or_else(|| proc_node.data.get("columnMapping"))
+                    .and_then(|v| v.as_object())
+                    .cloned();
+                if let Some(m) = mapping {
+                    column_mapping.extend(m);
+                }
+            }
+        }
+        // Also check the worker node itself
+        let worker_mapping = node
+            .data
+            .get("settings")
+            .and_then(|s| s.get("columnMapping"))
+            .or_else(|| node.data.get("columnMapping"))
+            .and_then(|v| v.as_object())
+            .cloned();
+        if let Some(m) = worker_mapping {
+            for (k, v) in m {
+                column_mapping.entry(k).or_insert(v);
+            }
+        }
+
         workers.push(WorkerDef {
             id: node.id.clone(),
             name: node.label.clone().unwrap_or_else(|| node.id.clone()),
@@ -1874,6 +2297,9 @@ fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
             processor_chain,
             client_profile: Some(client_profile),
             extract_rules: Some(extract_rules),
+            max_retries,
+            chunk_size,
+            column_mapping: serde_json::Value::Object(column_mapping),
         });
     }
 
@@ -1883,26 +2309,57 @@ fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
 fn extract_finish_actions(config: &PipelineConfig, project_id: &str) -> Vec<FinishAction> {
     let mut actions = Vec::new();
 
+    // Collect all worker column mappings (keyed by worker_id)
+    let worker_column_mappings: HashMap<String, serde_json::Value> = config
+        .nodes
+        .iter()
+        .filter(|n| n.node_type == "worker")
+        .map(|n| {
+            let mapping = n
+                .data
+                .get("settings")
+                .and_then(|s| s.get("columnMapping"))
+                .or_else(|| n.data.get("columnMapping"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+            (n.id.clone(), mapping)
+        })
+        .collect();
+
     for node in &config.nodes {
         let action = match node.node_type.as_str() {
-            "excelExport" => Some(FinishAction::ExportExcel {
-                path: node
+            "excelExport" => {
+                let column_mapping = node
                     .data
-                    .get("outputPath")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("output.xlsx")
-                    .to_string(),
-                fields: node
-                    .data
-                    .get("fields")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            }),
+                    .get("columnMapping")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                Some(FinishAction::ExportExcel {
+                    path: node
+                        .data
+                        .get("outputPath")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("output.xlsx")
+                        .to_string(),
+                    fields: node
+                        .data
+                        .get("fields")
+                        .and_then(|v| v.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    column_mapping,
+                    sheet_name: node
+                        .data
+                        .get("sheetName")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Sheet1")
+                        .to_string(),
+                })
+            }
             "csvExport" => Some(FinishAction::ExportCsv {
                 path: node
                     .data
@@ -1920,6 +2377,11 @@ fn extract_finish_actions(config: &PipelineConfig, project_id: &str) -> Vec<Fini
                             .collect()
                     })
                     .unwrap_or_default(),
+                column_mapping: node
+                    .data
+                    .get("columnMapping")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
             }),
             "processor" => {
                 let processor_type = node
@@ -1934,13 +2396,28 @@ fn extract_finish_actions(config: &PipelineConfig, project_id: &str) -> Vec<Fini
                             .and_then(|s| s.get("fileName"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("output.xlsx");
-                        let _sheet_name = settings
+                        let sheet_name = settings
                             .and_then(|s| s.get("sheetName"))
                             .and_then(|v| v.as_str())
-                            .unwrap_or("Sheet1");
+                            .unwrap_or("Sheet1")
+                            .to_string();
 
-                        // Substitute {{date}} -> actual calendar date (YYYY-MM-DD)
-                        // Substitute {{project_id}} -> short project id (first 8 chars)
+                        // Resolve column mapping: node settings → upstream worker
+                        let column_mapping = settings
+                            .and_then(|s| s.get("columnMapping"))
+                            .or_else(|| node.data.get("columnMapping"))
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                // Try to get from upstream worker node
+                                let worker_mapping: serde_json::Map<String, serde_json::Value> =
+                                    worker_column_mappings
+                                        .values()
+                                        .filter_map(|v| v.as_object().cloned())
+                                        .flatten()
+                                        .collect();
+                                serde_json::Value::Object(worker_mapping)
+                            });
+
                         let date_str = chrono_date();
                         let short_id = &project_id[..project_id.len().min(8)];
                         let resolved_file_name = file_name
@@ -1958,6 +2435,8 @@ fn extract_finish_actions(config: &PipelineConfig, project_id: &str) -> Vec<Fini
                         Some(FinishAction::ExportExcel {
                             path: out_path.to_string_lossy().to_string(),
                             fields: vec![],
+                            column_mapping,
+                            sheet_name,
                         })
                     }
                     "generate-csv-file" => {
@@ -1966,6 +2445,12 @@ fn extract_finish_actions(config: &PipelineConfig, project_id: &str) -> Vec<Fini
                             .and_then(|s| s.get("fileName"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("output.csv");
+
+                        let column_mapping = settings
+                            .and_then(|s| s.get("columnMapping"))
+                            .or_else(|| node.data.get("columnMapping"))
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
                         let export_dir = dirs_next::data_dir()
                             .unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -1977,6 +2462,7 @@ fn extract_finish_actions(config: &PipelineConfig, project_id: &str) -> Vec<Fini
                         Some(FinishAction::ExportCsv {
                             path: out_path.to_string_lossy().to_string(),
                             fields: vec![],
+                            column_mapping,
                         })
                     }
                     _ => None,

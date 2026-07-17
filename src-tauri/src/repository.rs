@@ -260,6 +260,15 @@ impl RawItemRepository {
         Ok(items)
     }
 
+    /// Alias for get_matched_items, used by the pipeline processing phase
+    pub fn get_matched_items_for_worker(
+        &self,
+        worker_id: &str,
+        limit: i64,
+    ) -> Result<Vec<RawItem>, String> {
+        self.get_matched_items(worker_id, limit)
+    }
+
     /// Gán worker cho item
     pub fn assign_worker(&self, item_id: i64, worker_id: &str) -> Result<(), String> {
         self.conn

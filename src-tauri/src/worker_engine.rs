@@ -10,11 +10,9 @@ pub struct WorkerFactory;
 #[allow(dead_code)]
 impl WorkerFactory {
     /// Create worker definitions from pipeline node settings
-    pub fn create_workers_from_nodes(
-        nodes: &[crate::pipeline::PipelineNode],
-    ) -> Vec<WorkerDef> {
+    pub fn create_workers_from_nodes(nodes: &[crate::pipeline::PipelineNode]) -> Vec<WorkerDef> {
         let mut workers = Vec::new();
-        
+
         for node in nodes {
             if node.node_type == "worker" {
                 if let Some(worker_def) = Self::parse_worker_node(node) {
@@ -22,40 +20,54 @@ impl WorkerFactory {
                 }
             }
         }
-        
+
         workers
     }
-    
+
     fn parse_worker_node(node: &crate::pipeline::PipelineNode) -> Option<WorkerDef> {
         let data = &node.data;
-        
+
         // Parse detection rules into matching rules
-        let detection_rules = data.get("detectionRules")
+        let detection_rules = data
+            .get("detectionRules")
             .and_then(|v| v.as_array())
             .map(|rules| {
-                rules.iter().filter_map(|rule| {
-                    let field = rule.get("field")?.as_str().unwrap_or("url");
-                    let pattern_type = rule.get("type")?.as_str()?;
-                    let value = rule.get("value")?.as_str()?;
-                    let negate = rule.get("negate")?.as_bool().unwrap_or(false);
-                    
-                    Some(crate::item_matcher::MatchRule {
-                        field: field.to_string(),
-                        pattern: match pattern_type {
-                            "wildcard" => crate::item_matcher::MatchPattern::Wildcard(value.to_string()),
-                            "regex" | "url-format" => crate::item_matcher::MatchPattern::Regex(value.to_string()),
-                            "contains" => crate::item_matcher::MatchPattern::Contains(value.to_string()),
-                            "startswith" => crate::item_matcher::MatchPattern::StartsWith(value.to_string()),
-                            "endswith" => crate::item_matcher::MatchPattern::EndsWith(value.to_string()),
-                            "always" => crate::item_matcher::MatchPattern::Always,
-                            _ => crate::item_matcher::MatchPattern::Always,
-                        },
-                        negate,
+                rules
+                    .iter()
+                    .filter_map(|rule| {
+                        let field = rule.get("field")?.as_str().unwrap_or("url");
+                        let pattern_type = rule.get("type")?.as_str()?;
+                        let value = rule.get("value")?.as_str()?;
+                        let negate = rule.get("negate")?.as_bool().unwrap_or(false);
+
+                        Some(crate::item_matcher::MatchRule {
+                            field: field.to_string(),
+                            pattern: match pattern_type {
+                                "wildcard" => {
+                                    crate::item_matcher::MatchPattern::Wildcard(value.to_string())
+                                }
+                                "regex" | "url-format" => {
+                                    crate::item_matcher::MatchPattern::Regex(value.to_string())
+                                }
+                                "contains" => {
+                                    crate::item_matcher::MatchPattern::Contains(value.to_string())
+                                }
+                                "startswith" => {
+                                    crate::item_matcher::MatchPattern::StartsWith(value.to_string())
+                                }
+                                "endswith" => {
+                                    crate::item_matcher::MatchPattern::EndsWith(value.to_string())
+                                }
+                                "always" => crate::item_matcher::MatchPattern::Always,
+                                _ => crate::item_matcher::MatchPattern::Always,
+                            },
+                            negate,
+                        })
                     })
-                }).collect()
+                    .collect()
             })
             .unwrap_or_default();
-        
+
         // Parse processor chain
         let processor_chain = data
             .get("processorChain")
@@ -84,19 +96,39 @@ impl WorkerFactory {
                     .collect()
             })
             .unwrap_or_default();
-        
+
         // Parse client profile
-        let client_profile = data.get("clientProfile").map(|v| {
-            serde_json::from_value(v.clone()).unwrap_or_default()
-        });
-        
+        let client_profile = data
+            .get("clientProfile")
+            .map(|v| serde_json::from_value(v.clone()).unwrap_or_default());
+
         // Parse extract rules
-        let extract_rules = data.get("extractRules")
+        let extract_rules = data
+            .get("extractRules")
             .and_then(|v| v.as_array())
-            .map(|rules| {
-                serde_json::from_value(serde_json::json!(rules)).unwrap_or_default()
-            });
-        
+            .map(|rules| serde_json::from_value(serde_json::json!(rules)).unwrap_or_default());
+
+        // Parse max_retries and chunk_size from node data
+        let max_retries = data
+            .get("maxRetries")
+            .or_else(|| data.get("max_retries"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3) as u32;
+
+        let chunk_size = data
+            .get("chunkSize")
+            .or_else(|| data.get("chunk_size"))
+            .or_else(|| data.get("concurrency"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10) as usize;
+
+        let column_mapping = data
+            .get("settings")
+            .and_then(|s| s.get("columnMapping"))
+            .or_else(|| data.get("columnMapping"))
+            .cloned()
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
         Some(WorkerDef {
             id: node.id.clone(),
             name: node.label.clone().unwrap_or_else(|| node.id.clone()),
@@ -104,6 +136,9 @@ impl WorkerFactory {
             processor_chain,
             client_profile,
             extract_rules,
+            max_retries,
+            chunk_size,
+            column_mapping,
         })
     }
 }
@@ -120,6 +155,22 @@ pub struct WorkerDef {
     pub client_profile: Option<crate::models::ClientProfile>,
     /// CSS-based extract rules to parse structured fields from the detail page HTML
     pub extract_rules: Option<Vec<crate::models::ExtractRule>>,
+    /// Maximum number of retries per item before marking as ignored (default: 3)
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    /// Number of items to process per chunk (default: 10)
+    #[serde(default = "default_chunk_size")]
+    pub chunk_size: usize,
+    /// Column mapping for Excel/CSV export: { field_name -> column_header }
+    #[serde(default)]
+    pub column_mapping: serde_json::Value,
+}
+
+fn default_max_retries() -> u32 {
+    3
+}
+fn default_chunk_size() -> usize {
+    10
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,7 +188,10 @@ impl WorkerEngine {
     /// Chunk raw items into batches for parallel processing
     #[allow(dead_code)]
     pub fn chunk_items(items: Vec<RawItem>, chunk_size: usize) -> Vec<Vec<RawItem>> {
-        items.chunks(chunk_size).map(|chunk| chunk.to_vec()).collect()
+        items
+            .chunks(chunk_size)
+            .map(|chunk| chunk.to_vec())
+            .collect()
     }
 
     /// Phase 2: Match pending items to workers.
@@ -176,7 +230,7 @@ impl WorkerEngine {
                     repo.assign_worker(item.id, worker_id)?;
                     total_assignments += 1;
                 }
-                
+
                 // Store first worker ID for backward compatibility
                 item.worker_id = Some(matched_workers[0].clone());
                 item.matched = 1;
@@ -201,6 +255,7 @@ impl WorkerEngine {
     ///   2. If item_type='url' → fetch the detail page via HTTP and parse with extract_rules
     ///   3. Run the processor chain on the structured data
     ///   4. Mark as "done" or "error" per item (no early-abort on single item failure)
+    #[allow(dead_code)]
     pub fn process_items(
         repo: &RawItemRepository,
         worker: &WorkerDef,
@@ -352,8 +407,8 @@ impl WorkerEngine {
         })
     }
 
-    /// Phase 3 with retry logic: Process items with automatic retry on failure
-    #[allow(dead_code)]
+    /// Phase 3 with retry logic: Process items with automatic retry on failure.
+    /// On max_retries exceeded, item is marked 'ignored' (not blocking the pipeline).
     pub fn process_items_with_retry(
         repo: &RawItemRepository,
         worker: &WorkerDef,
@@ -398,10 +453,12 @@ impl WorkerEngine {
                         );
                         if retry_count < max_retries {
                             retry_count += 1;
-                            std::thread::sleep(std::time::Duration::from_millis(1000 * retry_count as u64));
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                1000 * retry_count as u64,
+                            ));
                             continue;
                         }
-                        
+
                         let _ = repo.log_processing(
                             item.id,
                             Some(&worker.id),
@@ -454,10 +511,12 @@ impl WorkerEngine {
                         Err(e) => {
                             if retry_count < max_retries {
                                 retry_count += 1;
-                                std::thread::sleep(std::time::Duration::from_millis(1000 * retry_count as u64));
+                                std::thread::sleep(std::time::Duration::from_millis(
+                                    1000 * retry_count as u64,
+                                ));
                                 break; // Retry from fetch step
                             }
-                            
+
                             let _ = repo.log_processing(
                                 item.id,
                                 Some(&worker.id),
@@ -490,7 +549,7 @@ impl WorkerEngine {
                 }
 
                 if !item_failed {
-                    // Save final output
+                    // Save final structured output to processing_log
                     let output_str = current_data.to_string();
                     let _ = repo.log_processing(
                         item.id,
@@ -511,8 +570,10 @@ impl WorkerEngine {
                     });
                     break; // Success, exit retry loop
                 }
-            }
-        }
+                // item_failed = true here means a processor step failed and retry loop
+                // will restart from the top (fetch + process again)
+            } // end retry loop
+        } // end for item in items
 
         Ok(ProcessResult {
             total: items.len() as i64,

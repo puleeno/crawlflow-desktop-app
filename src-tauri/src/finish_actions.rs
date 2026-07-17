@@ -10,10 +10,16 @@ pub enum FinishAction {
     ExportCsv {
         path: String,
         fields: Vec<String>,
+        #[serde(default)]
+        column_mapping: serde_json::Value,
     },
     ExportExcel {
         path: String,
         fields: Vec<String>,
+        #[serde(default)]
+        column_mapping: serde_json::Value,
+        #[serde(default = "default_sheet_name")]
+        sheet_name: String,
     },
     SaveToDatabase {
         connection: String,
@@ -28,6 +34,10 @@ pub enum FinishAction {
         url: String,
     },
     LogSummary,
+}
+
+fn default_sheet_name() -> String {
+    "Sheet1".to_string()
 }
 
 // ── Action Engine ─────────────────────────────────────────
@@ -78,12 +88,22 @@ impl ActionEngine {
                         message: format!("{} done, {} error", done_items, error_items),
                     });
                 }
-                FinishAction::ExportCsv { path, fields } => {
-                    let result = Self::export_csv(repo, path, fields, log_fn);
+                FinishAction::ExportCsv {
+                    path,
+                    fields,
+                    column_mapping,
+                } => {
+                    let result = Self::export_csv(repo, path, fields, column_mapping, log_fn);
                     results.push(result);
                 }
-                FinishAction::ExportExcel { path, fields } => {
-                    let result = Self::export_excel(repo, path, fields, log_fn);
+                FinishAction::ExportExcel {
+                    path,
+                    fields,
+                    column_mapping,
+                    sheet_name,
+                } => {
+                    let result =
+                        Self::export_excel(repo, path, fields, column_mapping, sheet_name, log_fn);
                     results.push(result);
                 }
                 FinishAction::SaveToDatabase { connection, table } => {
@@ -112,6 +132,7 @@ impl ActionEngine {
         repo: &RawItemRepository,
         path: &str,
         fields: &[String],
+        column_mapping: &serde_json::Value,
         log_fn: &dyn Fn(&str, &str),
     ) -> ActionResult {
         let done_items = match repo.get_done_items(10000) {
@@ -159,22 +180,65 @@ impl ActionEngine {
             })
             .collect();
 
-        let filtered: Vec<serde_json::Value> = if fields.is_empty() {
-            rows
-        } else {
-            rows.into_iter()
-                .map(|item| {
-                    let mut map = serde_json::Map::new();
-                    if let Some(obj) = item.as_object() {
-                        for f in fields {
-                            if let Some(v) = obj.get(f) {
-                                map.insert(f.clone(), v.clone());
+        let filtered: Vec<serde_json::Value> = if let Some(map) = column_mapping.as_object() {
+            if map.is_empty() {
+                if fields.is_empty() {
+                    rows
+                } else {
+                    rows.into_iter()
+                        .map(|item| {
+                            let mut new_map = serde_json::Map::new();
+                            if let Some(obj) = item.as_object() {
+                                for f in fields {
+                                    if let Some(v) = obj.get(f) {
+                                        new_map.insert(f.clone(), v.clone());
+                                    }
+                                }
+                            }
+                            serde_json::Value::Object(new_map)
+                        })
+                        .collect()
+                }
+            } else {
+                rows.into_iter()
+                    .map(|item| {
+                        let mut new_map = serde_json::Map::new();
+                        if let Some(obj) = item.as_object() {
+                            for (k, v) in map {
+                                if let Some(header_name) = v.as_str() {
+                                    if let Some(val) = obj.get(k) {
+                                        new_map.insert(header_name.to_string(), val.clone());
+                                    } else {
+                                        new_map.insert(
+                                            header_name.to_string(),
+                                            serde_json::Value::String(String::new()),
+                                        );
+                                    }
+                                }
                             }
                         }
-                    }
-                    serde_json::Value::Object(map)
-                })
-                .collect()
+                        serde_json::Value::Object(new_map)
+                    })
+                    .collect()
+            }
+        } else {
+            if fields.is_empty() {
+                rows
+            } else {
+                rows.into_iter()
+                    .map(|item| {
+                        let mut new_map = serde_json::Map::new();
+                        if let Some(obj) = item.as_object() {
+                            for f in fields {
+                                if let Some(v) = obj.get(f) {
+                                    new_map.insert(f.clone(), v.clone());
+                                }
+                            }
+                        }
+                        serde_json::Value::Object(new_map)
+                    })
+                    .collect()
+            }
         };
 
         let wb = crate::spreadsheet::Workbook::from_json_rows(&filtered, "Sheet1", true);
@@ -211,6 +275,8 @@ impl ActionEngine {
         repo: &RawItemRepository,
         path: &str,
         fields: &[String],
+        column_mapping: &serde_json::Value,
+        sheet_name: &str,
         log_fn: &dyn Fn(&str, &str),
     ) -> ActionResult {
         let done_items = match repo.get_done_items(10000) {
@@ -258,22 +324,65 @@ impl ActionEngine {
             })
             .collect();
 
-        let filtered: Vec<serde_json::Value> = if fields.is_empty() {
-            rows
-        } else {
-            rows.into_iter()
-                .map(|item| {
-                    let mut map = serde_json::Map::new();
-                    if let Some(obj) = item.as_object() {
-                        for f in fields {
-                            if let Some(v) = obj.get(f) {
-                                map.insert(f.clone(), v.clone());
+        let filtered: Vec<serde_json::Value> = if let Some(map) = column_mapping.as_object() {
+            if map.is_empty() {
+                if fields.is_empty() {
+                    rows
+                } else {
+                    rows.into_iter()
+                        .map(|item| {
+                            let mut new_map = serde_json::Map::new();
+                            if let Some(obj) = item.as_object() {
+                                for f in fields {
+                                    if let Some(v) = obj.get(f) {
+                                        new_map.insert(f.clone(), v.clone());
+                                    }
+                                }
+                            }
+                            serde_json::Value::Object(new_map)
+                        })
+                        .collect()
+                }
+            } else {
+                rows.into_iter()
+                    .map(|item| {
+                        let mut new_map = serde_json::Map::new();
+                        if let Some(obj) = item.as_object() {
+                            for (k, v) in map {
+                                if let Some(header_name) = v.as_str() {
+                                    if let Some(val) = obj.get(k) {
+                                        new_map.insert(header_name.to_string(), val.clone());
+                                    } else {
+                                        new_map.insert(
+                                            header_name.to_string(),
+                                            serde_json::Value::String(String::new()),
+                                        );
+                                    }
+                                }
                             }
                         }
-                    }
-                    serde_json::Value::Object(map)
-                })
-                .collect()
+                        serde_json::Value::Object(new_map)
+                    })
+                    .collect()
+            }
+        } else {
+            if fields.is_empty() {
+                rows
+            } else {
+                rows.into_iter()
+                    .map(|item| {
+                        let mut new_map = serde_json::Map::new();
+                        if let Some(obj) = item.as_object() {
+                            for f in fields {
+                                if let Some(v) = obj.get(f) {
+                                    new_map.insert(f.clone(), v.clone());
+                                }
+                            }
+                        }
+                        serde_json::Value::Object(new_map)
+                    })
+                    .collect()
+            }
         };
 
         // Ensure parent directory exists
@@ -281,7 +390,7 @@ impl ActionEngine {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let wb = crate::spreadsheet::Workbook::from_json_rows(&filtered, "Sheet1", true);
+        let wb = crate::spreadsheet::Workbook::from_json_rows(&filtered, sheet_name, true);
         match crate::spreadsheet::write_xlsx(&wb, path) {
             Ok(()) => {
                 let abs_path = std::fs::canonicalize(path)
