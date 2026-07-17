@@ -1,6 +1,10 @@
+use crate::pipeline::PipelineConfig;
 use crate::repository::RawItemRepository;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
+
+use dirs_next;
 
 // ── Action Types ──────────────────────────────────────────
 
@@ -478,4 +482,238 @@ pub struct ActionResult {
     pub action: String,
     pub success: bool,
     pub message: String,
+}
+
+// ── Finish-action extraction from pipeline graph ──────────────────
+
+/// Build the list of [`FinishAction`]s from the pipeline graph.
+///
+/// Export/processor/completion nodes become terminal actions run after all
+/// workers have finished. A `generate-excel-file` / `generate-csv-file`
+/// processor node is resolved into an `ExportExcel` / `ExportCsv` action
+/// writing into the project's `exports/` directory.
+pub(crate) fn extract_finish_actions(
+    config: &PipelineConfig,
+    project_id: &str,
+) -> Vec<FinishAction> {
+    let mut actions = Vec::new();
+
+    // Collect all worker column mappings (keyed by worker_id)
+    let worker_column_mappings: HashMap<String, serde_json::Value> = config
+        .nodes
+        .iter()
+        .filter(|n| n.node_type == "worker")
+        .map(|n| {
+            let mapping = n
+                .data
+                .get("settings")
+                .and_then(|s| s.get("columnMapping"))
+                .or_else(|| n.data.get("columnMapping"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+            (n.id.clone(), mapping)
+        })
+        .collect();
+
+    for node in &config.nodes {
+        let action = match node.node_type.as_str() {
+            "excelExport" => {
+                let column_mapping = node
+                    .data
+                    .get("columnMapping")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                Some(FinishAction::ExportExcel {
+                    path: node
+                        .data
+                        .get("outputPath")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("output.xlsx")
+                        .to_string(),
+                    fields: node
+                        .data
+                        .get("fields")
+                        .and_then(|v| v.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    column_mapping,
+                    sheet_name: node
+                        .data
+                        .get("sheetName")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Sheet1")
+                        .to_string(),
+                })
+            }
+            "csvExport" => Some(FinishAction::ExportCsv {
+                path: node
+                    .data
+                    .get("outputPath")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("output.csv")
+                    .to_string(),
+                fields: node
+                    .data
+                    .get("fields")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                column_mapping: node
+                    .data
+                    .get("columnMapping")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+            }),
+            "processor" => {
+                let processor_type = node
+                    .data
+                    .get("processorType")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                match processor_type {
+                    "generate-excel-file" => {
+                        let settings = node.data.get("settings").and_then(|s| s.as_object());
+                        let file_name = settings
+                            .and_then(|s| s.get("fileName"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("output.xlsx");
+                        let sheet_name = settings
+                            .and_then(|s| s.get("sheetName"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Sheet1")
+                            .to_string();
+
+                        let column_mapping = settings
+                            .and_then(|s| s.get("columnMapping"))
+                            .or_else(|| node.data.get("columnMapping"))
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                let worker_mapping: serde_json::Map<String, serde_json::Value> =
+                                    worker_column_mappings
+                                        .values()
+                                        .filter_map(|v| v.as_object().cloned())
+                                        .flatten()
+                                        .collect();
+                                serde_json::Value::Object(worker_mapping)
+                            });
+
+                        let date_str = chrono_date();
+                        let short_id = &project_id[..project_id.len().min(8)];
+                        let resolved_file_name = file_name
+                            .replace("{{date}}", &date_str)
+                            .replace("{{project_id}}", short_id)
+                            .replace("{{timestamp}}", &chrono_now());
+
+                        let export_dir = dirs_next::data_dir()
+                            .unwrap_or_else(|| std::path::PathBuf::from("."))
+                            .join("com.CrawlFlow.desktop")
+                            .join("exports");
+                        std::fs::create_dir_all(&export_dir).ok();
+                        let out_path = export_dir.join(&resolved_file_name);
+
+                        Some(FinishAction::ExportExcel {
+                            path: out_path.to_string_lossy().to_string(),
+                            fields: vec![],
+                            column_mapping,
+                            sheet_name,
+                        })
+                    }
+                    "generate-csv-file" => {
+                        let settings = node.data.get("settings").and_then(|s| s.as_object());
+                        let file_name = settings
+                            .and_then(|s| s.get("fileName"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("output.csv");
+
+                        let column_mapping = settings
+                            .and_then(|s| s.get("columnMapping"))
+                            .or_else(|| node.data.get("columnMapping"))
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+                        let export_dir = dirs_next::data_dir()
+                            .unwrap_or_else(|| std::path::PathBuf::from("."))
+                            .join("com.CrawlFlow.desktop")
+                            .join("exports");
+                        std::fs::create_dir_all(&export_dir).ok();
+                        let out_path = export_dir.join(file_name);
+
+                        Some(FinishAction::ExportCsv {
+                            path: out_path.to_string_lossy().to_string(),
+                            fields: vec![],
+                            column_mapping,
+                        })
+                    }
+                    _ => None,
+                }
+            }
+            "completion" | "finish" => Some(FinishAction::LogSummary),
+            _ => None,
+        };
+
+        if let Some(a) = action {
+            actions.push(a);
+        }
+    }
+
+    if actions.is_empty() {
+        actions.push(FinishAction::LogSummary);
+    }
+
+    actions
+}
+
+fn chrono_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .to_string()
+}
+
+fn chrono_date() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Simple date calculation from unix timestamp (UTC, no leap seconds)
+    let days = secs / 86400;
+    // Days since 1970-01-01
+    let mut year = 1970u32;
+    let mut remaining_days = days as u32;
+    loop {
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+        let days_in_year = if leap { 366 } else { 365 };
+        if remaining_days < days_in_year {
+            break;
+        }
+        remaining_days -= days_in_year;
+        year += 1;
+    }
+    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let month_days: &[u32] = if leap {
+        &[31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        &[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    let mut month = 1u32;
+    for &d in month_days {
+        if remaining_days < d {
+            break;
+        }
+        remaining_days -= d;
+        month += 1;
+    }
+    let day = remaining_days + 1;
+    format!("{:04}-{:02}-{:02}", year, month, day)
 }

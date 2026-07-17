@@ -1,4 +1,7 @@
-use crate::item_matcher::{ItemMatcher, MatchRule};
+use crate::item_matcher::{ItemMatcher, MatchPattern, MatchRule};
+use crate::models::ExtractRule as ModelsExtractRule;
+use crate::pipeline::PipelineConfig;
+use crate::pipeline_config::parse_extract_rules_array;
 use crate::repository::{RawItem, RawItemRepository};
 use serde::{Deserialize, Serialize};
 
@@ -740,4 +743,263 @@ pub struct ProcessItemResult {
     pub success: bool,
     pub steps: usize,
     pub output: Option<serde_json::Value>,
+}
+
+// ── Worker extraction from pipeline graph ──────────────────────────
+
+/// Build the list of [`WorkerDef`]s from the pipeline graph.
+///
+/// Only `worker` nodes become item-assignees. `processor` nodes are
+/// downstream steps in a worker's chain (or finish actions) and must NOT be
+/// standalone workers — otherwise they match all items (empty match rules)
+/// and steal them from the real worker.
+///
+/// For each worker we walk its outgoing edges to collect the `processor_chain`,
+/// and merge extract rules from any `html-data-extractor` node that feeds
+/// into it (upstream) or sits downstream in its chain.
+pub(crate) fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
+    let mut workers = Vec::new();
+
+    for node in &config.nodes {
+        if node.node_type != "worker" {
+            continue;
+        }
+
+        let matching_rules: Vec<MatchRule> = node
+            .data
+            .get("detectionRules")
+            .or_else(|| node.data.get("matchingRules"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|r| {
+                        let field = r.get("field").and_then(|v| v.as_str()).unwrap_or("url");
+                        let pattern_type = r.get("type").and_then(|v| v.as_str())?;
+                        let value = r.get("value").and_then(|v| v.as_str())?;
+                        let negate = r.get("negate").and_then(|v| v.as_bool()).unwrap_or(false);
+                        Some(MatchRule {
+                            field: field.to_string(),
+                            pattern: match pattern_type {
+                                "wildcard" => MatchPattern::Wildcard(value.into()),
+                                "regex" | "url-format" => MatchPattern::Regex(value.into()),
+                                "contains" => MatchPattern::Contains(value.into()),
+                                "startswith" => MatchPattern::StartsWith(value.into()),
+                                "endswith" => MatchPattern::EndsWith(value.into()),
+                                "always" => MatchPattern::Always,
+                                _ => return None,
+                            },
+                            negate,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut processor_chain = Vec::new();
+        let mut current_id = Some(node.id.as_str());
+        let mut visited = std::collections::HashSet::new();
+
+        while let Some(cid) = current_id.take() {
+            if !visited.insert(cid.to_string()) {
+                break;
+            }
+
+            if let Some(n) = config.nodes.iter().find(|n| n.id == cid) {
+                if n.id != node.id {
+                    processor_chain.push(ProcessorStep {
+                        id: n.id.clone(),
+                        processor_type: n
+                            .data
+                            .get("processorType")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&n.node_type)
+                            .to_string(),
+                        config: n
+                            .data
+                            .get("processorConfig")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                    });
+                }
+            }
+
+            if let Some(next_edge) = config.edges.iter().find(|e| e.source == cid) {
+                current_id = Some(next_edge.target.as_str());
+            }
+        }
+
+        let client_type = node
+            .data
+            .get("clientType")
+            .or_else(|| node.data.get("client_type"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("reqwest")
+            .to_string();
+
+        let timeout_secs = node
+            .data
+            .get("clientTimeoutSecs")
+            .or_else(|| node.data.get("client_timeout_secs"))
+            .or_else(|| node.data.get("timeout_secs"))
+            .and_then(|v| v.as_u64())
+            .or(Some(30));
+
+        let headless = node
+            .data
+            .get("clientHeadless")
+            .or_else(|| node.data.get("client_headless"))
+            .or_else(|| node.data.get("headless"))
+            .and_then(|v| v.as_bool())
+            .or(Some(true));
+
+        let wait_for_selector = node
+            .data
+            .get("waitForSelector")
+            .or_else(|| node.data.get("wait_for_selector"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let client_profile = crate::models::ClientProfile {
+            client_type,
+            timeout_secs,
+            headless,
+            wait_for_selector,
+            ..Default::default()
+        };
+
+        // --- Extract rules: first try the worker node's own data ---
+        let mut extract_rules: Vec<ModelsExtractRule> = node
+            .data
+            .get("extractRules")
+            .or_else(|| node.data.get("parserRules"))
+            .or_else(|| node.data.get("rules"))
+            .and_then(|v| v.as_array())
+            .map(|arr| parse_extract_rules_array(arr))
+            .unwrap_or_default();
+
+        // --- Also pull rules from any html-data-extractor node that feeds into this worker ---
+        let connected_extractor_ids: Vec<&str> = config
+            .edges
+            .iter()
+            .filter(|e| e.target == node.id)
+            .map(|e| e.source.as_str())
+            .collect();
+
+        for extractor_id in connected_extractor_ids {
+            if let Some(ext_node) = config.nodes.iter().find(|n| {
+                n.id == extractor_id
+                    && (n.node_type == "html-data-extractor"
+                        || n.node_type == "htmlDataExtractor"
+                        || n.node_type == "extractor")
+            }) {
+                let rules_from_extractor = ext_node
+                    .data
+                    .get("customRules")
+                    .or_else(|| ext_node.data.get("extractRules"))
+                    .or_else(|| ext_node.data.get("parserRules"))
+                    .or_else(|| ext_node.data.get("rules"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| parse_extract_rules_array(arr))
+                    .unwrap_or_default();
+
+                if !rules_from_extractor.is_empty() {
+                    log::info!(
+                        "[extract_workers] Merged {} extract rules from upstream html-data-extractor '{}' into worker '{}'",
+                        rules_from_extractor.len(),
+                        ext_node.id,
+                        node.id
+                    );
+                    extract_rules.extend(rules_from_extractor);
+                }
+            }
+        }
+
+        // --- Also pull rules from DOWNSTREAM extractor nodes (in the processor_chain) ---
+        for step in &processor_chain {
+            if let Some(ext_node) = config.nodes.iter().find(|n| {
+                n.id == step.id
+                    && (n.node_type == "html-data-extractor"
+                        || n.node_type == "htmlDataExtractor"
+                        || n.node_type == "extractor")
+            }) {
+                let rules_from_downstream = ext_node
+                    .data
+                    .get("customRules")
+                    .or_else(|| ext_node.data.get("extractRules"))
+                    .or_else(|| ext_node.data.get("parserRules"))
+                    .or_else(|| ext_node.data.get("rules"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| parse_extract_rules_array(arr))
+                    .unwrap_or_default();
+
+                if !rules_from_downstream.is_empty() {
+                    log::info!(
+                        "[extract_workers] Merged {} extract rules from downstream html-data-extractor '{}' into worker '{}'",
+                        rules_from_downstream.len(),
+                        ext_node.id,
+                        node.id
+                    );
+                    extract_rules.extend(rules_from_downstream);
+                }
+            }
+        }
+
+        let max_retries = node
+            .data
+            .get("maxRetries")
+            .or_else(|| node.data.get("max_retries"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3) as u32;
+
+        let chunk_size = node
+            .data
+            .get("chunkSize")
+            .or_else(|| node.data.get("chunk_size"))
+            .or_else(|| node.data.get("concurrency"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10) as usize;
+
+        // Collect column mapping for Excel/CSV export from processor chain nodes
+        let mut column_mapping: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+        for step in &processor_chain {
+            if let Some(proc_node) = config.nodes.iter().find(|n| n.id == step.id) {
+                let mapping = proc_node
+                    .data
+                    .get("settings")
+                    .and_then(|s| s.get("columnMapping"))
+                    .or_else(|| proc_node.data.get("columnMapping"))
+                    .and_then(|v| v.as_object())
+                    .cloned();
+                if let Some(m) = mapping {
+                    column_mapping.extend(m);
+                }
+            }
+        }
+        let worker_mapping = node
+            .data
+            .get("settings")
+            .and_then(|s| s.get("columnMapping"))
+            .or_else(|| node.data.get("columnMapping"))
+            .and_then(|v| v.as_object())
+            .cloned();
+        if let Some(m) = worker_mapping {
+            for (k, v) in m {
+                column_mapping.entry(k).or_insert(v);
+            }
+        }
+
+        workers.push(WorkerDef {
+            id: node.id.clone(),
+            name: node.label.clone().unwrap_or_else(|| node.id.clone()),
+            matching_rules,
+            processor_chain,
+            client_profile: Some(client_profile),
+            extract_rules: Some(extract_rules),
+            max_retries,
+            chunk_size,
+            column_mapping: serde_json::Value::Object(column_mapping),
+        });
+    }
+
+    workers
 }

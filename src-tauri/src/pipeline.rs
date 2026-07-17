@@ -1,13 +1,12 @@
-use crate::data_preprocessor::{DataPreprocessor, ExtractRule, PreprocessorConfig, UrlPattern};
-use crate::finish_actions::{ActionEngine, FinishAction};
-use crate::item_matcher::{MatchPattern, MatchRule};
+use crate::data_preprocessor::{DataPreprocessor, PreprocessorConfig, UrlPattern};
+use crate::finish_actions::ActionEngine;
 use crate::logs::LogManager;
 use crate::models::ClientProfile;
 use crate::plugins;
 use crate::python_plugins::PythonPluginEngine;
 use crate::repository::RawItemRepository;
 use crate::request_clients;
-use crate::worker_engine::{ProcessorStep, WorkerDef, WorkerEngine};
+use crate::worker_engine::WorkerEngine;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -846,7 +845,7 @@ pub async fn execute_repository_pipeline(
             if let Some(ref pst) = plugin_source_type {
                 if let Some(engine) = python_engine.as_deref_mut() {
                     let plugin_id = pst.strip_prefix("py-").unwrap_or(pst);
-                    let call_config = build_plugin_config(&node.data, &source_value, project_id);
+                    let call_config = crate::pipeline_config::build_plugin_config(&node.data, &source_value, project_id);
 
                     // Warn if shop_url is missing from pluginConfig and source_value is empty
                     let plugin_config_has_shop_url = node
@@ -896,7 +895,7 @@ pub async fn execute_repository_pipeline(
                                             serde_json::to_string(item).unwrap_or_default();
                                         let hash_input =
                                             if !url.is_empty() { url } else { &raw_json };
-                                        let item_hash = simple_hash(hash_input);
+                                        let item_hash = crate::pipeline_config::simple_hash(hash_input);
                                         crate::repository::NewRawItem {
                                             source_url: source_value.to_string(),
                                             item_type: "product".into(),
@@ -968,7 +967,7 @@ pub async fn execute_repository_pipeline(
                     let wait_timeout_ms = node.data.get("waitTimeoutMs").and_then(|v| v.as_u64());
 
                     // Check for pagination config
-                    let pagination_config = extract_pagination_config(&node.data);
+                    let pagination_config = crate::pipeline_config::extract_pagination_config(&node.data);
                     let has_pagination = pagination_config.is_some();
 
                     if has_pagination {
@@ -1131,9 +1130,9 @@ pub async fn execute_repository_pipeline(
         "Phase 1b: Data Preprocessing (store-ID / URL rewrite)",
     );
 
-    let preprocessor_nodes = extract_preprocessors(config);
+    let preprocessor_nodes = crate::pipeline_config::extract_preprocessors(config);
     // fetchData node carries the URL patterns for extracting product URLs from listing pages
-    let fetch_data_config = extract_fetch_data_config(config);
+    let fetch_data_config = crate::pipeline_config::extract_fetch_data_config(config);
 
     macro_rules! close_chrome_sessions {
         ($sources:expr) => {
@@ -1440,7 +1439,7 @@ pub async fn execute_repository_pipeline(
         };
     }
 
-    let workers = extract_workers(config);
+    let workers = crate::worker_engine::extract_workers(config);
     let mut pending_items = match repo.get_pending_items(10000) {
         Ok(items) => items,
         Err(e) => {
@@ -1488,6 +1487,10 @@ pub async fn execute_repository_pipeline(
         "pipeline",
         "Phase 3: Worker Processing (chain of processors)",
     );
+
+    // Start each run from a clean Excel accumulator so a fresh cycle does
+    // not append to the previous run's rows.
+    crate::plugins::reset_excel_accumulator();
 
     let mut total_processed = 0i64;
     let mut total_failed = 0i64;
@@ -1627,7 +1630,7 @@ pub async fn execute_repository_pipeline(
         };
     }
 
-    let finish_actions = extract_finish_actions(config, project_id);
+    let finish_actions = crate::finish_actions::extract_finish_actions(config, project_id);
     let log_fn = |msg: &str, level: &str| match level {
         "error" => {
             log_manager.error(project_id, "finish_actions", msg);
@@ -1669,13 +1672,6 @@ pub async fn execute_repository_pipeline(
         actions: action_results,
         error: None,
     }
-}
-
-fn simple_hash(input: &str) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    input.hash(&mut hasher);
-    format!("{:x}", hasher.finish())
 }
 
 /// Stage A helper: extract store ID from HTML and fetch the listing page.
@@ -1738,11 +1734,6 @@ fn resolve_listing_url_builtin(
 }
 
 // ── Pagination Helpers ─────────────────────────────────────
-
-fn extract_pagination_config(data: &serde_json::Value) -> Option<crate::models::PaginationConfig> {
-    let pag_data = data.get("pagination")?;
-    Some(serde_json::from_value(pag_data.clone()).ok()?)
-}
 
 async fn fetch_single_page(
     url: &str,
@@ -1863,690 +1854,11 @@ pub struct FetchDataConfig {
     pub item_selector: Option<String>,
 }
 
-/// Parse a JSON array of extract rule objects into `ExtractRule` structs.
-/// Supports both `{ field, selector, attribute }` (pipeline format) and
-/// `{ name, selector, extract, attribute, extractMultiple }` (CrawlFlow UI format).
-fn parse_extract_rules_array(arr: &[serde_json::Value]) -> Vec<crate::models::ExtractRule> {
-    arr.iter()
-        .filter_map(|r| {
-            // Support both legacy format { field, selector, attribute } and
-            // frontend ExtractionRule format { name, extractFrom, selector, extract, attribute, jsonPath }
-            let field = r
-                .get("field")
-                .or_else(|| r.get("name"))
-                .and_then(|v| v.as_str())?
-                .to_string();
-
-            // Determine the CSS selector or JSON path
-            let extract_from = r
-                .get("extractFrom")
-                .and_then(|v| v.as_str())
-                .unwrap_or("html-element");
-            let selector = if extract_from == "json-ld" {
-                // For JSON-LD, use jsonPath as the "selector" (handled by crawler)
-                r.get("jsonPath")
-                    .or_else(|| r.get("selector"))
-                    .or_else(|| r.get("value"))
-                    .and_then(|v| v.as_str())?
-                    .to_string()
-            } else {
-                r.get("selector")
-                    .or_else(|| r.get("value"))
-                    .and_then(|v| v.as_str())?
-                    .to_string()
-            };
-
-            // Determine attribute: if extract == 'attribute', use the attribute field
-            let extract_mode = r.get("extract").and_then(|v| v.as_str()).unwrap_or("text");
-            let attribute = if extract_mode == "attribute" {
-                r.get("attribute")
-                    .and_then(|v| v.as_str())
-                    .map(String::from)
-            } else {
-                r.get("attribute")
-                    .and_then(|v| v.as_str())
-                    .map(String::from)
-            };
-
-            let extract_multiple = r
-                .get("extractMultiple")
-                .or_else(|| r.get("extract_multiple"))
-                .and_then(|v| v.as_bool());
-
-            Some(crate::models::ExtractRule {
-                field,
-                selector,
-                attribute,
-                extract_multiple,
-            })
-        })
-        .collect()
-}
-
-/// Extract preprocessor configs từ các preprocessor nodes
-fn extract_preprocessors(config: &PipelineConfig) -> Vec<PreprocessorConfig> {
-    config
-        .nodes
-        .iter()
-        .filter_map(|node| {
-            if node.node_type != "preprocessor" {
-                return None;
-            }
-            let data = &node.data;
-            Some(PreprocessorConfig {
-                input_type: data
-                    .get("inputType")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("html")
-                    .to_string(),
-                item_selector: data
-                    .get("itemSelector")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                url_patterns: data
-                    .get("urlPatterns")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|p| {
-                                Some(UrlPattern {
-                                    enabled: p
-                                        .get("enabled")
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(true),
-                                    pattern_type: p
-                                        .get("type")
-                                        .and_then(|v| v.as_str())?
-                                        .to_string(),
-                                    value: p.get("value").and_then(|v| v.as_str())?.to_string(),
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                extract_rules: data
-                    .get("extractRules")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|r| {
-                                Some(ExtractRule {
-                                    rule_type: r.get("type").and_then(|v| v.as_str())?.to_string(),
-                                    value: r.get("value").and_then(|v| v.as_str())?.to_string(),
-                                    attribute: r
-                                        .get("attribute")
-                                        .and_then(|v| v.as_str())
-                                        .map(String::from),
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                csv_delimiter: data
-                    .get("csvDelimiter")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                csv_has_header: data.get("csvHasHeader").and_then(|v| v.as_bool()),
-                json_item_path: data
-                    .get("jsonItemPath")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                client_type: data
-                    .get("clientType")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                client_timeout_secs: data.get("clientTimeoutSecs").and_then(|v| v.as_u64()),
-                client_headless: data.get("clientHeadless").and_then(|v| v.as_bool()),
-                wait_for_selector: data
-                    .get("waitForSelector")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                wait_for_content: data
-                    .get("waitForContent")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                wait_timeout_ms: data.get("waitTimeoutMs").and_then(|v| v.as_u64()),
-                extract_store_id: data.get("extractStoreId").and_then(|v| v.as_bool()),
-                platform: data
-                    .get("platform")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-            })
-        })
-        .collect()
-}
-
-/// Extract FetchData node config (URL patterns for product URL extraction)
-fn extract_fetch_data_config(config: &PipelineConfig) -> PreprocessorConfig {
-    for node in &config.nodes {
-        if node.node_type == "fetchData" || node.node_type == "fetch_data" {
-            let data = &node.data;
-            return PreprocessorConfig {
-                input_type: "html".into(),
-                item_selector: data
-                    .get("itemSelector")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                url_patterns: data
-                    .get("urlPatterns")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|p| {
-                                Some(UrlPattern {
-                                    enabled: p
-                                        .get("enabled")
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(true),
-                                    pattern_type: p
-                                        .get("type")
-                                        .and_then(|v| v.as_str())?
-                                        .to_string(),
-                                    value: p.get("value").and_then(|v| v.as_str())?.to_string(),
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                extract_rules: vec![],
-                csv_delimiter: None,
-                csv_has_header: None,
-                json_item_path: None,
-                client_type: data
-                    .get("clientType")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                client_timeout_secs: data.get("clientTimeoutSecs").and_then(|v| v.as_u64()),
-                client_headless: data.get("clientHeadless").and_then(|v| v.as_bool()),
-                wait_for_selector: data
-                    .get("waitForSelector")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                wait_for_content: data
-                    .get("waitForContent")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                wait_timeout_ms: data.get("waitTimeoutMs").and_then(|v| v.as_u64()),
-                extract_store_id: Some(false),
-                platform: None,
-            };
-        }
-    }
-    // No fetchData node found — return empty config
-    PreprocessorConfig {
-        input_type: "html".into(),
-        item_selector: None,
-        url_patterns: vec![],
-        extract_rules: vec![],
-        csv_delimiter: None,
-        csv_has_header: None,
-        json_item_path: None,
-        client_type: None,
-        client_timeout_secs: None,
-        client_headless: None,
-        wait_for_selector: None,
-        wait_for_content: None,
-        wait_timeout_ms: None,
-        extract_store_id: Some(false),
-        platform: None,
-    }
-}
-
-fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
-    let mut workers = Vec::new();
-
-    for node in &config.nodes {
-        if node.node_type != "worker" && node.node_type != "processor" {
-            continue;
-        }
-
-        let matching_rules: Vec<MatchRule> = node
-            .data
-            .get("detectionRules")
-            .or_else(|| node.data.get("matchingRules"))
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|r| {
-                        let field = r.get("field").and_then(|v| v.as_str()).unwrap_or("url");
-                        let pattern_type = r.get("type").and_then(|v| v.as_str())?;
-                        let value = r.get("value").and_then(|v| v.as_str())?;
-                        let negate = r.get("negate").and_then(|v| v.as_bool()).unwrap_or(false);
-                        Some(MatchRule {
-                            field: field.to_string(),
-                            pattern: match pattern_type {
-                                "wildcard" => MatchPattern::Wildcard(value.into()),
-                                "regex" | "url-format" => MatchPattern::Regex(value.into()),
-                                "contains" => MatchPattern::Contains(value.into()),
-                                "startswith" => MatchPattern::StartsWith(value.into()),
-                                "endswith" => MatchPattern::EndsWith(value.into()),
-                                "always" => MatchPattern::Always,
-                                _ => return None,
-                            },
-                            negate,
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let mut processor_chain = Vec::new();
-        let mut current_id = Some(node.id.as_str());
-        let mut visited = std::collections::HashSet::new();
-
-        while let Some(cid) = current_id.take() {
-            if !visited.insert(cid.to_string()) {
-                break;
-            }
-
-            if let Some(n) = config.nodes.iter().find(|n| n.id == cid) {
-                if n.id != node.id {
-                    processor_chain.push(ProcessorStep {
-                        id: n.id.clone(),
-                        processor_type: n
-                            .data
-                            .get("processorType")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(&n.node_type)
-                            .to_string(),
-                        config: n
-                            .data
-                            .get("processorConfig")
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Null),
-                    });
-                }
-            }
-
-            if let Some(next_edge) = config.edges.iter().find(|e| e.source == cid) {
-                current_id = Some(next_edge.target.as_str());
-            }
-        }
-
-        let client_type = node
-            .data
-            .get("clientType")
-            .or_else(|| node.data.get("client_type"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("reqwest")
-            .to_string();
-
-        let timeout_secs = node
-            .data
-            .get("clientTimeoutSecs")
-            .or_else(|| node.data.get("client_timeout_secs"))
-            .or_else(|| node.data.get("timeout_secs"))
-            .and_then(|v| v.as_u64())
-            .or(Some(30));
-
-        let headless = node
-            .data
-            .get("clientHeadless")
-            .or_else(|| node.data.get("client_headless"))
-            .or_else(|| node.data.get("headless"))
-            .and_then(|v| v.as_bool())
-            .or(Some(true));
-
-        let wait_for_selector = node
-            .data
-            .get("waitForSelector")
-            .or_else(|| node.data.get("wait_for_selector"))
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        let client_profile = crate::models::ClientProfile {
-            client_type,
-            timeout_secs,
-            headless,
-            wait_for_selector,
-            ..Default::default()
-        };
-
-        // --- Extract rules: first try the worker node's own data ---
-        let mut extract_rules: Vec<crate::models::ExtractRule> = node
-            .data
-            .get("extractRules")
-            .or_else(|| node.data.get("parserRules"))
-            .or_else(|| node.data.get("rules"))
-            .and_then(|v| v.as_array())
-            .map(|arr| parse_extract_rules_array(arr))
-            .unwrap_or_default();
-
-        // --- Also pull rules from any html-data-extractor node that feeds into this worker ---
-        // (i.e. edges where target == worker node id and source node type == "html-data-extractor")
-        let connected_extractor_ids: Vec<&str> = config
-            .edges
-            .iter()
-            .filter(|e| e.target == node.id)
-            .map(|e| e.source.as_str())
-            .collect();
-
-        for extractor_id in connected_extractor_ids {
-            if let Some(ext_node) = config.nodes.iter().find(|n| {
-                n.id == extractor_id
-                    && (n.node_type == "html-data-extractor"
-                        || n.node_type == "htmlDataExtractor"
-                        || n.node_type == "extractor")
-            }) {
-                // customRules is the field used by the CrawlFlow UI
-                let rules_from_extractor = ext_node
-                    .data
-                    .get("customRules")
-                    .or_else(|| ext_node.data.get("extractRules"))
-                    .or_else(|| ext_node.data.get("parserRules"))
-                    .or_else(|| ext_node.data.get("rules"))
-                    .and_then(|v| v.as_array())
-                    .map(|arr| parse_extract_rules_array(arr))
-                    .unwrap_or_default();
-
-                if !rules_from_extractor.is_empty() {
-                    log::info!(
-                        "[extract_workers] Merged {} extract rules from upstream html-data-extractor '{}' into worker '{}'",
-                        rules_from_extractor.len(),
-                        ext_node.id,
-                        node.id
-                    );
-                    extract_rules.extend(rules_from_extractor);
-                }
-            }
-        }
-
-        // --- Also pull rules from DOWNSTREAM extractor nodes (in the processor_chain) ---
-        // UI typically connects: Repository → Worker → HTML Data Extractor → Processor
-        // so the extractor is a child/downstream node, not an input to the worker.
-        for step in &processor_chain {
-            if let Some(ext_node) = config.nodes.iter().find(|n| {
-                n.id == step.id
-                    && (n.node_type == "html-data-extractor"
-                        || n.node_type == "htmlDataExtractor"
-                        || n.node_type == "extractor")
-            }) {
-                let rules_from_downstream = ext_node
-                    .data
-                    .get("customRules")
-                    .or_else(|| ext_node.data.get("extractRules"))
-                    .or_else(|| ext_node.data.get("parserRules"))
-                    .or_else(|| ext_node.data.get("rules"))
-                    .and_then(|v| v.as_array())
-                    .map(|arr| parse_extract_rules_array(arr))
-                    .unwrap_or_default();
-
-                if !rules_from_downstream.is_empty() {
-                    log::info!(
-                        "[extract_workers] Merged {} extract rules from downstream html-data-extractor '{}' into worker '{}'",
-                        rules_from_downstream.len(),
-                        ext_node.id,
-                        node.id
-                    );
-                    extract_rules.extend(rules_from_downstream);
-                }
-            }
-        }
-
-        // Extract max_retries and chunk_size from worker settings
-        let max_retries = node
-            .data
-            .get("maxRetries")
-            .or_else(|| node.data.get("max_retries"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(3) as u32;
-
-        let chunk_size = node
-            .data
-            .get("chunkSize")
-            .or_else(|| node.data.get("chunk_size"))
-            .or_else(|| node.data.get("concurrency"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10) as usize;
-
-        // Collect column mapping for Excel/CSV export from processor chain nodes
-        let mut column_mapping: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
-        for step in &processor_chain {
-            if let Some(proc_node) = config.nodes.iter().find(|n| n.id == step.id) {
-                let mapping = proc_node
-                    .data
-                    .get("settings")
-                    .and_then(|s| s.get("columnMapping"))
-                    .or_else(|| proc_node.data.get("columnMapping"))
-                    .and_then(|v| v.as_object())
-                    .cloned();
-                if let Some(m) = mapping {
-                    column_mapping.extend(m);
-                }
-            }
-        }
-        // Also check the worker node itself
-        let worker_mapping = node
-            .data
-            .get("settings")
-            .and_then(|s| s.get("columnMapping"))
-            .or_else(|| node.data.get("columnMapping"))
-            .and_then(|v| v.as_object())
-            .cloned();
-        if let Some(m) = worker_mapping {
-            for (k, v) in m {
-                column_mapping.entry(k).or_insert(v);
-            }
-        }
-
-        workers.push(WorkerDef {
-            id: node.id.clone(),
-            name: node.label.clone().unwrap_or_else(|| node.id.clone()),
-            matching_rules,
-            processor_chain,
-            client_profile: Some(client_profile),
-            extract_rules: Some(extract_rules),
-            max_retries,
-            chunk_size,
-            column_mapping: serde_json::Value::Object(column_mapping),
-        });
-    }
-
-    workers
-}
-
-fn extract_finish_actions(config: &PipelineConfig, project_id: &str) -> Vec<FinishAction> {
-    let mut actions = Vec::new();
-
-    // Collect all worker column mappings (keyed by worker_id)
-    let worker_column_mappings: HashMap<String, serde_json::Value> = config
-        .nodes
-        .iter()
-        .filter(|n| n.node_type == "worker")
-        .map(|n| {
-            let mapping = n
-                .data
-                .get("settings")
-                .and_then(|s| s.get("columnMapping"))
-                .or_else(|| n.data.get("columnMapping"))
-                .cloned()
-                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-            (n.id.clone(), mapping)
-        })
-        .collect();
-
-    for node in &config.nodes {
-        let action = match node.node_type.as_str() {
-            "excelExport" => {
-                let column_mapping = node
-                    .data
-                    .get("columnMapping")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                Some(FinishAction::ExportExcel {
-                    path: node
-                        .data
-                        .get("outputPath")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("output.xlsx")
-                        .to_string(),
-                    fields: node
-                        .data
-                        .get("fields")
-                        .and_then(|v| v.as_array())
-                        .map(|a| {
-                            a.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    column_mapping,
-                    sheet_name: node
-                        .data
-                        .get("sheetName")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Sheet1")
-                        .to_string(),
-                })
-            }
-            "csvExport" => Some(FinishAction::ExportCsv {
-                path: node
-                    .data
-                    .get("outputPath")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("output.csv")
-                    .to_string(),
-                fields: node
-                    .data
-                    .get("fields")
-                    .and_then(|v| v.as_array())
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                column_mapping: node
-                    .data
-                    .get("columnMapping")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
-            }),
-            "processor" => {
-                let processor_type = node
-                    .data
-                    .get("processorType")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                match processor_type {
-                    "generate-excel-file" => {
-                        let settings = node.data.get("settings").and_then(|s| s.as_object());
-                        let file_name = settings
-                            .and_then(|s| s.get("fileName"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("output.xlsx");
-                        let sheet_name = settings
-                            .and_then(|s| s.get("sheetName"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Sheet1")
-                            .to_string();
-
-                        // Resolve column mapping: node settings → upstream worker
-                        let column_mapping = settings
-                            .and_then(|s| s.get("columnMapping"))
-                            .or_else(|| node.data.get("columnMapping"))
-                            .cloned()
-                            .unwrap_or_else(|| {
-                                // Try to get from upstream worker node
-                                let worker_mapping: serde_json::Map<String, serde_json::Value> =
-                                    worker_column_mappings
-                                        .values()
-                                        .filter_map(|v| v.as_object().cloned())
-                                        .flatten()
-                                        .collect();
-                                serde_json::Value::Object(worker_mapping)
-                            });
-
-                        let date_str = chrono_date();
-                        let short_id = &project_id[..project_id.len().min(8)];
-                        let resolved_file_name = file_name
-                            .replace("{{date}}", &date_str)
-                            .replace("{{project_id}}", short_id)
-                            .replace("{{timestamp}}", &chrono_now());
-
-                        let export_dir = dirs_next::data_dir()
-                            .unwrap_or_else(|| std::path::PathBuf::from("."))
-                            .join("com.CrawlFlow.desktop")
-                            .join("exports");
-                        std::fs::create_dir_all(&export_dir).ok();
-                        let out_path = export_dir.join(&resolved_file_name);
-
-                        Some(FinishAction::ExportExcel {
-                            path: out_path.to_string_lossy().to_string(),
-                            fields: vec![],
-                            column_mapping,
-                            sheet_name,
-                        })
-                    }
-                    "generate-csv-file" => {
-                        let settings = node.data.get("settings").and_then(|s| s.as_object());
-                        let file_name = settings
-                            .and_then(|s| s.get("fileName"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("output.csv");
-
-                        let column_mapping = settings
-                            .and_then(|s| s.get("columnMapping"))
-                            .or_else(|| node.data.get("columnMapping"))
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-
-                        let export_dir = dirs_next::data_dir()
-                            .unwrap_or_else(|| std::path::PathBuf::from("."))
-                            .join("com.CrawlFlow.desktop")
-                            .join("exports");
-                        std::fs::create_dir_all(&export_dir).ok();
-                        let out_path = export_dir.join(file_name);
-
-                        Some(FinishAction::ExportCsv {
-                            path: out_path.to_string_lossy().to_string(),
-                            fields: vec![],
-                            column_mapping,
-                        })
-                    }
-                    _ => None,
-                }
-            }
-            "completion" | "finish" => Some(FinishAction::LogSummary),
-            _ => None,
-        };
-
-        if let Some(a) = action {
-            actions.push(a);
-        }
-    }
-
-    if actions.is_empty() {
-        actions.push(FinishAction::LogSummary);
-    }
-
-    actions
-}
-
-fn build_plugin_config(
-    node_data: &serde_json::Value,
-    source_value: &str,
-    project_id: &str,
-) -> serde_json::Value {
-    let plugin_config = node_data
-        .get("pluginConfig")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-    let mut config = match &plugin_config {
-        serde_json::Value::Object(map) => map.clone(),
-        _ => serde_json::Map::new(),
-    };
-    if !config.contains_key("shop_url") && !source_value.is_empty() {
-        config.insert("shop_url".into(), serde_json::json!(source_value));
-    }
-    config.insert("source_url".into(), serde_json::json!(source_value));
-    config.insert("project_id".into(), serde_json::json!(project_id));
-    serde_json::Value::Object(config)
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::item_matcher::MatchPattern;
 
     fn make_node(id: &str, node_type: &str, data: serde_json::Value) -> PipelineNode {
         PipelineNode {
@@ -2575,7 +1887,7 @@ mod tests {
             edges: vec![],
             settings: serde_json::Value::Null,
         };
-        let preprocs = extract_preprocessors(&config);
+        let preprocs = crate::pipeline_config::extract_preprocessors(&config);
         assert!(preprocs.is_empty());
     }
 
@@ -2596,7 +1908,7 @@ mod tests {
             edges: vec![],
             settings: serde_json::Value::Null,
         };
-        let preprocs = extract_preprocessors(&config);
+        let preprocs = crate::pipeline_config::extract_preprocessors(&config);
         assert_eq!(preprocs.len(), 1);
         assert_eq!(preprocs[0].input_type, "html");
         assert_eq!(preprocs[0].item_selector.as_deref(), Some(".product-item"));
@@ -2622,7 +1934,7 @@ mod tests {
             edges: vec![],
             settings: serde_json::Value::Null,
         };
-        let preprocs = extract_preprocessors(&config);
+        let preprocs = crate::pipeline_config::extract_preprocessors(&config);
         assert_eq!(preprocs.len(), 1);
     }
 
@@ -2659,7 +1971,7 @@ mod tests {
             edges: vec![],
             settings: serde_json::Value::Null,
         };
-        let preprocs = extract_preprocessors(&config);
+        let preprocs = crate::pipeline_config::extract_preprocessors(&config);
         assert_eq!(preprocs.len(), 3);
 
         let html = preprocs.iter().find(|p| p.input_type == "html").unwrap();
@@ -2690,7 +2002,7 @@ mod tests {
             edges: vec![],
             settings: serde_json::Value::Null,
         };
-        let preprocs = extract_preprocessors(&config);
+        let preprocs = crate::pipeline_config::extract_preprocessors(&config);
         assert_eq!(preprocs.len(), 1);
         assert_eq!(preprocs[0].extract_rules.len(), 2);
         assert_eq!(preprocs[0].extract_rules[0].rule_type, "title");
@@ -2734,7 +2046,7 @@ mod tests {
             edges: vec![],
             settings: serde_json::Value::Null,
         };
-        let workers = extract_workers(&config);
+        let workers = crate::worker_engine::extract_workers(&config);
         assert_eq!(workers.len(), 1);
         assert_eq!(workers[0].matching_rules.len(), 1);
         assert_eq!(workers[0].matching_rules[0].field, "url");
@@ -3027,7 +2339,7 @@ mod tests {
         });
         let source_value = "https://www.oreka.vn/store/C21AVGZS44L3UU";
         let project_id = "test-project";
-        let config = build_plugin_config(&node_data, source_value, project_id);
+        let config = crate::pipeline_config::build_plugin_config(&node_data, source_value, project_id);
         assert_eq!(
             config.get("shop_url").and_then(|v| v.as_str()),
             Some("https://www.oreka.vn/store/C21AVGZS44L3UU")
@@ -3052,7 +2364,7 @@ mod tests {
                 "shop_url": "https://www.oreka.vn/store/EXISTING_SHOP"
             }
         });
-        let config = build_plugin_config(&node_data, "", "test-project");
+        let config = crate::pipeline_config::build_plugin_config(&node_data, "", "test-project");
         assert_eq!(
             config.get("shop_url").and_then(|v| v.as_str()),
             Some("https://www.oreka.vn/store/EXISTING_SHOP")
@@ -3067,7 +2379,7 @@ mod tests {
             "pluginSourceType": "py-oreka-shop-crawler",
             "pluginConfig": {}
         });
-        let config = build_plugin_config(&node_data, "", "test-project");
+        let config = crate::pipeline_config::build_plugin_config(&node_data, "", "test-project");
         assert!(config.get("shop_url").is_none());
     }
 
@@ -3077,61 +2389,12 @@ mod tests {
             "sourceType": "url",
             "sourceValue": "https://example.com"
         });
-        let config = build_plugin_config(&node_data, "https://example.com", "test-project");
+        let config = crate::pipeline_config::build_plugin_config(&node_data, "https://example.com", "test-project");
         assert_eq!(
             config.get("shop_url").and_then(|v| v.as_str()),
             Some("https://example.com")
         );
     }
-}
-
-/// Returns current UTC time as unix timestamp seconds (string)
-fn chrono_now() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        .to_string()
-}
-
-/// Returns current UTC date as YYYY-MM-DD string (for stable daily filenames)
-fn chrono_date() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    // Simple date calculation from unix timestamp (UTC, no leap seconds)
-    let days = secs / 86400;
-    // Days since 1970-01-01
-    let mut year = 1970u32;
-    let mut remaining_days = days as u32;
-    loop {
-        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-        let days_in_year = if leap { 366 } else { 365 };
-        if remaining_days < days_in_year {
-            break;
-        }
-        remaining_days -= days_in_year;
-        year += 1;
-    }
-    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    let month_days: &[u32] = if leap {
-        &[31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        &[31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-    let mut month = 1u32;
-    for &d in month_days {
-        if remaining_days < d {
-            break;
-        }
-        remaining_days -= d;
-        month += 1;
-    }
-    let day = remaining_days + 1;
-    format!("{:04}-{:02}-{:02}", year, month, day)
 }
 
 fn label_of(node: &PipelineNode) -> &str {

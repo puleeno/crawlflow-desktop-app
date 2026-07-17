@@ -430,7 +430,7 @@ def preprocess_data(data_json):
 
     product_urls = sorted(product_urls)
     items = [{
-        "source_url": listing_url,
+        "source_url": product_url,
         "item_type": "url",
         "item_hash": hashlib.sha256(product_url.encode("utf-8")).hexdigest(),
         "raw_content": None,

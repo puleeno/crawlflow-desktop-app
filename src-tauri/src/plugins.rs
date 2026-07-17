@@ -91,6 +91,23 @@ impl PluginEngine {
             }
         }
 
+        // Direct dispatch for built-in processor types that are not
+        // registered under a py- prefix or self.plugins key.
+        if processor_type == "generate-excel-file" {
+            return match excel_export_plugin(data, config) {
+                Ok(result_data) => ProcessResult {
+                    success: true,
+                    data: result_data,
+                    error: None,
+                },
+                Err(e) => ProcessResult {
+                    success: false,
+                    data: vec![],
+                    error: Some(e),
+                },
+            };
+        }
+
         // Fall back to Rust built-in plugin
         if let Some(plugin) = self.plugins.get(processor_type) {
             return match (plugin.execute)(data, config) {
@@ -224,7 +241,9 @@ pub fn execute_processor_static(
         "filter" | "rust-filter" => filter_plugin(data, config),
         "sort" | "rust-sort" => sort_plugin(data, config),
         "limit" | "rust-limit" => limit_plugin(data, config),
-        "excel-export" | "rust-excel-export" => excel_export_plugin(data, config),
+        "excel-export" | "rust-excel-export" | "generate-excel-file" => {
+            excel_export_plugin(data, config)
+        }
         _ => return ProcessResult { success: true, data, error: None },
     };
     match result {
@@ -1084,10 +1103,6 @@ pub fn excel_export_plugin(
         .and_then(|v| v.as_str())
         .unwrap_or("export.xlsx");
 
-    let bytes = inner_export_excel(&mapped_data, sheet_name, include_header)
-        .map_err(|e| format!("Excel generation failed ({} rows): {}", mapped_data.len(), e))?;
-
-    // Write to a temp file
     let out_dir = dirs_next::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("com.CrawlFlow.desktop")
@@ -1101,6 +1116,29 @@ pub fn excel_export_plugin(
     })?;
 
     let out_path = out_dir.join(file_name);
+
+    // ── Per-item accumulate ────────────────────────────────────────
+    // When `generate-excel-file` runs as a per-item processor step inside a
+    // worker's chain, this plugin is invoked once per item. We accumulate the
+    // rows across all calls (keyed by the resolved output path) and rewrite
+    // the whole workbook (header + every row so far) on each call, so the
+    // final file contains ALL items, not just the last one.
+    let key = out_path.to_string_lossy().to_string();
+    let mut store = EXCEL_ACCUMULATOR.lock().unwrap();
+    let rows: &mut Vec<serde_json::Value> = store.entry(key.clone()).or_default();
+    // If the file was removed/renamed between runs, start fresh.
+    if !out_path.exists() {
+        rows.clear();
+    }
+    for r in &mapped_data {
+        rows.push(r.clone());
+    }
+    let all_rows = rows.clone();
+    drop(store);
+
+    let bytes = inner_export_excel(&all_rows, sheet_name, include_header)
+        .map_err(|e| format!("Excel generation failed ({} rows): {}", all_rows.len(), e))?;
+
     std::fs::write(&out_path, &bytes).map_err(|e| {
         format!(
             "Failed to write Excel file '{}': {}",
@@ -1109,10 +1147,11 @@ pub fn excel_export_plugin(
         )
     })?;
     log::info!(
-        "[excel_export_plugin] wrote {} bytes to {} ({} rows)",
-        bytes.len(),
+        "[excel_export_plugin] appended {} row(s) -> {} (total {} rows, {} bytes)",
+        mapped_data.len(),
         out_path.to_string_lossy(),
-        mapped_data.len()
+        all_rows.len(),
+        bytes.len()
     );
 
     Ok(vec![serde_json::json!({
@@ -1121,4 +1160,16 @@ pub fn excel_export_plugin(
         "count": data.len(),
         "format": "xlsx"
     })])
+}
+
+/// Accumulates Excel rows per output path so a per-item `generate-excel-file`
+/// processor step produces one workbook containing every item.
+static EXCEL_ACCUMULATOR: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, Vec<serde_json::Value>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Reset the Excel accumulator (e.g. at the start of a fresh pipeline run so a
+/// new cycle does not append to the previous run's rows).
+pub(crate) fn reset_excel_accumulator() {
+    EXCEL_ACCUMULATOR.lock().unwrap().clear();
 }
