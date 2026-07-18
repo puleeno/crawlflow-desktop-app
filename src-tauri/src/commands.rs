@@ -166,6 +166,18 @@ pub fn inner_export_csv(data: &[serde_json::Value], delimiter: &str) -> String {
                     .get(h)
                     .map(|v| match v {
                         serde_json::Value::String(s) => s.clone(),
+                        // extractMultiple → JSON array; flatten for CSV cells
+                        serde_json::Value::Array(arr) => arr
+                            .iter()
+                            .filter_map(|item| match item {
+                                serde_json::Value::Null => None,
+                                serde_json::Value::String(s) if s.is_empty() => None,
+                                serde_json::Value::String(s) => Some(s.clone()),
+                                other => Some(other.to_string()),
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        serde_json::Value::Null => String::new(),
                         other => other.to_string(),
                     })
                     .unwrap_or_default();

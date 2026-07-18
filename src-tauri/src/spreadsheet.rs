@@ -102,7 +102,35 @@ fn cell_from_json(v: &serde_json::Value) -> CellValue {
             }
         }
         serde_json::Value::Bool(b) => CellValue::Bool(*b),
-        _ => CellValue::Empty,
+        // extractMultiple produces JSON arrays (e.g. many image src attributes).
+        // Flatten them into a single cell so Excel/CSV export keeps the values.
+        serde_json::Value::Array(arr) => {
+            let parts: Vec<String> = arr
+                .iter()
+                .filter_map(|item| match item {
+                    serde_json::Value::Null => None,
+                    serde_json::Value::String(s) if s.is_empty() => None,
+                    serde_json::Value::String(s) => Some(s.clone()),
+                    serde_json::Value::Number(n) => Some(n.to_string()),
+                    serde_json::Value::Bool(b) => Some(b.to_string()),
+                    other => {
+                        let s = other.to_string();
+                        if s.is_empty() || s == "null" {
+                            None
+                        } else {
+                            Some(s)
+                        }
+                    }
+                })
+                .collect();
+            if parts.is_empty() {
+                CellValue::Empty
+            } else {
+                CellValue::String(parts.join(", "))
+            }
+        }
+        serde_json::Value::Null => CellValue::Empty,
+        other => CellValue::String(other.to_string()),
     }
 }
 
@@ -536,6 +564,36 @@ mod tests {
         assert_eq!(CellValue::Number(42.0).as_string(), "42");
         assert_eq!(CellValue::Bool(true).as_string(), "true");
         assert_eq!(CellValue::Empty.as_string(), "");
+    }
+
+    #[test]
+    fn test_cell_from_json_array_joins_values() {
+        // Regression: extractMultiple attribute arrays used to become Empty cells.
+        let cell = cell_from_json(&serde_json::json!(["a.jpg", "b.jpg", "c.jpg"]));
+        match cell {
+            CellValue::String(s) => assert_eq!(s, "a.jpg, b.jpg, c.jpg"),
+            other => panic!("expected joined string, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_from_json_rows_preserves_array_field() {
+        let data = vec![serde_json::json!({
+            "product_name": "Widget",
+            "images": ["a.jpg", "b.jpg"]
+        })];
+        let wb = Workbook::from_json_rows(&data, "Test", true);
+        // header + 1 data row
+        assert_eq!(wb.sheets[0].rows.len(), 2);
+        let row = &wb.sheets[0].rows[1];
+        let has_joined_images = row.cells.iter().any(|c| {
+            matches!(c, CellValue::String(s) if s == "a.jpg, b.jpg")
+        });
+        assert!(
+            has_joined_images,
+            "expected images array to be joined into a cell, got {:?}",
+            row.cells
+        );
     }
 
     #[test]

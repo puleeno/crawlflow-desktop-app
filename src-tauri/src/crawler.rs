@@ -134,6 +134,58 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_from_html_multiple_attributes() {
+        let html = r#"<html><body>
+            <img class="thumb" src="a.jpg" />
+            <img class="thumb" src="b.jpg" />
+            <img class="thumb" src="c.jpg" />
+            <a class="link" href="/p/1">One</a>
+            <a class="link" href="/p/2">Two</a>
+        </body></html>"#;
+        let rules = vec![
+            ExtractRule {
+                field: "images".into(),
+                selector: "img.thumb".into(),
+                attribute: Some("src".into()),
+                extract_multiple: Some(true),
+                ..Default::default()
+            },
+            ExtractRule {
+                field: "links".into(),
+                selector: "a.link".into(),
+                attribute: Some("href".into()),
+                extract_multiple: Some(true),
+                ..Default::default()
+            },
+        ];
+        let results = extract_from_html(html, &rules);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].field, "images");
+        assert_eq!(results[0].values, vec!["a.jpg", "b.jpg", "c.jpg"]);
+        assert_eq!(results[1].field, "links");
+        assert_eq!(results[1].values, vec!["/p/1", "/p/2"]);
+    }
+
+    #[test]
+    fn test_extract_from_html_multiple_attributes_without_attr_yields_empty_text() {
+        // Regression: when attribute is lost during rule parsing, multi-img
+        // extraction falls back to element text (always empty for <img>).
+        let html = r#"<html><body>
+            <img class="thumb" src="a.jpg" />
+            <img class="thumb" src="b.jpg" />
+        </body></html>"#;
+        let rules = vec![ExtractRule {
+            field: "images".into(),
+            selector: "img.thumb".into(),
+            attribute: None,
+            extract_multiple: Some(true),
+            ..Default::default()
+        }];
+        let results = extract_from_html(html, &rules);
+        assert_eq!(results[0].values, vec!["", ""]);
+    }
+
+    #[test]
     fn test_extract_from_html_single_item_with_multiple_false() {
         let rules = vec![
             ExtractRule {
@@ -604,3 +656,5 @@ pub fn extract_json_ld_blocks(html: &str) -> Vec<serde_json::Value> {
     }
     blocks
 }
+
+// temp marker - do not keep

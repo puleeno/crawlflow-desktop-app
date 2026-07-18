@@ -46,14 +46,36 @@ pub(crate) fn parse_extract_rules_array(arr: &[Value]) -> Vec<ModelsExtractRule>
                     .to_string()
             };
 
-            // Determine attribute: only read the attribute field when extract == 'attribute'
-            let extract_mode = r.get("extract").and_then(|v| v.as_str()).unwrap_or("text");
-            let attribute = if extract_mode == "attribute" {
-                r.get("attribute")
+            // Resolve extract mode from UI (`extract`) or pipeline (`type` when it is a
+            // known mode: attribute/text/html/regex). Do not treat free-form `type`
+            // values (e.g. preprocessor field names like "price") as extract modes.
+            let extract_mode = r
+                .get("extract")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    r.get("type").and_then(|v| v.as_str()).filter(|t| {
+                        matches!(*t, "attribute" | "text" | "html" | "regex")
+                    })
+                });
+
+            // Attribute is used when:
+            //  - mode is explicitly "attribute", or
+            //  - no mode was specified and a non-empty attribute name is present
+            //    (legacy `{ field, selector, attribute }` pipeline format).
+            // Explicit text/html/regex modes intentionally ignore leftover attribute.
+            let attribute = match extract_mode {
+                Some("attribute") => r
+                    .get("attribute")
                     .and_then(|v| v.as_str())
-                    .map(String::from)
-            } else {
-                None
+                    .filter(|s| !s.is_empty())
+                    .map(String::from),
+                Some("text") | Some("html") | Some("regex") => None,
+                None => r
+                    .get("attribute")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(String::from),
+                Some(_) => None,
             };
 
             let extract_multiple = r
@@ -289,4 +311,70 @@ pub(crate) fn simple_hash(input: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     input.hash(&mut hasher);
     format!("{:x}", hasher.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_extract_rules_ui_attribute_multiple() {
+        let arr = vec![serde_json::json!({
+            "id": "r1",
+            "name": "images",
+            "extractFrom": "html-element",
+            "selector": ".gallery img",
+            "extract": "attribute",
+            "attribute": "src",
+            "extractMultiple": true
+        })];
+        let rules = parse_extract_rules_array(&arr);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].field, "images");
+        assert_eq!(rules[0].selector, ".gallery img");
+        assert_eq!(rules[0].attribute.as_deref(), Some("src"));
+        assert_eq!(rules[0].extract_multiple, Some(true));
+    }
+
+    #[test]
+    fn test_parse_extract_rules_pipeline_type_attribute() {
+        // Pipeline / Oreka-style format uses type: "attribute" instead of extract.
+        let arr = vec![serde_json::json!({
+            "attribute": "content",
+            "name": "images",
+            "selector": "meta[property='og:image']",
+            "type": "attribute",
+            "extractMultiple": true
+        })];
+        let rules = parse_extract_rules_array(&arr);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].attribute.as_deref(), Some("content"));
+        assert_eq!(rules[0].extract_multiple, Some(true));
+    }
+
+    #[test]
+    fn test_parse_extract_rules_legacy_attribute_without_mode() {
+        let arr = vec![serde_json::json!({
+            "field": "link",
+            "selector": "a.product",
+            "attribute": "href"
+        })];
+        let rules = parse_extract_rules_array(&arr);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].attribute.as_deref(), Some("href"));
+    }
+
+    #[test]
+    fn test_parse_extract_rules_text_mode_ignores_attribute() {
+        // Switching UI mode to text should not keep a leftover attribute name.
+        let arr = vec![serde_json::json!({
+            "name": "title",
+            "selector": "h1",
+            "extract": "text",
+            "attribute": "src"
+        })];
+        let rules = parse_extract_rules_array(&arr);
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].attribute.is_none());
+    }
 }
