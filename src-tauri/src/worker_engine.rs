@@ -456,7 +456,7 @@ impl WorkerEngine {
                 let _ = repo.update_status(item.id, "processing");
 
                 // Step 2 — fetch detail page + parse HTML
-            let parsed_data = match Self::fetch_and_parse_item(repo, item, worker) {
+                let parsed_data = match Self::fetch_and_parse_item(repo, item, worker) {
                     Ok(data) => {
                         log::info!(
                             "[worker::{}] Fetched+parsed item {} → {} (attempt {})",
@@ -631,6 +631,7 @@ impl WorkerEngine {
             let profile = worker.client_profile.clone().unwrap_or_default();
             Self::blocking_fetch(url, &profile)?
         } else {
+            // Product JSON is stored separately by plugin; webpage HTML is stored in crawl_data
             repo.get_crawl_data_content(item.id).unwrap_or_default()
         };
 
@@ -941,7 +942,12 @@ pub(crate) fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
                     .data
                     .get("customRules")
                     .and_then(|v| v.as_array())
-                    .or_else(|| ext_node.data.get("extractionRules").and_then(|v| v.as_array()))
+                    .or_else(|| {
+                        ext_node
+                            .data
+                            .get("extractionRules")
+                            .and_then(|v| v.as_array())
+                    })
                     .or_else(|| ext_node.data.get("extractRules").and_then(|v| v.as_array()))
                     .or_else(|| ext_node.data.get("parserRules").and_then(|v| v.as_array()))
                     .or_else(|| ext_node.data.get("rules").and_then(|v| v.as_array()))
@@ -1144,8 +1150,16 @@ mod tests {
             .iter()
             .map(|r| r.field.clone())
             .collect();
-        assert!(fields.contains(&"product_name".to_string()), "missing product_name: {:?}", fields);
-        assert!(fields.contains(&"price".to_string()), "missing price: {:?}", fields);
+        assert!(
+            fields.contains(&"product_name".to_string()),
+            "missing product_name: {:?}",
+            fields
+        );
+        assert!(
+            fields.contains(&"price".to_string()),
+            "missing price: {:?}",
+            fields
+        );
 
         // The excel export step must receive `extractFields` listing those fields.
         assert_eq!(w.processor_chain.len(), 1);

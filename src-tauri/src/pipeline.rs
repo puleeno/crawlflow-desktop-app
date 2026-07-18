@@ -469,7 +469,11 @@ fn process_node(
                         Some(
                             rules
                                 .iter()
-                                .filter_map(|r| r.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                                .filter_map(|r| {
+                                    r.get("name")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string())
+                                })
                                 .collect::<Vec<String>>(),
                         )
                     })
@@ -806,9 +810,7 @@ pub async fn execute_repository_pipeline(
                 "fetching",
                 &format!(
                     "Found cached raw item id={} source_url={} item_type={}",
-                    item.id,
-                    item.source_url,
-                    item.item_type
+                    item.id, item.source_url, item.item_type
                 ),
             );
         }
@@ -931,13 +933,13 @@ pub async fn execute_repository_pipeline(
                                 //   - "listing_url" → a rewritten listing URL; handed to
                                 //                     Phase 1b Stage A as a listing page.
                                 //   - "url"/"product" → already-resolved product URLs.
-                                let mut listing_from_plugin: Vec<crate::pipeline::FetchedDataPlaceholder> =
-                                    Vec::new();
+                                let mut listing_from_plugin: Vec<
+                                    crate::pipeline::FetchedDataPlaceholder,
+                                > = Vec::new();
                                 // Map item_hash -> raw_content so we can persist the
-                                // product items are stored as raw_items; their
-                                // structured JSON is extracted by the worker into
-                                // parsed_data (is_final=1). Raw HTML (item_type='raw')
-                                // is persisted via save_raw_source below.
+                                // product items' structured JSON in crawl_data.
+                                let mut hash_to_content: std::collections::HashMap<String, String> =
+                                    std::collections::HashMap::new();
                                 let new_items: Vec<crate::repository::NewRawItem> = plugin_items
                                     .iter()
                                     .filter_map(|item| {
@@ -945,10 +947,8 @@ pub async fn execute_repository_pipeline(
                                             .get("item_type")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("product");
-                                        let url = item
-                                            .get("url")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("");
+                                        let url =
+                                            item.get("url").and_then(|v| v.as_str()).unwrap_or("");
                                         let raw_content = item
                                             .get("raw_content")
                                             .and_then(|v| v.as_str())
@@ -963,11 +963,8 @@ pub async fn execute_repository_pipeline(
                                             // Persist the raw HTML as a crawled source so
                                             // Phase 1b can read it back via get_crawled_items().
                                             if let Some(content) = raw_content.clone() {
-                                                let _ = repo.save_raw_source(
-                                                    &source,
-                                                    "raw",
-                                                    &content,
-                                                );
+                                                let _ =
+                                                    repo.save_raw_source(&source, "raw", &content);
                                             }
                                             return None;
                                         }
@@ -988,6 +985,7 @@ pub async fn execute_repository_pipeline(
                                         // Default: product/url item.
                                         let raw_json =
                                             serde_json::to_string(item).unwrap_or_default();
+                                        let content_to_save = raw_content.unwrap_or(raw_json);
                                         // Hash from source_url (stable per item) so re-crawls
                                         // deduplicate correctly instead of creating duplicates
                                         // when the plugin returns a slightly different `url`.
@@ -996,10 +994,11 @@ pub async fn execute_repository_pipeline(
                                         } else if !url.is_empty() {
                                             url
                                         } else {
-                                            &raw_json
+                                            &content_to_save
                                         };
                                         let item_hash =
                                             crate::pipeline_config::simple_hash(hash_input);
+                                        hash_to_content.insert(item_hash.clone(), content_to_save);
                                         Some(crate::repository::NewRawItem {
                                             source_url: source,
                                             item_type: item_type.to_string(),
@@ -1020,6 +1019,24 @@ pub async fn execute_repository_pipeline(
                                                     node_label, r.inserted, r.duplicated
                                                 ),
                                             );
+                                            for new_item in &new_items {
+                                                if let Ok(item_id) = repo
+                                                    .get_raw_item_id_by_hash(&new_item.item_hash)
+                                                {
+                                                    if let Some(content) =
+                                                        hash_to_content.get(&new_item.item_hash)
+                                                    {
+                                                        if repo
+                                                            .get_crawl_data_content(item_id)
+                                                            .is_none()
+                                                        {
+                                                            let _ = repo.save_crawl_data(
+                                                                item_id, "raw", content,
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                         Err(e) => {
                                             log_manager.error(
@@ -1455,8 +1472,7 @@ pub async fn execute_repository_pipeline(
                             .collect();
 
                         if !listing_urls.is_empty() {
-                            let client_profile =
-                                extract_client_profile(&serde_json::json!({}));
+                            let client_profile = extract_client_profile(&serde_json::json!({}));
                             for lurl in &listing_urls {
                                 let (lhtml, _) = fetch_single_page(
                                     lurl,
@@ -2540,11 +2556,7 @@ mod tests {
         for item in &items {
             eprintln!(
                 "  id={} type={} status={} matched={} source_url={:?}",
-                item.id,
-                item.item_type,
-                item.status,
-                item.matched,
-                item.source_url,
+                item.id, item.item_type, item.status, item.matched, item.source_url,
             );
         }
 
@@ -2573,7 +2585,10 @@ mod tests {
         // 2. json_ld auto-extracted from the store page (raw item #1).
         let lds = repo.get_json_ld(1).unwrap_or_default();
         eprintln!("json_ld rows for raw item #1 = {}", lds.len());
-        assert!(!lds.is_empty(), "Expected JSON-LD auto-extracted from crawled HTML");
+        assert!(
+            !lds.is_empty(),
+            "Expected JSON-LD auto-extracted from crawled HTML"
+        );
 
         // 3. parsed_data final output exists for processed url items.
         let final_count: i64 = items
@@ -2582,8 +2597,14 @@ mod tests {
             .take(1)
             .filter_map(|i| repo.get_final_parsed(i.id).ok().flatten())
             .count() as i64;
-        eprintln!("final parsed_data present for a sample url item = {}", final_count);
-        assert!(final_count >= 1, "Expected final parsed_data for processed item");
+        eprintln!(
+            "final parsed_data present for a sample url item = {}",
+            final_count
+        );
+        assert!(
+            final_count >= 1,
+            "Expected final parsed_data for processed item"
+        );
 
         // 4. Excel export file should have been produced for the project.
         let exports_dir = dirs_next::data_dir()
@@ -2606,7 +2627,10 @@ mod tests {
         for f in &excel_files {
             eprintln!("  -> {:?}", f.path());
         }
-        assert!(!excel_files.is_empty(), "Expected an Excel export file to be produced");
+        assert!(
+            !excel_files.is_empty(),
+            "Expected an Excel export file to be produced"
+        );
 
         // Cleanup
         std::fs::remove_dir_all(&dir).ok();

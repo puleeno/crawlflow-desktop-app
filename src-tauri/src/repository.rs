@@ -102,7 +102,9 @@ impl RawItemRepository {
         if table_cols(&self.conn, "crawl_data").contains(&"raw_item_id".to_string()) == false
             && self.table_exists("crawl_data")
         {
-            self.conn.execute("DROP TABLE IF EXISTS crawl_data", []).ok();
+            self.conn
+                .execute("DROP TABLE IF EXISTS crawl_data", [])
+                .ok();
         }
 
         let statements = [
@@ -210,16 +212,13 @@ impl RawItemRepository {
                 }
                 None => {
                     let priority = 5;
-                    self.conn.execute(
-                        "INSERT INTO raw_items (source_url, item_type, item_hash, priority)
+                    self.conn
+                        .execute(
+                            "INSERT INTO raw_items (source_url, item_type, item_hash, priority)
                          VALUES (?1, ?2, ?3, ?4)",
-                        params![
-                            item.source_url,
-                            item.item_type,
-                            item.item_hash,
-                            priority,
-                        ],
-                    ).map_err(|e| format!("Failed to insert item: {}", e))?;
+                            params![item.source_url, item.item_type, item.item_hash, priority,],
+                        )
+                        .map_err(|e| format!("Failed to insert item: {}", e))?;
                     let new_id = self.conn.last_insert_rowid();
                     ids.push(new_id);
                     inserted += 1;
@@ -321,16 +320,13 @@ impl RawItemRepository {
     }
 
     /// Persist a JSON-LD block auto-extracted from crawled HTML.
-    pub fn save_json_ld(
-        &self,
-        raw_item_id: i64,
-        ld_type: &str,
-        data: &str,
-    ) -> Result<i64, String> {
-        self.conn.execute(
-            "INSERT INTO json_ld (raw_item_id, ld_type, data) VALUES (?1, ?2, ?3)",
-            params![raw_item_id, ld_type, data],
-        ).map_err(|e| format!("Failed to save json_ld: {}", e))?;
+    pub fn save_json_ld(&self, raw_item_id: i64, ld_type: &str, data: &str) -> Result<i64, String> {
+        self.conn
+            .execute(
+                "INSERT INTO json_ld (raw_item_id, ld_type, data) VALUES (?1, ?2, ?3)",
+                params![raw_item_id, ld_type, data],
+            )
+            .map_err(|e| format!("Failed to save json_ld: {}", e))?;
         Ok(self.conn.last_insert_rowid())
     }
 
@@ -454,7 +450,7 @@ impl RawItemRepository {
 
         // Auto-extract JSON-LD blocks from the HTML into json_ld.
         let json_lds = crate::crawler::extract_json_ld_blocks(raw_html);
-        for (idx, ld) in json_lds.iter().enumerate() {
+        for ld in &json_lds {
             let ld_type = ld
                 .get("@type")
                 .and_then(|v| v.as_str())
@@ -598,7 +594,7 @@ impl RawItemRepository {
         item_id: i64,
         worker_id: Option<&str>,
         processor_type: &str,
-        status: &str,
+        _status: &str,
         output: Option<&str>,
         error: Option<&str>,
     ) -> Result<(), String> {
@@ -608,16 +604,13 @@ impl RawItemRepository {
         } else {
             output.unwrap_or("").to_string()
         };
-        match self.save_parsed_data(
-            item_id,
-            worker_id,
-            processor_type,
-            &parsed_json,
-            is_final,
-        ) {
+        match self.save_parsed_data(item_id, worker_id, processor_type, &parsed_json, is_final) {
             Ok(_) => Ok(()),
             Err(e) => {
-                eprintln!("[log_processing] save_parsed_data failed for item {}: {}", item_id, e);
+                eprintln!(
+                    "[log_processing] save_parsed_data failed for item {}: {}",
+                    item_id, e
+                );
                 Err(e)
             }
         }
@@ -752,10 +745,7 @@ impl RawItemRepository {
         if let Some(ref search) = query.search {
             let pattern = format!("%{}%", search);
             let n = params.len();
-            clauses.push(format!(
-                "(source_url LIKE ?{})",
-                n + 1
-            ));
+            clauses.push(format!("(source_url LIKE ?{})", n + 1));
             params.push(pattern.clone());
             params.push(pattern);
         }
@@ -881,8 +871,8 @@ impl RawItemRepository {
                         id: row.get(0)?,
                         source_url: row.get(1)?,
                         item_type: row.get(2)?,
-                    item_hash: row.get(3)?,
-                    dup_count: row.get(4)?,
+                        item_hash: row.get(3)?,
+                        dup_count: row.get(4)?,
                         priority: row.get(5)?,
                         worker_id: row.get(6)?,
                         matched: row.get(7)?,
@@ -1009,7 +999,9 @@ mod tests {
         let html = r#"<html><head>
             <script type="application/ld+json">{"@type":"Product","name":"Test"}</script>
         </head><body>hello</body></html>"#;
-        let raw_id = repo.save_raw_source("https://example.com/s", "raw", html).unwrap();
+        let raw_id = repo
+            .save_raw_source("https://example.com/s", "raw", html)
+            .unwrap();
         assert!(raw_id > 0);
 
         // crawl_data should hold the raw HTML
@@ -1033,8 +1025,10 @@ mod tests {
         let saved = repo.save_items(&[item]).unwrap();
         let raw_id = saved.ids[0];
 
-        repo.save_parsed_data(raw_id, Some("w1"), "proc-1", r#"{"a":1}"#, false).unwrap();
-        repo.save_parsed_data(raw_id, Some("w1"), "final_output", r#"{"a":1,"b":2}"#, true).unwrap();
+        repo.save_parsed_data(raw_id, Some("w1"), "proc-1", r#"{"a":1}"#, false)
+            .unwrap();
+        repo.save_parsed_data(raw_id, Some("w1"), "final_output", r#"{"a":1,"b":2}"#, true)
+            .unwrap();
 
         let final_parsed = repo.get_final_parsed(raw_id).unwrap();
         assert!(final_parsed.is_some());
