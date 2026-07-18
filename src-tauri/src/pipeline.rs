@@ -1029,8 +1029,14 @@ pub async fn execute_repository_pipeline(
                                                 if let Some(rc) =
                                                     raw_content_by_hash.get(&item.item_hash)
                                                 {
+                                                    let raw_id = repo
+                                                        .get_raw_item_id_by_hash(&item.item_hash)
+                                                        .unwrap_or(-1);
+                                                    if raw_id < 0 {
+                                                        continue;
+                                                    }
                                                     match repo.save_crawl_data(
-                                                        &item.source_url,
+                                                        raw_id,
                                                         "json",
                                                         rc,
                                                     ) {
@@ -1299,7 +1305,7 @@ pub async fn execute_repository_pipeline(
             if already {
                 continue;
             }
-            if let Some(html) = repo.get_crawl_data_content(&item.source_url) {
+            if let Some(html) = repo.get_crawl_data_content(item.id) {
                 fetched_sources.push(FetchedData {
                     source_url: item.source_url,
                     raw_data: html,

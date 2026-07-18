@@ -631,7 +631,7 @@ impl WorkerEngine {
             let profile = worker.client_profile.clone().unwrap_or_default();
             Self::blocking_fetch(url, &profile)?
         } else {
-            repo.get_crawl_data_content(&item.source_url).unwrap_or_default()
+            repo.get_crawl_data_content(item.id).unwrap_or_default()
         };
 
         // Build output map
@@ -645,7 +645,7 @@ impl WorkerEngine {
         // already parsed the data, so unwrap its JSON payload as the fields.
         // This lets Python plugins fully own the extraction logic.
         if item.item_type == "product" {
-            if let Some(rc) = repo.get_crawl_data_content(&item.source_url) {
+            if let Some(rc) = repo.get_crawl_data_content(item.id) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&rc) {
                     if let serde_json::Value::Object(obj) = parsed {
                         for (k, v) in obj {

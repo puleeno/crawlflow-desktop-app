@@ -516,10 +516,29 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                                 let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
                                 for (raw, parsed) in done_items {
                                     let obj = match parsed {
-                                        Some(s) => serde_json::from_str::<serde_json::Value>(&s)
-                                            .ok()
-                                            .and_then(|v| v.as_object().cloned())
-                                            .unwrap_or_else(|| serde_json::Map::new()),
+                                        Some(s) => {
+                                            let v = serde_json::from_str::<serde_json::Value>(&s)
+                                                .ok();
+                                            // Plugins may emit a single-element array
+                                            // wrapping the product object; unwrap it.
+                                            let obj_val = match v {
+                                                Some(serde_json::Value::Array(a)) => {
+                                                    a.into_iter().next().unwrap_or(
+                                                        serde_json::Value::Object(
+                                                            serde_json::Map::new(),
+                                                        ),
+                                                    )
+                                                }
+                                                Some(other) => other,
+                                                None => serde_json::Value::Object(
+                                                    serde_json::Map::new(),
+                                                ),
+                                            };
+                                            obj_val
+                                                .as_object()
+                                                .cloned()
+                                                .unwrap_or_else(|| serde_json::Map::new())
+                                        }
                                         None => serde_json::Map::new(),
                                     };
                                     let mut rec = obj;

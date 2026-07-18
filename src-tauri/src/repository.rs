@@ -234,43 +234,38 @@ impl RawItemRepository {
         })
     }
 
-    /// Persist fetched raw content into `crawl_data`.
-    /// The UI-generated schema uses (source_url, raw_data, node_id) keyed by
-    /// source_url (no raw_item_id column). We insert accordingly and fall back
-    /// to a legacy (raw_item_id, content_type, content) schema if present.
+    /// Persist fetched raw content into `crawl_data`, keyed by raw_item_id.
     pub fn save_crawl_data(
         &self,
-        source_url: &str,
+        raw_item_id: i64,
         content_type: &str,
         content: &str,
     ) -> Result<i64, String> {
-        // Current UI schema: (source_url, field_name, field_value, raw_data, node_id)
-        // field_name is NOT NULL, so we map content_type -> field_name.
         self.conn
             .execute(
-                "INSERT INTO crawl_data (source_url, field_name, field_value, raw_data, node_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![source_url, content_type, "", content, content_type],
+                "INSERT INTO crawl_data (raw_item_id, content_type, content) VALUES (?1, ?2, ?3)",
+                params![raw_item_id, content_type, content],
             )
-            .map_err(|e| format!("Failed to save crawl_data (current schema): {}", e))?;
+            .map_err(|e| format!("Failed to save crawl_data: {}", e))?;
         Ok(self.conn.last_insert_rowid())
     }
 
-    /// Read crawled content by source_url (latest first).
-    pub fn get_crawl_data(&self, source_url: &str) -> Result<Vec<CrawlData>, String> {
+    /// Read crawled content by raw_item_id (latest first).
+    pub fn get_crawl_data(&self, raw_item_id: i64) -> Result<Vec<CrawlData>, String> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, source_url, raw_data, node_id, created_at
-                 FROM crawl_data WHERE source_url = ?1 ORDER BY id DESC",
+                "SELECT id, raw_item_id, content_type, content, created_at
+                 FROM crawl_data WHERE raw_item_id = ?1 ORDER BY id DESC",
             )
             .map_err(|e| format!("Failed to prepare crawl_data query: {}", e))?;
         let rows = stmt
-            .query_map(params![source_url], |row| {
+            .query_map(params![raw_item_id], |row| {
                 Ok(CrawlData {
                     id: row.get(0)?,
-                    raw_item_id: 0,
-                    content_type: row.get(3).unwrap_or_default(),
-                    content: row.get(2).unwrap_or_default(),
+                    raw_item_id: row.get(1)?,
+                    content_type: row.get(2).unwrap_or_default(),
+                    content: row.get(3).unwrap_or_default(),
                     created_at: row.get(4).unwrap_or_default(),
                 })
             })
@@ -282,8 +277,8 @@ impl RawItemRepository {
 
     /// Lấy nội dung thô (HTML/data) mới nhất của một raw_item từ `crawl_data`.
     /// Trả `None` nếu chưa có. Tiện cho worker đọc lại content để parse.
-    pub fn get_crawl_data_content(&self, source_url: &str) -> Option<String> {
-        self.get_crawl_data(source_url)
+    pub fn get_crawl_data_content(&self, raw_item_id: i64) -> Option<String> {
+        self.get_crawl_data(raw_item_id)
             .ok()
             .and_then(|mut v| v.pop())
             .map(|c| c.content)
@@ -367,18 +362,18 @@ impl RawItemRepository {
     /// Read all `crawl_data` rows (source_url + raw JSON payload) so the
     /// export processor can build its input from the structured product data
     /// the plugins saved, independent of the `parsed_data` table.
-    pub fn get_all_crawl_data_json(&self) -> Result<Vec<(String, String)>, String> {
+    pub fn get_all_crawl_data_json(&self) -> Result<Vec<(i64, String)>, String> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT source_url, raw_data FROM crawl_data
-                 WHERE raw_data IS NOT NULL AND raw_data <> ''
+                "SELECT raw_item_id, content FROM crawl_data
+                 WHERE content IS NOT NULL AND content <> ''
                  ORDER BY id DESC",
             )
             .map_err(|e| format!("Failed to prepare crawl_data query: {}", e))?;
         let rows = stmt
             .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
             })
             .map_err(|e| format!("Failed to query crawl_data: {}", e))?
             .filter_map(|r| r.ok())
@@ -455,7 +450,7 @@ impl RawItemRepository {
         };
 
         // Persist fetched content separately in crawl_data.
-        let _ = self.save_crawl_data(source_url, "raw", raw_html);
+        let _ = self.save_crawl_data(raw_item_id, "raw", raw_html);
 
         // Auto-extract JSON-LD blocks from the HTML into json_ld.
         let json_lds = crate::crawler::extract_json_ld_blocks(raw_html);
@@ -866,14 +861,14 @@ impl RawItemRepository {
         let mut stmt = self.conn.prepare(
             "SELECT r.id, r.source_url, r.item_type, r.item_hash,
                     r.dup_count, r.priority, r.worker_id, r.matched, r.status, r.created_at, r.updated_at,
-                    p.parsed_json
+                    p.data
              FROM raw_items r
              LEFT JOIN (
-                 SELECT item_id, parsed_json, MAX(id) AS max_id
+                 SELECT raw_item_id, data, MAX(id) AS max_id
                  FROM parsed_data
                  WHERE is_final = 1
-                 GROUP BY item_id
-             ) p ON p.item_id = r.id
+                 GROUP BY raw_item_id
+             ) p ON p.raw_item_id = r.id
              WHERE r.status = 'done'
              ORDER BY r.updated_at DESC
              LIMIT ?1"
@@ -895,7 +890,7 @@ impl RawItemRepository {
                         created_at: row.get(9)?,
                         updated_at: row.get(10)?,
                     },
-                    row.get::<_, Option<String>>(12).ok().flatten(),
+                    row.get::<_, Option<String>>(11).ok().flatten(),
                 ))
             })
             .map_err(|e| format!("Failed to query done items: {}", e))?
