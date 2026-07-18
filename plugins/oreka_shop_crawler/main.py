@@ -159,8 +159,8 @@ def register_presets():
                         {
                             "id": "preset-ecom-html-3",
                             "name": "sku",
-                            "extractFrom": "html-element",
-                            "selector": ".sku, .product-sku",
+                            "extractFrom": "json-ld",
+                            "jsonPath": "offers.sku",
                             "extract": "text",
                         },
                         {
@@ -174,9 +174,9 @@ def register_presets():
                             "id": "preset-ecom-html-5",
                             "name": "image_url",
                             "extractFrom": "html-element",
-                            "selector": "img.styles_imageSlide__AUZey.object-cover.rounded-md",
+                            "selector": "img.styles_imageThumb__OYuNp.object-cover.rounded-md",
                             "extract": "attribute",
-                            "attribute": "src",
+                            "attribute": "Src",
                         },
                         {
                             "id": "preset-ecom-html-6",
