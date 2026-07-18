@@ -934,10 +934,10 @@ pub async fn execute_repository_pipeline(
                                 let mut listing_from_plugin: Vec<crate::pipeline::FetchedDataPlaceholder> =
                                     Vec::new();
                                 // Map item_hash -> raw_content so we can persist the
-                                // plugin's structured payload into crawl_data for
-                                // product items (worker unwraps it later).
-                                let mut raw_content_by_hash: std::collections::HashMap<String, String> =
-                                    std::collections::HashMap::new();
+                                // product items are stored as raw_items; their
+                                // structured JSON is extracted by the worker into
+                                // parsed_data (is_final=1). Raw HTML (item_type='raw')
+                                // is persisted via save_raw_source below.
                                 let new_items: Vec<crate::repository::NewRawItem> = plugin_items
                                     .iter()
                                     .filter_map(|item| {
@@ -1000,9 +1000,6 @@ pub async fn execute_repository_pipeline(
                                         };
                                         let item_hash =
                                             crate::pipeline_config::simple_hash(hash_input);
-                                        if let Some(rc) = raw_content.clone() {
-                                            raw_content_by_hash.insert(item_hash.clone(), rc);
-                                        }
                                         Some(crate::repository::NewRawItem {
                                             source_url: source,
                                             item_type: item_type.to_string(),
@@ -1015,45 +1012,6 @@ pub async fn execute_repository_pipeline(
                                     match repo.save_items(&new_items) {
                                         Ok(r) => {
                                             total_ingested += r.inserted;
-                                            // Persist plugin raw_content (structured
-                                            // product JSON) into crawl_data keyed by source_url.
-                                            log_manager.info(
-                                                project_id,
-                                                "fetching",
-                                                &format!(
-                                                    "[node={}] raw_content_by_hash size={}, new_items={}",
-                                                    node_label, raw_content_by_hash.len(), new_items.len()
-                                                ),
-                                            );
-                                            for item in &new_items {
-                                                if let Some(rc) =
-                                                    raw_content_by_hash.get(&item.item_hash)
-                                                {
-                                                    let raw_id = repo
-                                                        .get_raw_item_id_by_hash(&item.item_hash)
-                                                        .unwrap_or(-1);
-                                                    if raw_id < 0 {
-                                                        continue;
-                                                    }
-                                                    match repo.save_crawl_data(
-                                                        raw_id,
-                                                        "json",
-                                                        rc,
-                                                    ) {
-                                                        Ok(_) => {}
-                                                        Err(e) => {
-                                                            log_manager.error(
-                                                                project_id,
-                                                                "fetching",
-                                                                &format!(
-                                                                    "[node={}] save_crawl_data failed: {}",
-                                                                    node_label, e
-                                                                ),
-                                                            );
-                                                        }
-                                                    }
-                                                }
-                                            }
                                             log_manager.info(
                                                 project_id,
                                                 "fetching",
