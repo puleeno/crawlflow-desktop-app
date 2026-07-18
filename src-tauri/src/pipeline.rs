@@ -240,6 +240,30 @@ fn node_inputs(
     combined
 }
 
+/// Dữ liệu thô đã fetch (HTML/RAW) dùng trong Phase 1 của repository pipeline.
+pub struct FetchedData {
+    pub source_url: String,
+    pub raw_data: String,
+    pub input_type: String,
+    pub chrome_session: Option<crate::models::ChromeSession>,
+    /// True when this entry is a listing URL already rewritten by a
+    /// Python preprocessor (e.g. Oreka storeId rewrite). In Phase 1b
+    /// Stage A we must NOT rewrite it again — just fetch its HTML and
+    /// feed it to Stage B for product-URL extraction.
+    pub from_plugin_listing: bool,
+}
+
+/// Lightweight placeholder for listing URLs produced by a Python
+/// preprocessor/data-source hook. `is_listing_url=true` means the
+/// item's `source_url` is a rewritten listing URL that Phase 1b Stage A
+/// should fetch and feed into the listing_pages pipeline.
+pub struct FetchedDataPlaceholder {
+    pub source_url: String,
+    pub raw_data: String,
+    pub input_type: String,
+    pub is_listing_url: bool,
+}
+
 pub fn execute_pipeline(
     config: &PipelineConfig,
     log_manager: &Arc<LogManager>,
@@ -708,15 +732,10 @@ pub async fn execute_repository_pipeline(
         "Phase 1a: Checking for existing crawled items",
     );
 
-    struct FetchedData {
-        source_url: String,
-        raw_data: String,
-        input_type: String,
-        chrome_session: Option<crate::models::ChromeSession>,
-    }
-
     let mut total_ingested = 0i64;
     let mut fetched_sources: Vec<FetchedData> = Vec::new();
+    // Listing URLs handed back by a plugin (e.g. Oreka preprocessor rewrite).
+    let mut plugin_listing_urls: Vec<FetchedDataPlaceholder> = Vec::new();
 
     // First check if we already have crawled items
     let crawled_items = match repo.get_crawled_items() {
@@ -748,30 +767,12 @@ pub async fn execute_repository_pipeline(
                 project_id,
                 "fetching",
                 &format!(
-                    "Using cached raw item id={} source_url={} raw_content_len={} item_type={}",
+                    "Found cached raw item id={} source_url={} item_type={}",
                     item.id,
                     item.source_url,
-                    item.raw_content.as_ref().map_or(0, |c| c.len()),
                     item.item_type
                 ),
             );
-            if let Some(raw_content) = item.raw_content {
-                fetched_sources.push(FetchedData {
-                    source_url: item.source_url,
-                    raw_data: raw_content,
-                    input_type: "html".into(),
-                    chrome_session: None,
-                });
-            } else {
-                log_manager.warn(
-                    project_id,
-                    "fetching",
-                    &format!(
-                        "Cached raw item id={} source_url={} has no raw_content; skipping DB reuse",
-                        item.id, item.source_url
-                    ),
-                );
-            }
         }
     } else {
         // No crawled items, proceed with fetching
@@ -884,54 +885,136 @@ pub async fn execute_repository_pipeline(
                                 ),
                             );
                             if !plugin_items.is_empty() {
-                                // Convert plugin items to NewRawItem and save to repo
+                                // Convert plugin items to NewRawItem and save to repo.
+                                // The plugin decides the item_type:
+                                //   - "raw"         → store page HTML; saved as a crawled raw
+                                //                     source (status='crawled') for the preprocessor
+                                //                     + fetch-data stages to consume.
+                                //   - "listing_url" → a rewritten listing URL; handed to
+                                //                     Phase 1b Stage A as a listing page.
+                                //   - "url"/"product" → already-resolved product URLs.
+                                let mut listing_from_plugin: Vec<crate::pipeline::FetchedDataPlaceholder> =
+                                    Vec::new();
                                 let new_items: Vec<crate::repository::NewRawItem> = plugin_items
                                     .iter()
-                                    .map(|item| {
-                                        let url =
-                                            item.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                                    .filter_map(|item| {
+                                        let item_type = item
+                                            .get("item_type")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("product");
+                                        let url = item
+                                            .get("url")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("");
+                                        let extracted_url = item
+                                            .get("extracted_url")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
+                                        let raw_content = item
+                                            .get("raw_content")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
+                                        let source = item
+                                            .get("source_url")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or(&source_value)
+                                            .to_string();
+
+                                        if item_type == "raw" {
+                                            // Persist the raw HTML as a crawled source so
+                                            // Phase 1b can read it back via get_crawled_items().
+                                            if let Some(content) = raw_content.clone() {
+                                                let _ = repo.save_raw_source(
+                                                    &source,
+                                                    "raw",
+                                                    &content,
+                                                );
+                                            }
+                                            return None;
+                                        }
+
+                                        if item_type == "listing_url" {
+                                            // Hand the rewritten URL to Phase 1b Stage A.
+                                            listing_from_plugin.push(
+                                                crate::pipeline::FetchedDataPlaceholder {
+                                                    source_url: source.clone(),
+                                                    raw_data: String::new(),
+                                                    input_type: "html".into(),
+                                                    is_listing_url: true,
+                                                },
+                                            );
+                                            return None;
+                                        }
+
+                                        // Default: product/url item.
                                         let raw_json =
                                             serde_json::to_string(item).unwrap_or_default();
-                                        let hash_input =
-                                            if !url.is_empty() { url } else { &raw_json };
+                                        let hash_input = if !url.is_empty() {
+                                            url
+                                        } else {
+                                            &raw_json
+                                        };
                                         let item_hash =
                                             crate::pipeline_config::simple_hash(hash_input);
-                                        crate::repository::NewRawItem {
-                                            source_url: source_value.to_string(),
-                                            item_type: "product".into(),
+                                        Some(crate::repository::NewRawItem {
+                                            source_url: source,
+                                            item_type: item_type.to_string(),
                                             item_hash,
-                                            raw_content: Some(raw_json),
-                                            extracted_url: if url.is_empty() {
-                                                None
+                                            extracted_url: if extracted_url
+                                                .as_deref()
+                                                .map_or(true, |u| u.is_empty())
+                                            {
+                                                if url.is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(url.to_string())
+                                                }
                                             } else {
-                                                Some(url.to_string())
+                                                extracted_url
                                             },
-                                        }
+                                        })
                                     })
                                     .collect();
 
-                                match repo.save_items(&new_items) {
-                                    Ok(r) => {
-                                        total_ingested += r.inserted;
-                                        log_manager.info(
-                                            project_id,
-                                            "fetching",
-                                            &format!(
-                                                "[node={}] Plugin data source: {} inserted, {} dup",
-                                                node_label, r.inserted, r.duplicated
-                                            ),
-                                        );
+                                if !new_items.is_empty() {
+                                    match repo.save_items(&new_items) {
+                                        Ok(r) => {
+                                            total_ingested += r.inserted;
+                                            log_manager.info(
+                                                project_id,
+                                                "fetching",
+                                                &format!(
+                                                    "[node={}] Plugin data source: {} inserted, {} dup",
+                                                    node_label, r.inserted, r.duplicated
+                                                ),
+                                            );
+                                        }
+                                        Err(e) => {
+                                            log_manager.error(
+                                                project_id,
+                                                "fetching",
+                                                &format!(
+                                                    "[node={}] Failed to save plugin items: {}",
+                                                    node_label, e
+                                                ),
+                                            );
+                                        }
                                     }
-                                    Err(e) => {
-                                        log_manager.error(
-                                            project_id,
-                                            "fetching",
-                                            &format!(
-                                                "[node={}] Failed to save plugin items: {}",
-                                                node_label, e
-                                            ),
-                                        );
-                                    }
+                                }
+
+                                // Stash listing URLs produced by the plugin so Phase 1b
+                                // Stage A can fetch + rewrite them into listing pages.
+                                if !listing_from_plugin.is_empty() {
+                                    log_manager.info(
+                                        project_id,
+                                        "fetching",
+                                        &format!(
+                                            "[node={}] Plugin produced {} listing URL(s) for Stage A",
+                                            node_label,
+                                            listing_from_plugin.len()
+                                        ),
+                                    );
+                                    plugin_listing_urls.extend(listing_from_plugin);
                                 }
                             }
                         }
@@ -1079,6 +1162,7 @@ pub async fn execute_repository_pipeline(
                             raw_data: combined_html,
                             input_type: "html".into(),
                             chrome_session: None,
+                            from_plugin_listing: false,
                         });
                     }
                 }
@@ -1089,6 +1173,7 @@ pub async fn execute_repository_pipeline(
                             raw_data: content,
                             input_type: source_type.to_string(),
                             chrome_session: None,
+                            from_plugin_listing: false,
                         });
                     }
                 }
@@ -1101,6 +1186,19 @@ pub async fn execute_repository_pipeline(
                 }
             }
         } // end of for loop over nodes
+
+        // Fold plugin-produced listing URLs (already rewritten, e.g. Oreka
+        // storeId rewrite) into fetched_sources so Phase 1b Stage A
+        // fetches their HTML directly (no second preprocessor rewrite).
+        for pl in plugin_listing_urls.drain(..) {
+            fetched_sources.push(FetchedData {
+                source_url: pl.source_url,
+                raw_data: String::new(),
+                input_type: "html".into(),
+                chrome_session: None,
+                from_plugin_listing: true,
+            });
+        }
     } // end of else block (when no crawled items found)
 
     // ── Save raw HTML to DB for debug ────────────────────────
@@ -1111,12 +1209,36 @@ pub async fn execute_repository_pipeline(
                 "fetching",
                 &format!("Saving raw source HTML ({} bytes) to DB", f.raw_data.len()),
             );
-            if let Err(e) = repo.save_raw_source(&f.source_url, &f.raw_data) {
+            if let Err(e) = repo.save_raw_source(&f.source_url, "raw", &f.raw_data) {
                 log_manager.warn(
                     project_id,
                     "fetching",
                     &format!("Failed to save raw source: {}", e),
                 );
+            }
+        }
+    }
+
+    // Reload every crawled raw item from DB (content lives in `crawl_data`)
+    // into fetched_sources so Phase 1b Stage A can preprocess them
+    // (store-ID extraction / URL rewrite). This covers both the cached
+    // path and items freshly saved by the data-source plugin above.
+    if let Ok(crawled) = repo.get_crawled_items() {
+        for item in crawled {
+            let already = fetched_sources
+                .iter()
+                .any(|f| f.source_url == item.source_url && !f.raw_data.is_empty());
+            if already {
+                continue;
+            }
+            if let Some(html) = repo.get_crawl_data_content(item.id) {
+                fetched_sources.push(FetchedData {
+                    source_url: item.source_url,
+                    raw_data: html,
+                    input_type: "html".into(),
+                    chrome_session: None,
+                    from_plugin_listing: false,
+                });
             }
         }
     }
@@ -1205,6 +1327,59 @@ pub async fn execute_repository_pipeline(
                 platform: None,
             });
 
+        // Already-rewritten listing URL produced by a Python preprocessor
+        // (e.g. Oreka storeId rewrite). Skip the rewrite step and fetch
+        // its HTML directly so Stage B can extract product URLs.
+        if fetched.from_plugin_listing {
+            log_manager.info(
+                project_id,
+                "preprocessing",
+                &format!(
+                    "Stage A (plugin listing): fetching rewritten URL {}",
+                    fetched.source_url
+                ),
+            );
+            let client_profile = extract_client_profile(&serde_json::json!({}));
+            let (html, _) = fetch_single_page(
+                &fetched.source_url,
+                &client_profile,
+                None,
+                None,
+                None,
+                project_id,
+                &log_manager,
+                "pre-1",
+            )
+            .await;
+            if let Some(html) = html {
+                if !html.is_empty() {
+                    listing_pages.push(ListingPage {
+                        listing_url: fetched.source_url.clone(),
+                        listing_html: html,
+                    });
+                } else {
+                    log_manager.warn(
+                        project_id,
+                        "preprocessing",
+                        &format!(
+                            "Stage A (plugin listing): empty HTML for {}",
+                            fetched.source_url
+                        ),
+                    );
+                }
+            } else {
+                log_manager.warn(
+                    project_id,
+                    "preprocessing",
+                    &format!(
+                        "Stage A (plugin listing): empty HTML for {}",
+                        fetched.source_url
+                    ),
+                );
+            }
+            continue;
+        }
+
         let auto_extract_store_id = fetched.source_url.contains("oreka.vn/store/")
             || fetched.source_url.contains("oreka.vn/mua-ban?");
         let do_store_id = preproc_config
@@ -1233,30 +1408,88 @@ pub async fn execute_repository_pipeline(
                 });
                 match engine.call_preprocessor_hook("oreka-shop-crawler", data_json) {
                     Ok(items) if !items.is_empty() => {
-                        // Plugin returned items (product URLs already resolved)
-                        // Save them directly and skip Stage B
-                        let save_result = repo.save_items(&items);
-                        match save_result {
-                            Ok(r) => {
-                                total_ingested += r.inserted;
-                                log_manager.info(
+                        // Plugin returned items. A "listing_url" item means the
+                        // preprocessor resolved the store listing URL — we fetch its
+                        // HTML and hand it to Stage B (product-URL extraction) instead
+                        // of skipping. Other item types (url/product) are saved directly.
+                        // Collect EVERY listing_url item returned by the preprocessor
+                        // (a plugin may emit one per pagination page so that all
+                        // listing pages get fetched and scraped, not just the first).
+                        let listing_urls: Vec<String> = items
+                            .iter()
+                            .filter(|it| it.item_type == "listing_url")
+                            .map(|it| {
+                                it.extracted_url
+                                    .clone()
+                                    .unwrap_or_else(|| it.source_url.clone())
+                            })
+                            .filter(|u| !u.is_empty())
+                            .collect();
+
+                        if !listing_urls.is_empty() {
+                            let client_profile =
+                                extract_client_profile(&serde_json::json!({}));
+                            for lurl in &listing_urls {
+                                let (lhtml, _) = fetch_single_page(
+                                    lurl,
+                                    &client_profile,
+                                    None,
+                                    None,
+                                    None,
                                     project_id,
-                                    "preprocessing",
-                                    &format!(
-                                        "[Python preprocessor] saved {} new product URLs ({} dup)",
-                                        r.inserted, r.duplicated
-                                    ),
-                                );
-                            }
-                            Err(e) => {
-                                log_manager.error(
-                                    project_id,
-                                    "preprocessing",
-                                    &format!("Save failed: {}", e),
-                                );
+                                    &log_manager,
+                                    "pre-1",
+                                )
+                                .await;
+                                if let Some(h) = lhtml {
+                                    if !h.is_empty() {
+                                        listing_pages.push(ListingPage {
+                                            listing_url: lurl.clone(),
+                                            listing_html: h,
+                                        });
+                                    } else {
+                                        log_manager.warn(
+                                            project_id,
+                                            "preprocessing",
+                                            &format!(
+                                                "[Python preprocessor] empty listing HTML for {}",
+                                                lurl
+                                            ),
+                                        );
+                                    }
+                                }
                             }
                         }
-                        continue; // Skip Stage B for this source
+                        // Save url/product items (skip the listing_url one, already
+                        // handled above — Stage B will create the product URL items).
+                        let save_items: Vec<crate::repository::NewRawItem> = items
+                            .iter()
+                            .filter(|it| it.item_type != "listing_url")
+                            .cloned()
+                            .collect();
+                        if !save_items.is_empty() {
+                            match repo.save_items(&save_items) {
+                                Ok(r) => {
+                                    total_ingested += r.inserted;
+                                    log_manager.info(
+                                        project_id,
+                                        "preprocessing",
+                                        &format!(
+                                            "[Python preprocessor] saved {} new items ({} dup)",
+                                            r.inserted, r.duplicated
+                                        ),
+                                    );
+                                }
+                                Err(e) => {
+                                    log_manager.error(
+                                        project_id,
+                                        "preprocessing",
+                                        &format!("Save failed: {}", e),
+                                    );
+                                }
+                            }
+                        }
+                        continue;
                     }
                     Ok(_) => {
                         log_manager.warn(
@@ -2056,7 +2289,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_pipeline_with_oreka_shop() {
         let config = PipelineConfig {
             nodes: vec![
@@ -2221,9 +2454,11 @@ mod tests {
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let builtin_plugins_dir = manifest_dir.parent().map(|p| p.join("plugins"));
 
+        let user_plugin_dir = std::env::temp_dir().join("crawlflow-test-plugins");
+        std::fs::create_dir_all(&user_plugin_dir).ok();
         let mut py_engine = crate::python_plugins::PythonPluginEngine::new(
             builtin_plugins_dir.clone(),
-            std::env::temp_dir().join("crawlflow-test-plugins"),
+            user_plugin_dir,
         );
 
         let discovered = py_engine.discover().unwrap_or_default();
@@ -2303,6 +2538,52 @@ mod tests {
             url_items.len(),
             product_items.len()
         );
+
+        // ── Verify end-to-end output per new data architecture ──
+        // 1. Pipeline must have processed (fetched detail + ran processor chain) some items.
+        eprintln!("Processed count = {}", result.processed);
+        assert!(
+            result.processed > 0,
+            "Expected pipeline to process (fetch detail + export) at least 1 item"
+        );
+
+        // 2. json_ld auto-extracted from the store page (raw item #1).
+        let lds = repo.get_json_ld(1).unwrap_or_default();
+        eprintln!("json_ld rows for raw item #1 = {}", lds.len());
+        assert!(!lds.is_empty(), "Expected JSON-LD auto-extracted from crawled HTML");
+
+        // 3. parsed_data final output exists for processed url items.
+        let final_count: i64 = items
+            .iter()
+            .filter(|i| i.item_type == "url")
+            .take(1)
+            .filter_map(|i| repo.get_final_parsed(i.id).ok().flatten())
+            .count() as i64;
+        eprintln!("final parsed_data present for a sample url item = {}", final_count);
+        assert!(final_count >= 1, "Expected final parsed_data for processed item");
+
+        // 4. Excel export file should have been produced for the project.
+        let exports_dir = dirs_next::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("com.CrawlFlow.desktop")
+            .join("exports");
+        eprintln!("Checking exports dir: {:?}", exports_dir);
+        let excel_files: Vec<_> = std::fs::read_dir(&exports_dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|e| {
+                        let name = e.file_name().to_string_lossy().to_string();
+                        name.contains("san-pham-oreka")
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        eprintln!("excel files found = {}", excel_files.len());
+        for f in &excel_files {
+            eprintln!("  -> {:?}", f.path());
+        }
+        assert!(!excel_files.is_empty(), "Expected an Excel export file to be produced");
 
         // Cleanup
         std::fs::remove_dir_all(&dir).ok();

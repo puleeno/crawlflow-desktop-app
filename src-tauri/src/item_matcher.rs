@@ -37,14 +37,16 @@ impl ItemMatcher {
     pub fn matches(rules: &[MatchRule], item: &serde_json::Value) -> MatchResult {
         for (i, rule) in rules.iter().enumerate() {
             let field_value = match rule.field.as_str() {
-                "url" | "source_url" => item.get("source_url")
+                "url" => item.get("extracted_url")
+                    .or_else(|| item.get("url"))
+                    .or_else(|| item.get("source_url"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+                "source_url" => item.get("source_url")
                     .or_else(|| item.get("url"))
                     .and_then(|v| v.as_str())
                     .unwrap_or(""),
                 "extracted_url" => item.get("extracted_url")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(""),
-                "raw_content" => item.get("raw_content")
                     .and_then(|v| v.as_str())
                     .unwrap_or(""),
                 "item_type" => item.get("item_type")

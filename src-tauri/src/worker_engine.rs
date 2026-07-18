@@ -106,10 +106,11 @@ impl WorkerFactory {
             .map(|v| serde_json::from_value(v.clone()).unwrap_or_default());
 
         // Parse extract rules
-        let extract_rules = data
+        let extract_rules: Vec<crate::models::ExtractRule> = data
             .get("extractRules")
             .and_then(|v| v.as_array())
-            .map(|rules| serde_json::from_value(serde_json::json!(rules)).unwrap_or_default());
+            .map(|rules| serde_json::from_value(serde_json::json!(rules)).unwrap_or_default())
+            .unwrap_or_default();
 
         // Parse max_retries and chunk_size from node data
         let max_retries = data
@@ -138,7 +139,11 @@ impl WorkerFactory {
             matching_rules: detection_rules,
             processor_chain,
             client_profile,
-            extract_rules,
+            extract_rules: if extract_rules.is_empty() {
+                None
+            } else {
+                Some(extract_rules)
+            },
             max_retries,
             chunk_size,
             column_mapping,
@@ -213,7 +218,6 @@ impl WorkerEngine {
             let item_json = serde_json::json!({
                 "source_url": item.source_url,
                 "extracted_url": item.extracted_url,
-                "raw_content": item.raw_content,
                 "item_type": item.item_type,
             });
 
@@ -278,7 +282,7 @@ impl WorkerEngine {
             let _ = repo.update_status(item.id, "processing");
 
             // Step 2 — fetch detail page + parse HTML
-            let parsed_data = match Self::fetch_and_parse_item(item, worker) {
+            let parsed_data = match Self::fetch_and_parse_item(repo, item, worker) {
                 Ok(data) => {
                     log::info!(
                         "[worker::{}] Fetched+parsed item {} → {}",
@@ -435,7 +439,7 @@ impl WorkerEngine {
                 let _ = repo.update_status(item.id, "processing");
 
                 // Step 2 — fetch detail page + parse HTML
-                let parsed_data = match Self::fetch_and_parse_item(item, worker) {
+            let parsed_data = match Self::fetch_and_parse_item(repo, item, worker) {
                     Ok(data) => {
                         log::info!(
                             "[worker::{}] Fetched+parsed item {} → {} (attempt {})",
@@ -592,8 +596,12 @@ impl WorkerEngine {
     /// extract_rules, returning a flat JSON object with all extracted fields.
     ///
     /// • item_type = 'url'  → makes an HTTP GET of extracted_url (or source_url)
-    /// • item_type = 'page' / other → skips fetch, uses existing raw_content
+    /// • item_type = 'url' → fetch detail page from network (Oreka flow:
+    ///   worker fetches the product detail page).
+    /// • item_type = 'page' / 'raw' / other → uses content from `crawl_data`
+    ///   (previously fetched raw HTML), no network fetch.
     pub fn fetch_and_parse_item(
+        repo: &RawItemRepository,
         item: &RawItem,
         worker: &WorkerDef,
     ) -> Result<serde_json::Value, String> {
@@ -607,7 +615,7 @@ impl WorkerEngine {
             let profile = worker.client_profile.clone().unwrap_or_default();
             Self::blocking_fetch(url, &profile)?
         } else {
-            item.raw_content.clone().unwrap_or_default()
+            repo.get_crawl_data_content(item.id).unwrap_or_default()
         };
 
         // Build output map
@@ -879,12 +887,19 @@ pub(crate) fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
             .map(|arr| parse_extract_rules_array(arr))
             .unwrap_or_default();
 
-        // --- Also pull rules from any html-data-extractor node that feeds into this worker ---
+        // --- Also pull rules from any html-data-extractor node connected to this
+        //     worker (either as upstream feeder OR downstream consumer) ---
         let connected_extractor_ids: Vec<&str> = config
             .edges
             .iter()
-            .filter(|e| e.target == node.id)
-            .map(|e| e.source.as_str())
+            .filter(|e| e.target == node.id || e.source == node.id)
+            .map(|e| {
+                if e.source == node.id {
+                    e.target.as_str()
+                } else {
+                    e.source.as_str()
+                }
+            })
             .collect();
 
         for extractor_id in connected_extractor_ids {
@@ -897,10 +912,11 @@ pub(crate) fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
                 let rules_from_extractor = ext_node
                     .data
                     .get("customRules")
-                    .or_else(|| ext_node.data.get("extractRules"))
-                    .or_else(|| ext_node.data.get("parserRules"))
-                    .or_else(|| ext_node.data.get("rules"))
                     .and_then(|v| v.as_array())
+                    .or_else(|| ext_node.data.get("extractionRules").and_then(|v| v.as_array()))
+                    .or_else(|| ext_node.data.get("extractRules").and_then(|v| v.as_array()))
+                    .or_else(|| ext_node.data.get("parserRules").and_then(|v| v.as_array()))
+                    .or_else(|| ext_node.data.get("rules").and_then(|v| v.as_array()))
                     .map(|arr| parse_extract_rules_array(arr))
                     .unwrap_or_default();
 
@@ -927,6 +943,7 @@ pub(crate) fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
                 let rules_from_downstream = ext_node
                     .data
                     .get("customRules")
+                    .or_else(|| ext_node.data.get("extractionRules"))
                     .or_else(|| ext_node.data.get("extractRules"))
                     .or_else(|| ext_node.data.get("parserRules"))
                     .or_else(|| ext_node.data.get("rules"))
@@ -990,6 +1007,39 @@ pub(crate) fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
             }
         }
 
+        // Build the list of field names produced by this worker's Data Extractor
+        // settings (custom rules + preset rules merged from downstream extractor
+        // nodes). Excel/CSV export must only emit these fields, not DB metadata.
+        let extract_field_names: Vec<String> = extract_rules
+            .iter()
+            .map(|r| r.field.clone())
+            .collect::<Vec<String>>();
+
+        // Inject `extractFields` into the config of every Excel/CSV export step
+        // so the export plugin knows which fields belong to the extractor output.
+        let export_types = [
+            "generate-excel-file",
+            "generate-csv-file",
+            "excel-export",
+            "rust-excel-export",
+            "csv-export",
+        ];
+        let mut processor_chain = processor_chain;
+        for step in processor_chain.iter_mut() {
+            if export_types.contains(&step.processor_type.as_str()) {
+                let mut cfg = if step.config.is_object() {
+                    step.config.as_object().cloned().unwrap()
+                } else {
+                    serde_json::Map::new()
+                };
+                cfg.insert(
+                    "extractFields".into(),
+                    serde_json::json!(extract_field_names),
+                );
+                step.config = serde_json::Value::Object(cfg);
+            }
+        }
+
         workers.push(WorkerDef {
             id: node.id.clone(),
             name: node.label.clone().unwrap_or_else(|| node.id.clone()),
@@ -1004,4 +1054,77 @@ pub(crate) fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
     }
 
     workers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::{PipelineConfig, PipelineEdge, PipelineNode};
+
+    #[test]
+    fn test_extract_workers_merges_extraction_rules_from_upstream_extractor() {
+        // Extractor node uses the `extractionRules` key (Oreka preset style)
+        // and feeds INTO the worker (upstream). The worker itself has an
+        // empty `extractionRules`. The merged rules must surface on the
+        // worker so export output contains the extractor fields, not DB metadata.
+        let nodes: Vec<PipelineNode> = vec![
+            serde_json::json!({
+                "id": "ext-1",
+                "type": "html-data-extractor",
+                "data": {
+                    "extractionRules": [
+                        {"name": "product_name", "selector": "h1", "type": "text"},
+                        {"name": "price", "selector": ".price", "type": "text"}
+                    ]
+                }
+            }),
+            serde_json::json!({
+                "id": "worker-1",
+                "type": "worker",
+                "data": { "extractionRules": [] }
+            }),
+            serde_json::json!({
+                "id": "proc-1",
+                "type": "processor",
+                "data": {"processorType": "generate-excel-file", "settings": {}}
+            }),
+        ]
+        .into_iter()
+        .map(|v| serde_json::from_value(v).unwrap())
+        .collect();
+        let edges: Vec<PipelineEdge> = vec![
+            serde_json::json!({"id": "e1", "source": "ext-1", "target": "worker-1"}),
+            serde_json::json!({"id": "e2", "source": "worker-1", "target": "proc-1"}),
+        ]
+        .into_iter()
+        .map(|v| serde_json::from_value(v).unwrap())
+        .collect();
+
+        let config = PipelineConfig {
+            nodes,
+            edges,
+            settings: serde_json::Value::Null,
+        };
+
+        let workers = extract_workers(&config);
+        assert_eq!(workers.len(), 1);
+        let w = &workers[0];
+        let fields: Vec<String> = w
+            .extract_rules
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|r| r.field.clone())
+            .collect();
+        assert!(fields.contains(&"product_name".to_string()), "missing product_name: {:?}", fields);
+        assert!(fields.contains(&"price".to_string()), "missing price: {:?}", fields);
+
+        // The excel export step must receive `extractFields` listing those fields.
+        assert_eq!(w.processor_chain.len(), 1);
+        let cfg = &w.processor_chain[0].config;
+        let ef = cfg.get("extractFields").and_then(|v| v.as_array()).unwrap();
+        let ef_names: Vec<String> = ef.iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        assert!(ef_names.contains(&"product_name".to_string()));
+        assert!(ef_names.contains(&"price".to_string()));
+    }
 }

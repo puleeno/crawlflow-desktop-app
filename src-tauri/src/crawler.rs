@@ -569,3 +569,38 @@ pub async fn batch_crawl(urls: Vec<String>, rules: Vec<ExtractRule>) -> Vec<Craw
     }
     results
 }
+
+/// Trích xuất tất cả các block JSON-LD (`<script type="application/ld+json">`)
+/// từ một chuỗi HTML. Trả về `Vec<serde_json::Value>` (mỗi block là một JSON value,
+/// có thể là object hoặc array). Các block JSON không hợp lệ sẽ bị bỏ qua.
+pub fn extract_json_ld_blocks(html: &str) -> Vec<serde_json::Value> {
+    let document = Html::parse_document(html);
+    let selector = match Selector::parse("script[type=\"application/ld+json\"]") {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    let mut blocks: Vec<serde_json::Value> = Vec::new();
+    for element in document.select(&selector) {
+        let text = element.text().collect::<Vec<_>>().join("");
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<serde_json::Value>(trimmed) {
+            Ok(value) => {
+                // Một block có thể là array của nhiều schema.
+                if let serde_json::Value::Array(arr) = &value {
+                    for item in arr {
+                        blocks.push(item.clone());
+                    }
+                } else {
+                    blocks.push(value);
+                }
+            }
+            Err(e) => {
+                log::warn!("[crawler] Failed to parse JSON-LD block: {}", e);
+            }
+        }
+    }
+    blocks
+}

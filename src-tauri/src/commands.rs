@@ -222,6 +222,67 @@ pub fn inner_export_excel(
     crate::spreadsheet::to_xlsx_bytes(&wb)
 }
 
+/// Filter export `data` so that only the columns defined by the worker's Data
+/// Extractor settings are written out.
+///
+/// * `extractFields` (optional, list of field names) — when present, every row
+///   is reduced to just these fields. DB/metadata fields (id, url,
+///   source_url, extracted_url, item_type, html, text, status) are dropped
+///   unless they are explicitly listed in `extractFields` or in the column
+///   mapping.
+/// * `columnMapping` (optional, { source -> header }) — renames the kept
+///   fields. Fields not present in the data are emitted as empty columns.
+fn filter_export_data(
+    data: &[serde_json::Value],
+    config: &serde_json::Value,
+) -> Vec<serde_json::Value> {
+    let column_mapping = config.get("columnMapping").and_then(|v| v.as_object());
+
+    let extract_fields: Option<Vec<String>> = config
+        .get("extractFields")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
+
+    let mapped_keys: std::collections::BTreeSet<String> = column_mapping
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default();
+
+    data.iter()
+        .map(|item| {
+            if let serde_json::Value::Object(obj) = item {
+                let mut new_obj = serde_json::Map::new();
+                for (k, v) in obj.iter() {
+                    let is_metadata = matches!(
+                        k.as_str(),
+                        "id" | "url" | "source_url" | "extracted_url" | "item_type"
+                            | "html" | "text" | "status"
+                    );
+                    let allowed_by_extract =
+                        extract_fields.as_ref().map(|f| f.contains(k)).unwrap_or(true);
+                    let allowed_by_mapping = mapped_keys.contains(k);
+
+                    if is_metadata && !allowed_by_extract && !allowed_by_mapping {
+                        continue;
+                    }
+
+                    let new_key = column_mapping
+                        .and_then(|m| m.get(k))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(k);
+                    new_obj.insert(new_key.to_string(), v.clone());
+                }
+                serde_json::Value::Object(new_obj)
+            } else {
+                item.clone()
+            }
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn export_excel_cmd(request: ExportRequest) -> ExportResult {
     let sheet_name = request
@@ -235,32 +296,7 @@ pub async fn export_excel_cmd(request: ExportRequest) -> ExportResult {
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
-    let column_mapping = request
-        .config
-        .get("columnMapping")
-        .and_then(|v| v.as_object());
-
-    // Apply column mapping to rename fields in the data
-    let mapped_data: Vec<serde_json::Value> = if let Some(mapping) = column_mapping {
-        request
-            .data
-            .iter()
-            .map(|item| {
-                if let serde_json::Value::Object(obj) = item {
-                    let mut new_obj = serde_json::Map::new();
-                    for (k, v) in obj.iter() {
-                        let new_key = mapping.get(k).and_then(|v| v.as_str()).unwrap_or(k);
-                        new_obj.insert(new_key.to_string(), v.clone());
-                    }
-                    serde_json::Value::Object(new_obj)
-                } else {
-                    item.clone()
-                }
-            })
-            .collect()
-    } else {
-        request.data.clone()
-    };
+    let mapped_data = filter_export_data(&request.data, &request.config);
 
     match inner_export_excel(&mapped_data, sheet_name, include_header) {
         Ok(bytes) => {
@@ -308,6 +344,7 @@ pub async fn spreadsheet_export_cmd(
     data: Vec<serde_json::Value>,
     config: serde_json::Value,
 ) -> SpreadsheetResult {
+    let data = filter_export_data(&data, &config);
     let format = config
         .get("format")
         .and_then(|v| v.as_str())
@@ -923,6 +960,64 @@ pub fn get_settings_defaults(processor_id: String) -> Result<serde_json::Value, 
     let schema = crate::settings_engine::get_processor_schema(&processor_id)
         .ok_or_else(|| format!("Processor '{}' not found", processor_id))?;
     Ok(schema.apply_defaults())
+}
+
+/// Returns the list of field names produced by the Data Extractor settings of a
+/// given worker. This lets (Python) export plugins emit exactly the columns
+/// defined by the worker's extractor rules, and nothing else (no DB metadata
+/// such as id/source_url/extracted_url/item_type/html/text).
+///
+/// `nodes`/`edges` describe the pipeline graph. The worker is resolved by
+/// `worker_id` (or the first `worker` node if omitted). Extractor rules are
+/// collected from any `html-data-extractor` / `extractor` node connected to
+/// that worker (upstream or downstream), including both `customRules` and
+/// `presets`.
+#[tauri::command]
+pub fn get_extractor_fields_cmd(
+    nodes: Vec<serde_json::Value>,
+    edges: Vec<serde_json::Value>,
+    worker_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    use crate::pipeline::PipelineConfig;
+
+    let nodes: Vec<crate::pipeline::PipelineNode> = nodes
+        .into_iter()
+        .filter_map(|v| serde_json::from_value(v).ok())
+        .collect();
+    let edges: Vec<crate::pipeline::PipelineEdge> = edges
+        .into_iter()
+        .filter_map(|v| serde_json::from_value(v).ok())
+        .collect();
+
+    let config = PipelineConfig {
+        nodes,
+        edges,
+        settings: serde_json::Value::Null,
+    };
+
+    let workers = crate::worker_engine::extract_workers(&config);
+    let worker = match &worker_id {
+        Some(id) => workers.iter().find(|w| w.id == *id),
+        None => workers.first(),
+    }
+    .ok_or_else(|| "No worker node found in the pipeline graph".to_string())?;
+
+    let mut fields: Vec<String> = worker
+        .extract_rules
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(|r| r.field.clone())
+        .collect();
+
+    // De-duplicate while preserving order.
+    let mut seen = std::collections::HashSet::new();
+    fields.retain(|f| seen.insert(f.clone()));
+
+    Ok(serde_json::json!({
+        "workerId": worker.id,
+        "fields": fields,
+    }))
 }
 
 // ── Raw Items Commands ────────────────────────────────────

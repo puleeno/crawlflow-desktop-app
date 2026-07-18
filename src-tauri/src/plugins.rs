@@ -1081,22 +1081,60 @@ pub fn excel_export_plugin(
 
     let column_mapping = config.get("columnMapping").and_then(|v| v.as_object());
 
-    let mapped_data: Vec<serde_json::Value> = if let Some(mapping) = column_mapping {
-        data.iter().map(|item| {
+    // Only keep fields that belong to the worker's Data Extractor settings.
+    // `extractFields` is the list of field names produced by the extractor
+    // (the `name` of each custom rule / preset rule). DB metadata fields
+    // (id, url, source_url, extracted_url, item_type, html, text) must NOT
+    // appear in the exported spreadsheet.
+    let extract_fields: Option<Vec<String>> = config
+        .get("extractFields")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
+
+    // Map of source field name -> export column header (after column mapping).
+    let mapped_keys: std::collections::BTreeSet<String> = if let Some(mapping) = column_mapping {
+        mapping.keys().cloned().collect()
+    } else {
+        std::collections::BTreeSet::new()
+    };
+
+    let mapped_data: Vec<serde_json::Value> = data
+        .iter()
+        .map(|item| {
             if let serde_json::Value::Object(obj) = item {
                 let mut new_obj = serde_json::Map::new();
                 for (k, v) in obj.iter() {
-                    let new_key = mapping.get(k).and_then(|v| v.as_str()).unwrap_or(k);
+                    // Skip DB/metadata fields unless they are explicitly part of
+                    // the extractor settings or an explicit column mapping.
+                    let is_metadata = matches!(
+                        k.as_str(),
+                        "id" | "url" | "source_url" | "extracted_url" | "item_type"
+                            | "html" | "text" | "status"
+                    );
+                    let allowed_by_extract =
+                        extract_fields.as_ref().map(|f| f.contains(k)).unwrap_or(true);
+                    let allowed_by_mapping = mapped_keys.contains(k);
+
+                    if is_metadata && !allowed_by_extract && !allowed_by_mapping {
+                        continue;
+                    }
+
+                    let new_key = column_mapping
+                        .and_then(|m| m.get(k))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(k);
                     new_obj.insert(new_key.to_string(), v.clone());
                 }
                 serde_json::Value::Object(new_obj)
             } else {
                 item.clone()
             }
-        }).collect()
-    } else {
-        data.clone()
-    };
+        })
+        .collect();
 
     let raw_file_name = config
         .get("fileName")

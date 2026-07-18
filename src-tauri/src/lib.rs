@@ -106,6 +106,7 @@ pub fn run() {
             commands::summarize_parsed_html_cmd,
             commands::install_marketplace_item,
             commands::list_presets_cmd,
+            commands::get_extractor_fields_cmd,
             commands::run_demo_cmd,
             // Progress
             commands::get_project_progress_cmd,

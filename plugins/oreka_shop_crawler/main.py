@@ -389,55 +389,45 @@ def register_preprocessors():
 
 
 def preprocess_data(data_json):
-    """Lay store ID tu HTML nguon va tra ve tat ca URL san pham cua store."""
+    """Lay store ID tu HTML nguon, rewrite thanh listing URL.
+
+    Chi tra ve 1 item kieu 'listing_url' (URL da duoc rewrite thanh
+    /mua-ban?storeId=...). Rust se fetch HTML cua URL nay o Stage B
+    va dung [URL Patterns] cua fetch-data node de trich product URLs.
+    """
     payload = json.loads(data_json) if isinstance(data_json, str) else data_json
     html = payload.get("raw_data", "")
     source_url = payload.get("source_url", "https://www.oreka.vn")
     store_id = _extract_store_id_from_html(html) or _extract_store_id_from_html(source_url)
 
     if not store_id:
-        crawlflow.log("[OrekaShop] Khong tim thay storeId trong HTML data source", "warn")
+        crawlflow.log("[OrekaShop][preprocess] Khong tim thay storeId trong HTML", "warn")
         return json.dumps([])
 
-    listing_url = _oreka_listing_url(source_url, store_id)
-    listing_origin = urllib.parse.urlunparse(
-        urllib.parse.urlparse(listing_url)._replace(path="", params="", query="", fragment="")
-    )
-    product_urls = set()
+    base_listing_url = _oreka_listing_url(source_url, store_id)
 
-    for page_number in range(1, 101):
-        page_url = listing_url if page_number == 1 else _add_page_to_url(listing_url, "page", page_number)
-        crawlflow.log(f"[OrekaShop] Fetch danh sach trang {page_number}: {page_url}", "info")
-        try:
-            response = crawlflow.fetch_url(page_url, None)
-            result = json.loads(response) if isinstance(response, str) else response
-        except Exception as error:
-            crawlflow.log(f"[OrekaShop] Loi fetch trang {page_number}: {error}", "error")
-            break
+    # Pagination: Oreka store listing supports ?page=N (default max 50).
+    max_pages = int((config.get("max_pages") or 50) or 50)
+    if max_pages < 1:
+        max_pages = 1
 
-        if result.get("status") != 200:
-            crawlflow.log(
-                f"[OrekaShop] Trang {page_number} tra ve status {result.get('status')}",
-                "warn",
-            )
-            break
+    items = []
+    for page_num in range(1, max_pages + 1):
+        page_url = _add_page_to_url(base_listing_url, "page", page_num) if page_num > 1 else base_listing_url
+        crawlflow.log(
+            f"[OrekaShop][preprocess] Listing page {page_num}: {page_url} (storeId={store_id})",
+            "info",
+        )
+        items.append({
+            "source_url": page_url,
+            "item_type": "listing_url",
+            "item_hash": hashlib.sha256(page_url.encode("utf-8")).hexdigest(),
+            "raw_content": None,
+            "extracted_url": page_url,
+        })
 
-        page_product_urls = _extract_oreka_listing_links(result.get("body", ""), listing_origin)
-        new_urls = page_product_urls - product_urls
-        if not new_urls:
-            break
-        product_urls.update(new_urls)
-
-    product_urls = sorted(product_urls)
-    items = [{
-        "source_url": product_url,
-        "item_type": "url",
-        "item_hash": hashlib.sha256(product_url.encode("utf-8")).hexdigest(),
-        "raw_content": None,
-        "extracted_url": product_url,
-    } for product_url in product_urls]
     crawlflow.log(
-        f"[OrekaShop] Tim thay {len(items)} san pham cho store {store_id}",
+        f"[OrekaShop][preprocess] Da tao {len(items)} listing URL (page 1..{max_pages})",
         "info",
     )
     return json.dumps(items)
@@ -833,14 +823,17 @@ def on_load(config):
 
 
 def fetch_data(config_json):
-    """Crawl toan bo san pham tu shop oreka.vn.
+    """Lay store page HTML, trich storeId va sinh danh sach listing URL.
+
+    Plugin tu quyet dinh logic phan trang + rewrite URL. Tra ve truc tiep
+    N item kieu 'listing_url' (URL da duoc rewrite thanh /mua-ban?storeId=...
+    &page=N). Rust chi can gom cac item nay vao fetched_sources de Stage B
+    trich product URLs (qua [URL Patterns] cua fetch-data node).
 
     Config:
-        shop_url (str, bat buoc): URL cua shop
-        max_pages (int, mac dinh 50): So trang toi da
-        delay_ms (int, mac dinh 1500): Delay giua cac request (ms)
+        shop_url (str, bat buoc): URL cua store (vd: https://www.oreka.vn/store/motsach)
+        max_pages (int, mac dinh: 50): so trang listing can crawl
         project_id (str): ID project (tu dong inject)
-        selectors (dict, tuy chon): Ghi de selector
     """
     config = json.loads(config_json) if isinstance(config_json, str) else config_json
 
@@ -849,185 +842,67 @@ def fetch_data(config_json):
         crawlflow.log("[OrekaShop] Thieu shop_url trong config", "error")
         return json.dumps([])
 
-    max_pages = int(config.get("max_pages", 50))
-    delay_ms = int(config.get("delay_ms", 1500))
     project_id = config.get("project_id", "default")
-    custom_selectors = config.get("selectors", {})
 
-    selectors = dict(DEFAULT_SELECTORS)
-    selectors.update(custom_selectors)
+    crawlflow.log(f"[OrekaShop][fetch_data] Lay raw HTML store page: {shop_url}", "info")
 
-    # Lay domain goc
-    base_url = re.match(r'(https?://[^/]+)', shop_url)
-    base = base_url.group(1) if base_url else shop_url
+    # Chi fetch store page HTML thoi (de lay storeId).
+    try:
+        raw = crawlflow.fetch_url(shop_url, None)
+        result = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception as e:
+        crawlflow.log(f"[OrekaShop][fetch_data] Loi fetch store page: {e}", "error")
+        return json.dumps([])
 
-    # Check and rewrite store URL to MUABAN search page if store/ URL is passed
-    if "/store/" in shop_url:
-        crawlflow.log(f"[OrekaShop] Kiem tra URL tin cua store de lay storeId: {shop_url}", "info")
-        try:
-            raw = crawlflow.fetch_url(shop_url, None)
-            result = json.loads(raw) if isinstance(raw, str) else raw
-            if result.get("status") == 200:
-                html_body = result.get("body", "")
-                crawlflow.log(f"[OrekaShop] HTML body length: {len(html_body)} characters", "info")
+    if result.get("status") != 200:
+        crawlflow.log(
+            f"[OrekaShop][fetch_data] Store page tra ve status {result.get('status')}",
+            "error",
+        )
+        return json.dumps([])
 
-                # Try robust extractor first (Next.js __NEXT_DATA__ + Apollo cache)
-                store_id = _extract_store_id_from_html(html_body)
+    html_body = result.get("body", "")
+    if not html_body:
+        crawlflow.log("[OrekaShop][fetch_data] Store page rong", "warn")
+        return json.dumps([])
 
-                # Regex fallbacks if extractor failed
-                if not store_id:
-                    m = re.search(r'"storeId"\s*:\s*["\']([^"\']+)["\']', html_body)
-                    if m:
-                        store_id = m.group(1).strip()
-                if not store_id:
-                    m = re.search(r'"store"\s*:\s*\{\s*"id"\s*:\s*["\']([^"\']+)["\']', html_body)
-                    if m:
-                        store_id = m.group(1).strip()
+    crawlflow.log(
+        f"[OrekaShop][fetch_data] Lay duoc HTML {len(html_body)} ky tu",
+        "info",
+    )
 
-                if store_id:
-                    shop_url = f"{base.rstrip('/')}/mua-ban?storeId={store_id}&sort=createdAt&order=desc"
-                    crawlflow.log(f"[OrekaShop] Chuyen doi URL cua store thanh: {shop_url}", "info")
-                else:
-                    store_slug = _extract_store_slug_from_url(shop_url)
-                    if store_slug:
-                        crawlflow.log(f"[OrekaShop] Khong tim thay storeId. Dung store slug: {store_slug}", "warn")
-                    else:
-                        crawlflow.log("[OrekaShop] Khong tim thay storeId. Tiep tuc voi URL goc.", "warn")
-            else:
-                crawlflow.log(f"[OrekaShop] Web request to store page returned status {result.get('status')}", "warn")
-        except Exception as e:
-            crawlflow.log(f"[OrekaShop] Loi khi lay storeId tu store page: {e}", "error")
+    # Plugin tu trich storeId va rewrite thanh listing URL.
+    store_id = _extract_store_id_from_html(html_body) or _extract_store_id_from_html(shop_url)
+    if not store_id:
+        crawlflow.log("[OrekaShop][fetch_data] Khong tim thay storeId", "error")
+        return json.dumps([])
 
-    # Khoi tao progress
-    started_at = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    base_listing_url = _oreka_listing_url(shop_url, store_id)
 
-    all_products = []
-    product_urls = set()
-    total_pages_estimated = max_pages
+    max_pages = int((config.get("max_pages") or 50) or 50)
+    if max_pages < 1:
+        max_pages = 1
 
-    crawlflow.log(f"[OrekaShop] Bat dau crawl shop: {shop_url}", "info")
-
-    for page in range(1, max_pages + 1):
-        page_url = _add_page_to_url(shop_url, selectors['page_param'], page) if page > 1 else shop_url
-
-        crawlflow.log(f"[OrekaShop] Dang crawl trang {page}/{total_pages_estimated}: {page_url}", "info")
-
-        try:
-            raw = crawlflow.fetch_url(page_url, None)
-            result = json.loads(raw) if isinstance(raw, str) else raw
-        except Exception as e:
-            crawlflow.log(f"[OrekaShop] Loi fetch trang {page}: {e}", "error")
-            continue
-
-        if result.get("status") != 200:
-            crawlflow.log(f"[OrekaShop] Trang {page} tra ve status {result.get('status')}", "warn")
-            if page == 1:
-                crawlflow.log("[OrekaShop] Khong the truy cap shop, dung lai", "error")
-                break
-            continue
-
-        html = result.get("body", "")
-
-        # Kiem tra con trang tiep theo khong
-        has_next = _has_next_page(html, page)
-
-        # Trich xuat link san pham Oreka (/mua-ban-*/.../--detail/<id>)
-        links = _extract_oreka_listing_links(html, base)
-        if not links:
-            # Fallback sang generic extractor cho cac site khac
-            links = set(_extract_listing_links(html, base))
-        before = len(product_urls)
-        product_urls.update(links)
-        new_links = len(product_urls) - before
-
-        # Cap nhat progress
-        elapsed = (datetime.now() - datetime.strptime(started_at, "%Y-%m-%dT%H:%M:%S")).total_seconds() * 1000
-        _update_progress(project_id, {
-            "items_total": len(product_urls) + len(all_products),
-            "items_processed": len(product_urls),
-            "items_success": len(product_urls),
-            "items_failed": 0,
-            "progress_pct": min(95.0, (page / total_pages_estimated) * 50.0),
-            "avg_time_ms": elapsed / max(page, 1),
-            "total_time_ms": elapsed,
-            "started_at": started_at,
-            "message": f"Dang tim san pham... trang {page}/{total_pages_estimated}",
+    items = []
+    for page_num in range(1, max_pages + 1):
+        page_url = _add_page_to_url(base_listing_url, "page", page_num) if page_num > 1 else base_listing_url
+        crawlflow.log(
+            f"[OrekaShop][fetch_data] Listing page {page_num}: {page_url} (storeId={store_id})",
+            "info",
+        )
+        items.append({
+            "source_url": page_url,
+            "item_type": "listing_url",
+            "item_hash": hashlib.sha256(page_url.encode("utf-8")).hexdigest(),
+            "raw_content": None,
+            "extracted_url": page_url,
         })
 
-        crawlflow.log(f"[OrekaShop] Trang {page}: tim thay {new_links} san pham moi (tong: {len(product_urls)}), has_next={has_next}", "info")
-
-        # Dung neu khong con next page hoac khong co them link moi
-        if not has_next:
-            crawlflow.log(f"[OrekaShop] Khong tim thay nut trang tiep theo o trang {page}, dung phan trang", "info")
-            break
-        if new_links == 0 and page > 1:
-            crawlflow.log(f"[OrekaShop] Khong tim thay san pham moi o trang {page} du co next, dung phan trang", "info")
-            break
-
-        time.sleep(delay_ms / 1000.0)
-
-    # Crawl chi tiet tung san pham
-    all_urls = list(product_urls)
-    total = len(all_urls)
-    crawlflow.log(f"[OrekaShop] Tim thay {total} san pham, bat dau lay chi tiet...", "info")
-
-    for idx, url in enumerate(all_urls):
-        try:
-            raw = crawlflow.fetch_url(url, None)
-            result = json.loads(raw) if isinstance(raw, str) else raw
-        except Exception as e:
-            crawlflow.log(f"[OrekaShop] Loi fetch chi tiet {url}: {e}", "error")
-            # Van them san pham co ban
-            all_products.append(_parse_product_from_html("", url))
-            _update_progress(project_id, {
-                "items_total": total,
-                "items_processed": idx + 1,
-                "items_success": len(all_products),
-                "items_failed": (idx + 1) - len(all_products),
-                "progress_pct": min(95.0, 50.0 + ((idx + 1) / total) * 45.0),
-                "avg_time_ms": 0,
-                "total_time_ms": (datetime.now() - datetime.strptime(started_at, "%Y-%m-%dT%H:%M:%S")).total_seconds() * 1000,
-                "started_at": started_at,
-                "message": f"Loi: {e}",
-            })
-            continue
-
-        html = result.get("body", "")
-        product = _parse_product_from_html(html, url)
-        all_products.append(product)
-
-        if (idx + 1) % 5 == 0 or idx == total - 1:
-            elapsed = (datetime.now() - datetime.strptime(started_at, "%Y-%m-%dT%H:%M:%S")).total_seconds() * 1000
-            _update_progress(project_id, {
-                "items_total": total,
-                "items_processed": idx + 1,
-                "items_success": len(all_products),
-                "items_failed": (idx + 1) - len(all_products),
-                "progress_pct": min(95.0, 50.0 + ((idx + 1) / total) * 45.0),
-                "avg_time_ms": elapsed / (idx + 1),
-                "total_time_ms": elapsed,
-                "started_at": started_at,
-                "message": f"Dang lay chi tiet... {idx + 1}/{total}",
-            })
-            crawlflow.log(f"[OrekaShop] Lay chi tiet: {idx + 1}/{total} - {product.get('name', 'N/A')}", "info")
-
-        time.sleep(delay_ms / 1000.0)
-
-    elapsed = (datetime.now() - datetime.strptime(started_at, "%Y-%m-%dT%H:%M:%S")).total_seconds() * 1000
-    _update_progress(project_id, {
-        "items_total": len(all_products),
-        "items_processed": len(all_products),
-        "items_success": len(all_products),
-        "items_failed": 0,
-        "progress_pct": 95.0,
-        "avg_time_ms": elapsed / max(len(all_products), 1),
-        "total_time_ms": elapsed,
-        "started_at": started_at,
-        "message": f"Hoan thanh crawl: {len(all_products)} san pham",
-    })
-
-    crawlflow.log(f"[OrekaShop] Crawl hoan thanh: {len(all_products)} san pham", "info")
-    return json.dumps(all_products)
+    crawlflow.log(
+        f"[OrekaShop][fetch_data] Da tao {len(items)} listing URL (page 1..{max_pages})",
+        "info",
+    )
+    return json.dumps(items)
 
 
 def process_data(data_json, config_json):

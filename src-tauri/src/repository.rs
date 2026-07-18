@@ -10,7 +10,6 @@ pub struct RawItem {
     pub source_url: String,
     pub item_type: String,
     pub item_hash: String,
-    pub raw_content: Option<String>,
     pub extracted_url: Option<String>,
     pub dup_count: i32,
     pub priority: i32,
@@ -26,20 +25,39 @@ pub struct NewRawItem {
     pub source_url: String,
     pub item_type: String,
     pub item_hash: String,
-    pub raw_content: Option<String>,
     pub extracted_url: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessingLogEntry {
+pub struct CrawlData {
     pub id: i64,
-    pub item_id: i64,
+    pub raw_item_id: i64,
+    pub content_type: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParsedData {
+    pub id: i64,
+    pub raw_item_id: i64,
     pub worker_id: Option<String>,
-    pub processor_type: String,
+    pub processor_id: String,
+    pub data: String,
+    pub schema_version: i32,
+    pub is_final: bool,
     pub status: String,
-    pub output: Option<String>,
     pub error: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonLd {
+    pub id: i64,
+    pub raw_item_id: i64,
+    pub ld_type: String,
+    pub data: String,
+    pub created_at: String,
 }
 
 // ── Repository ────────────────────────────────────────────
@@ -64,7 +82,6 @@ impl RawItemRepository {
                 source_url TEXT NOT NULL,
                 item_type TEXT NOT NULL DEFAULT 'url',
                 item_hash TEXT NOT NULL,
-                raw_content TEXT,
                 extracted_url TEXT,
                 dup_count INTEGER NOT NULL DEFAULT 1,
                 priority INTEGER NOT NULL DEFAULT 0,
@@ -79,29 +96,50 @@ impl RawItemRepository {
             CREATE INDEX IF NOT EXISTS idx_raw_items_matched ON raw_items(matched);
             CREATE INDEX IF NOT EXISTS idx_raw_items_worker ON raw_items(worker_id);
 
-            CREATE TABLE IF NOT EXISTS processing_log (
+            CREATE TABLE IF NOT EXISTS crawl_data (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_id INTEGER NOT NULL,
-                worker_id TEXT,
-                processor_type TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                output TEXT,
-                error TEXT,
-                started_at TEXT,
-                finished_at TEXT,
+                raw_item_id INTEGER NOT NULL,
+                content_type TEXT NOT NULL DEFAULT 'raw',
+                content TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
-            CREATE INDEX IF NOT EXISTS idx_processing_log_item ON processing_log(item_id);
-            CREATE INDEX IF NOT EXISTS idx_processing_log_worker ON processing_log(worker_id);
+            CREATE INDEX IF NOT EXISTS idx_crawl_data_item ON crawl_data(raw_item_id);
+
+            CREATE TABLE IF NOT EXISTS parsed_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                raw_item_id INTEGER NOT NULL,
+                worker_id TEXT,
+                processor_id TEXT NOT NULL DEFAULT '',
+                data TEXT NOT NULL DEFAULT '{}',
+                schema_version INTEGER NOT NULL DEFAULT 1,
+                is_final INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                error TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_parsed_data_item ON parsed_data(raw_item_id);
+            CREATE INDEX IF NOT EXISTS idx_parsed_data_final ON parsed_data(raw_item_id, is_final);
+
+            CREATE TABLE IF NOT EXISTS json_ld (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                raw_item_id INTEGER NOT NULL,
+                ld_type TEXT NOT NULL DEFAULT 'unknown',
+                data TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_json_ld_item ON json_ld(raw_item_id);
         ",
             )
             .map_err(|e| format!("Failed to create tables: {}", e))
     }
 
     /// Save items with dedup. Increments dup_count for existing items.
+    /// Returns the new row IDs (in insertion order) so callers can persist
+    /// fetched content into `crawl_data` keyed by raw_item_id.
     pub fn save_items(&self, items: &[NewRawItem]) -> Result<RawItemSaveResult, String> {
         let mut inserted = 0i64;
         let mut duplicated = 0i64;
+        let mut ids: Vec<i64> = Vec::new();
 
         for item in items {
             // Check existing by hash
@@ -131,17 +169,18 @@ impl RawItemRepository {
                 None => {
                     let priority = if item.extracted_url.is_some() { 5 } else { 1 };
                     self.conn.execute(
-                        "INSERT INTO raw_items (source_url, item_type, item_hash, raw_content, extracted_url, priority)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        "INSERT INTO raw_items (source_url, item_type, item_hash, extracted_url, priority)
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
                         params![
                             item.source_url,
                             item.item_type,
                             item.item_hash,
-                            item.raw_content,
                             item.extracted_url,
                             priority,
                         ],
                     ).map_err(|e| format!("Failed to insert item: {}", e))?;
+                    let new_id = self.conn.last_insert_rowid();
+                    ids.push(new_id);
                     inserted += 1;
                 }
             }
@@ -150,12 +189,162 @@ impl RawItemRepository {
         Ok(RawItemSaveResult {
             inserted,
             duplicated,
+            ids,
         })
+    }
+
+    /// Persist fetched raw content into `crawl_data`, keyed by raw_item_id.
+    /// `content_type` is one of: "listing" | "detail" | "json" | "raw" | "rss" | "csv" | "xml" ...
+    pub fn save_crawl_data(
+        &self,
+        raw_item_id: i64,
+        content_type: &str,
+        content: &str,
+    ) -> Result<i64, String> {
+        self.conn.execute(
+            "INSERT INTO crawl_data (raw_item_id, content_type, content) VALUES (?1, ?2, ?3)",
+            params![raw_item_id, content_type, content],
+        ).map_err(|e| format!("Failed to save crawl_data: {}", e))?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Read all crawled content for a raw_item (latest first).
+    pub fn get_crawl_data(&self, raw_item_id: i64) -> Result<Vec<CrawlData>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, raw_item_id, content_type, content, created_at
+                 FROM crawl_data WHERE raw_item_id = ?1 ORDER BY id DESC",
+            )
+            .map_err(|e| format!("Failed to prepare crawl_data query: {}", e))?;
+        let rows = stmt
+            .query_map(params![raw_item_id], |row| {
+                Ok(CrawlData {
+                    id: row.get(0)?,
+                    raw_item_id: row.get(1)?,
+                    content_type: row.get(2)?,
+                    content: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| format!("Failed to query crawl_data: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows)
+    }
+
+    /// Lấy nội dung thô (HTML/data) mới nhất của một raw_item từ `crawl_data`.
+    /// Trả `None` nếu chưa có. Tiện cho worker đọc lại content để parse.
+    pub fn get_crawl_data_content(&self, raw_item_id: i64) -> Option<String> {
+        self.get_crawl_data(raw_item_id)
+            .ok()
+            .and_then(|mut v| v.pop())
+            .map(|c| c.content)
+    }
+
+    /// Lấy tất cả JSON-LD blocks của một raw_item.
+    pub fn get_json_ld(&self, raw_item_id: i64) -> Result<Vec<JsonLd>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, raw_item_id, ld_type, data, created_at
+                 FROM json_ld WHERE raw_item_id = ?1 ORDER BY id",
+            )
+            .map_err(|e| format!("Failed to prepare json_ld query: {}", e))?;
+        let rows = stmt
+            .query_map(params![raw_item_id], |row| {
+                Ok(JsonLd {
+                    id: row.get(0)?,
+                    raw_item_id: row.get(1)?,
+                    ld_type: row.get(2)?,
+                    data: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| format!("Failed to query json_ld: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows)
+    }
+
+    /// Persist a JSON-LD block auto-extracted from crawled HTML.
+    pub fn save_json_ld(
+        &self,
+        raw_item_id: i64,
+        ld_type: &str,
+        data: &str,
+    ) -> Result<i64, String> {
+        self.conn.execute(
+            "INSERT INTO json_ld (raw_item_id, ld_type, data) VALUES (?1, ?2, ?3)",
+            params![raw_item_id, ld_type, data],
+        ).map_err(|e| format!("Failed to save json_ld: {}", e))?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Persist one processor-chain step result into `parsed_data`.
+    /// `is_final = true` marks the terminal processor's output (used by export).
+    pub fn save_parsed_data(
+        &self,
+        raw_item_id: i64,
+        worker_id: Option<&str>,
+        processor_id: &str,
+        data: &str,
+        is_final: bool,
+    ) -> Result<i64, String> {
+        self.conn.execute(
+            "INSERT INTO parsed_data (raw_item_id, worker_id, processor_id, data, is_final, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'done')",
+            params![
+                raw_item_id,
+                worker_id,
+                processor_id,
+                data,
+                if is_final { 1i64 } else { 0i64 },
+            ],
+        ).map_err(|e| format!("Failed to save parsed_data: {}", e))?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Read the final parsed result for a raw_item (is_final = 1).
+    pub fn get_final_parsed(&self, raw_item_id: i64) -> Result<Option<ParsedData>, String> {
+        let row: Option<ParsedData> = self
+            .conn
+            .query_row(
+                "SELECT id, raw_item_id, worker_id, processor_id, data, schema_version, is_final, status, error, created_at
+                 FROM parsed_data WHERE raw_item_id = ?1 AND is_final = 1
+                 ORDER BY id DESC LIMIT 1",
+                params![raw_item_id],
+                |r| {
+                    Ok(ParsedData {
+                        id: r.get(0)?,
+                        raw_item_id: r.get(1)?,
+                        worker_id: r.get(2)?,
+                        processor_id: r.get(3)?,
+                        data: r.get(4)?,
+                        schema_version: r.get(5)?,
+                        is_final: r.get(6)?,
+                        status: r.get(7)?,
+                        error: r.get(8)?,
+                        created_at: r.get(9)?,
+                    })
+                },
+            )
+            .ok();
+        Ok(row)
     }
 
     /// Save raw HTML fetched from a data source (debug / audit trail).
     /// Inserts with item_type='raw', status='crawled' so it is skipped by `get_pending_items`.
-    pub fn save_raw_source(&self, source_url: &str, raw_html: &str) -> Result<(), String> {
+    /// Save a fetched raw source: metadata row in `raw_items` (item_type
+    /// reflects the source kind: data_source / rss / csv / xml / json / url)
+    /// plus its content in `crawl_data` (content_type='raw'), plus any
+    /// JSON-LD blocks auto-extracted from the HTML into `json_ld`.
+    pub fn save_raw_source(
+        &self,
+        source_url: &str,
+        item_type: &str,
+        raw_html: &str,
+    ) -> Result<i64, String> {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         let hash_input = format!("{}:{}", source_url, raw_html);
@@ -171,15 +360,42 @@ impl RawItemRepository {
             )
             .ok();
 
-        if existing.is_none() {
-            self.conn.execute(
-                "INSERT INTO raw_items (source_url, item_type, item_hash, raw_content, status, priority)
-                 VALUES (?1, 'raw', ?2, ?3, 'crawled', 1)",
-                params![source_url, item_hash, raw_html],
-            ).map_err(|e| format!("Failed to save raw source: {}", e))?;
+        let raw_item_id = if let Some(id) = existing {
+            id
+        } else {
+            self.conn
+                .execute(
+                    "INSERT INTO raw_items (source_url, item_type, item_hash, status, priority)
+                     VALUES (?1, ?2, ?3, 'crawled', 1)",
+                    params![source_url, item_type, item_hash],
+                )
+                .map_err(|e| format!("Failed to save raw source: {}", e))?;
+            self.conn.last_insert_rowid()
+        };
+
+        // Persist fetched content separately in crawl_data.
+        let _ = self.save_crawl_data(raw_item_id, "raw", raw_html);
+
+        // Auto-extract JSON-LD blocks from the HTML into json_ld.
+        let json_lds = crate::crawler::extract_json_ld_blocks(raw_html);
+        for (idx, ld) in json_lds.iter().enumerate() {
+            let ld_type = ld
+                .get("@type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let ld_json = serde_json::to_string(ld).unwrap_or_default();
+            let _ = self.save_json_ld(raw_item_id, &ld_type, &ld_json);
+        }
+        if !json_lds.is_empty() {
+            log::info!(
+                "[repository] Extracted {} JSON-LD block(s) from {}",
+                json_lds.len(),
+                source_url
+            );
         }
 
-        Ok(())
+        Ok(raw_item_id)
     }
 
     /// Lấy các items pending (chưa xử lý)
@@ -187,8 +403,8 @@ impl RawItemRepository {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, source_url, item_type, item_hash, raw_content, extracted_url,
-                    dup_count, priority, worker_id, matched, status, created_at, updated_at
+                "SELECT id, source_url, item_type, item_hash, extracted_url,
+                     dup_count, priority, worker_id, matched, status, created_at, updated_at
              FROM raw_items
              WHERE status = 'pending' AND matched = 0
              ORDER BY priority DESC, dup_count DESC
@@ -203,15 +419,14 @@ impl RawItemRepository {
                     source_url: row.get(1)?,
                     item_type: row.get(2)?,
                     item_hash: row.get(3)?,
-                    raw_content: row.get(4)?,
-                    extracted_url: row.get(5)?,
-                    dup_count: row.get(6)?,
-                    priority: row.get(7)?,
-                    worker_id: row.get(8)?,
-                    matched: row.get(9)?,
-                    status: row.get(10)?,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
+                    extracted_url: row.get(4)?,
+                    dup_count: row.get(5)?,
+                    priority: row.get(6)?,
+                    worker_id: row.get(7)?,
+                    matched: row.get(8)?,
+                    status: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
                 })
             })
             .map_err(|e| format!("Failed to query items: {}", e))?
@@ -226,8 +441,8 @@ impl RawItemRepository {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, source_url, item_type, item_hash, raw_content, extracted_url,
-                    dup_count, priority, worker_id, matched, status, created_at, updated_at
+                "SELECT id, source_url, item_type, item_hash, extracted_url,
+                     dup_count, priority, worker_id, matched, status, created_at, updated_at
              FROM raw_items
              WHERE worker_id = ?1 AND status = 'pending' AND matched = 1
              ORDER BY priority DESC
@@ -242,15 +457,14 @@ impl RawItemRepository {
                     source_url: row.get(1)?,
                     item_type: row.get(2)?,
                     item_hash: row.get(3)?,
-                    raw_content: row.get(4)?,
-                    extracted_url: row.get(5)?,
-                    dup_count: row.get(6)?,
-                    priority: row.get(7)?,
-                    worker_id: row.get(8)?,
-                    matched: row.get(9)?,
-                    status: row.get(10)?,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
+                    extracted_url: row.get(4)?,
+                    dup_count: row.get(5)?,
+                    priority: row.get(6)?,
+                    worker_id: row.get(7)?,
+                    matched: row.get(8)?,
+                    status: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
                 })
             })
             .map_err(|e| format!("Failed to query items: {}", e))?
@@ -302,7 +516,9 @@ impl RawItemRepository {
         Ok(())
     }
 
-    /// Log processing step
+    /// Log một bước xử lý của processor.
+    /// Thay thế bảng `processing_log` cũ: kết quả trung gian/final được lưu vào
+    /// `parsed_data`. `is_final=true` khi `processor_type=="final_output"`.
     pub fn log_processing(
         &self,
         item_id: i64,
@@ -312,11 +528,19 @@ impl RawItemRepository {
         output: Option<&str>,
         error: Option<&str>,
     ) -> Result<(), String> {
-        self.conn.execute(
-            "INSERT INTO processing_log (item_id, worker_id, processor_type, status, output, error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![item_id, worker_id, processor_type, status, output, error],
-        ).map_err(|e| format!("Failed to log processing: {}", e))?;
+        let is_final = processor_type == "final_output";
+        let parsed_json = if let Some(err) = error {
+            serde_json::json!({ "output": output.unwrap_or(""), "error": err }).to_string()
+        } else {
+            output.unwrap_or("").to_string()
+        };
+        self.save_parsed_data(
+            item_id,
+            worker_id,
+            processor_type,
+            &parsed_json,
+            is_final,
+        )?;
         Ok(())
     }
 
@@ -390,6 +614,9 @@ impl RawItemRepository {
 pub struct RawItemSaveResult {
     pub inserted: i64,
     pub duplicated: i64,
+    /// IDs of newly-inserted raw_items (in insertion order), so callers
+    /// can persist fetched content into `crawl_data` keyed by id.
+    pub ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -447,12 +674,10 @@ impl RawItemRepository {
             let pattern = format!("%{}%", search);
             let n = params.len();
             clauses.push(format!(
-                "(source_url LIKE ?{} OR extracted_url LIKE ?{} OR raw_content LIKE ?{})",
+                "(source_url LIKE ?{} OR extracted_url LIKE ?{})",
                 n + 1,
-                n + 2,
-                n + 3
+                n + 2
             ));
-            params.push(pattern.clone());
             params.push(pattern.clone());
             params.push(pattern);
         }
@@ -471,7 +696,7 @@ impl RawItemRepository {
         params.push(query.limit.to_string());
         params.push(query.offset.to_string());
         let query_sql = format!(
-            "SELECT id, source_url, item_type, item_hash, raw_content, extracted_url,
+            "SELECT id, source_url, item_type, item_hash, extracted_url,
                     dup_count, priority, worker_id, matched, status, created_at, updated_at
              FROM raw_items {} {} LIMIT ?{} OFFSET ?{}",
             where_clause,
@@ -513,15 +738,14 @@ impl RawItemRepository {
                     source_url: row.get(1)?,
                     item_type: row.get(2)?,
                     item_hash: row.get(3)?,
-                    raw_content: row.get(4)?,
-                    extracted_url: row.get(5)?,
-                    dup_count: row.get(6)?,
-                    priority: row.get(7)?,
-                    worker_id: row.get(8)?,
-                    matched: row.get(9)?,
-                    status: row.get(10)?,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
+                    extracted_url: row.get(4)?,
+                    dup_count: row.get(5)?,
+                    priority: row.get(6)?,
+                    worker_id: row.get(7)?,
+                    matched: row.get(8)?,
+                    status: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
                 })
             })
             .map_err(|e| format!("Query failed: {}", e))?
@@ -554,16 +778,18 @@ impl RawItemRepository {
         })
     }
 
-    /// Get done items (processed successfully) with their processing_log output
+    /// Get done items (processed successfully) với kết quả final từ `parsed_data`
+    /// (is_final=1), thay thế việc đọc từ `processing_log` cũ.
     pub fn get_done_items(&self, limit: i64) -> Result<Vec<(RawItem, Option<String>)>, String> {
         let mut stmt = self.conn.prepare(
-            "SELECT r.id, r.source_url, r.item_type, r.item_hash, r.raw_content, r.extracted_url,
+            "SELECT r.id, r.source_url, r.item_type, r.item_hash, r.extracted_url,
                     r.dup_count, r.priority, r.worker_id, r.matched, r.status, r.created_at, r.updated_at,
-                    p.output
+                    p.parsed_json
              FROM raw_items r
              LEFT JOIN (
-                 SELECT item_id, output, MAX(id) AS max_id
-                 FROM processing_log
+                 SELECT item_id, parsed_json, MAX(id) AS max_id
+                 FROM parsed_data
+                 WHERE is_final = 1
                  GROUP BY item_id
              ) p ON p.item_id = r.id
              WHERE r.status = 'done'
@@ -579,17 +805,16 @@ impl RawItemRepository {
                         source_url: row.get(1)?,
                         item_type: row.get(2)?,
                         item_hash: row.get(3)?,
-                        raw_content: row.get(4)?,
-                        extracted_url: row.get(5)?,
-                        dup_count: row.get(6)?,
-                        priority: row.get(7)?,
-                        worker_id: row.get(8)?,
-                        matched: row.get(9)?,
-                        status: row.get(10)?,
-                        created_at: row.get(11)?,
-                        updated_at: row.get(12)?,
+                        extracted_url: row.get(4)?,
+                        dup_count: row.get(5)?,
+                        priority: row.get(6)?,
+                        worker_id: row.get(7)?,
+                        matched: row.get(8)?,
+                        status: row.get(9)?,
+                        created_at: row.get(10)?,
+                        updated_at: row.get(11)?,
                     },
-                    row.get::<_, Option<String>>(13).ok().flatten(),
+                    row.get::<_, Option<String>>(12).ok().flatten(),
                 ))
             })
             .map_err(|e| format!("Failed to query done items: {}", e))?
@@ -604,10 +829,10 @@ impl RawItemRepository {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, source_url, item_type, item_hash, raw_content, extracted_url,
-                    dup_count, priority, worker_id, matched, status, created_at, updated_at
+                "SELECT id, source_url, item_type, item_hash, extracted_url,
+                     dup_count, priority, worker_id, matched, status, created_at, updated_at
              FROM raw_items
-             WHERE status = 'crawled' AND item_type = 'raw'
+             WHERE status = 'crawled'
              ORDER BY created_at ASC",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
@@ -619,15 +844,14 @@ impl RawItemRepository {
                     source_url: row.get(1)?,
                     item_type: row.get(2)?,
                     item_hash: row.get(3)?,
-                    raw_content: row.get(4)?,
-                    extracted_url: row.get(5)?,
-                    dup_count: row.get(6)?,
-                    priority: row.get(7)?,
-                    worker_id: row.get(8)?,
-                    matched: row.get(9)?,
-                    status: row.get(10)?,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
+                    extracted_url: row.get(4)?,
+                    dup_count: row.get(5)?,
+                    priority: row.get(6)?,
+                    worker_id: row.get(7)?,
+                    matched: row.get(8)?,
+                    status: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
                 })
             })
             .map_err(|e| format!("Failed to query items: {}", e))?
@@ -655,7 +879,6 @@ mod tests {
             source_url: "https://example.com".into(),
             item_type: "url".into(),
             item_hash: "abc123".into(),
-            raw_content: None,
             extracted_url: Some("https://example.com/page1".into()),
         }];
         let result = repo.save_items(&items).unwrap();
@@ -676,14 +899,12 @@ mod tests {
                 source_url: "a".into(),
                 item_type: "url".into(),
                 item_hash: "a1".into(),
-                raw_content: None,
                 extracted_url: None,
             },
             NewRawItem {
                 source_url: "b".into(),
                 item_type: "url".into(),
                 item_hash: "b1".into(),
-                raw_content: None,
                 extracted_url: Some("https://b.com".into()),
             },
         ])
@@ -702,7 +923,6 @@ mod tests {
             source_url: "a".into(),
             item_type: "url".into(),
             item_hash: "a1".into(),
-            raw_content: None,
             extracted_url: None,
         }])
         .unwrap();
@@ -712,5 +932,44 @@ mod tests {
         // Item 1 was matched, so no items should be ignored
         let ignored_count = repo.count_by_status("ignored").unwrap();
         assert_eq!(ignored_count, 0);
+    }
+
+    #[test]
+    fn test_raw_source_persists_crawl_data_and_json_ld() {
+        let repo = setup_repo();
+        let html = r#"<html><head>
+            <script type="application/ld+json">{"@type":"Product","name":"Test"}</script>
+        </head><body>hello</body></html>"#;
+        let raw_id = repo.save_raw_source("https://example.com/s", "raw", html).unwrap();
+        assert!(raw_id > 0);
+
+        // crawl_data should hold the raw HTML
+        let content = repo.get_crawl_data_content(raw_id);
+        assert_eq!(content.as_deref(), Some(html));
+
+        // json_ld should have auto-extracted the Product block
+        let lds = repo.get_json_ld(raw_id).unwrap();
+        assert_eq!(lds.len(), 1);
+        assert_eq!(lds[0].ld_type, "Product");
+    }
+
+    #[test]
+    fn test_parsed_data_final_flag() {
+        let repo = setup_repo();
+        let item = NewRawItem {
+            source_url: "https://x.com".into(),
+            item_type: "url".into(),
+            item_hash: "h1".into(),
+            extracted_url: None,
+        };
+        let saved = repo.save_items(&[item]).unwrap();
+        let raw_id = saved.ids[0];
+
+        repo.save_parsed_data(raw_id, Some("w1"), "proc-1", r#"{"a":1}"#, false).unwrap();
+        repo.save_parsed_data(raw_id, Some("w1"), "final_output", r#"{"a":1,"b":2}"#, true).unwrap();
+
+        let final_parsed = repo.get_final_parsed(raw_id).unwrap();
+        assert!(final_parsed.is_some());
+        assert_eq!(final_parsed.unwrap().processor_id, "final_output");
     }
 }

@@ -49,7 +49,6 @@ pub fn get_master_migrations() -> Vec<Migration> {
                 source_url TEXT NOT NULL,
                 item_type TEXT NOT NULL DEFAULT 'url',
                 item_hash TEXT NOT NULL,
-                raw_content TEXT,
                 extracted_url TEXT,
                 dup_count INTEGER NOT NULL DEFAULT 1,
                 priority INTEGER NOT NULL DEFAULT 0,
@@ -65,37 +64,44 @@ pub fn get_master_migrations() -> Vec<Migration> {
             CREATE INDEX IF NOT EXISTS idx_raw_items_matched ON raw_items(matched);
             CREATE INDEX IF NOT EXISTS idx_raw_items_worker ON raw_items(worker_id);
 
-            CREATE TABLE IF NOT EXISTS processing_log (
+            CREATE TABLE IF NOT EXISTS crawl_data (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_id INTEGER NOT NULL,
-                worker_id TEXT,
-                processor_type TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                output TEXT,
-                error TEXT,
-                started_at TEXT,
-                finished_at TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                raw_item_id INTEGER NOT NULL,
+                content_type TEXT NOT NULL DEFAULT 'raw',
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (raw_item_id) REFERENCES raw_items(id)
             );
 
-            CREATE INDEX IF NOT EXISTS idx_processing_log_item ON processing_log(item_id);
-            CREATE INDEX IF NOT EXISTS idx_processing_log_worker ON processing_log(worker_id);
+            CREATE INDEX IF NOT EXISTS idx_crawl_data_raw_item ON crawl_data(raw_item_id);
+
+            CREATE TABLE IF NOT EXISTS json_ld (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                raw_item_id INTEGER NOT NULL,
+                ld_type TEXT NOT NULL DEFAULT 'unknown',
+                data TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (raw_item_id) REFERENCES raw_items(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_json_ld_raw_item ON json_ld(raw_item_id);
 
             CREATE TABLE IF NOT EXISTS parsed_data (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 raw_item_id INTEGER NOT NULL,
-                worker_id TEXT NOT NULL,
+                worker_id TEXT,
                 processor_id TEXT NOT NULL,
                 data TEXT NOT NULL,
-                schema_version TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime("now")),
-                FOREIGN KEY (raw_item_id) REFERENCES raw_items(id),
-                UNIQUE(id)
+                is_final INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'done',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (raw_item_id) REFERENCES raw_items(id)
             );
 
             CREATE INDEX IF NOT EXISTS idx_parsed_data_raw_item ON parsed_data(raw_item_id);
             CREATE INDEX IF NOT EXISTS idx_parsed_data_worker ON parsed_data(worker_id);
             CREATE INDEX IF NOT EXISTS idx_parsed_data_processor ON parsed_data(processor_id);
+            CREATE INDEX IF NOT EXISTS idx_parsed_data_final ON parsed_data(is_final);
 
             CREATE TABLE IF NOT EXISTS process_request_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

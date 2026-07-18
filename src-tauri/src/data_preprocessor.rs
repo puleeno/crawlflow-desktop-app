@@ -33,6 +33,7 @@ pub struct UrlPattern {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PreprocessorConfig {
     pub input_type: String,
     pub item_selector: Option<String>,
@@ -358,7 +359,6 @@ impl DataPreprocessor {
                 source_url: transformed_url.clone(),
                 item_type: "url".to_string(),
                 item_hash: format!("{:x}", md5::compute(transformed_url.as_bytes())),
-                raw_content: Some(listing_html),
                 extracted_url: Some(transformed_url),
             };
 
@@ -556,33 +556,56 @@ impl DataPreprocessor {
             .collect();
 
         if let Some(selector) = &config.item_selector {
-            // Extract items by CSS selector → then extract URLs from each item
-            let items_html = Self::extract_by_selector(html, selector);
-            for item_html in items_html {
-                let urls =
-                    ItemMatcher::extract_matching_urls(&item_html, source_url, &match_patterns);
-                for url in urls {
-                    let item_hash = Self::hash(&url);
+            if !selector.trim().is_empty() {
+                // Extract items by CSS selector → then extract URLs from each item
+                let items_html = Self::extract_by_selector(html, selector);
+                for item_html in items_html {
+                    let urls =
+                        ItemMatcher::extract_matching_urls(&item_html, source_url, &match_patterns);
+                    for url in urls {
+                        let item_hash = Self::hash(&url);
+                        items.push(NewRawItem {
+                            source_url: source_url.to_string(),
+                            item_type: "url".into(),
+                            item_hash,
+                            extracted_url: Some(url),
+                        });
+                    }
+                }
+            } else {
+                // Empty selector → treat as no selector
+                let urls = ItemMatcher::extract_matching_urls(html, source_url, &match_patterns);
+                if urls.is_empty() {
+                    // Fallback: save entire HTML as one item
+                    let item_hash = Self::hash(html);
                     items.push(NewRawItem {
                         source_url: source_url.to_string(),
-                        item_type: "url".into(),
+                        item_type: "page".into(),
                         item_hash,
-                        raw_content: Some(item_html.clone()),
-                        extracted_url: Some(url),
+                        extracted_url: None,
                     });
+                } else {
+                    for url in urls {
+                        let item_hash = Self::hash(&url);
+                        items.push(NewRawItem {
+                            source_url: source_url.to_string(),
+                            item_type: "url".into(),
+                            item_hash,
+                            extracted_url: Some(url),
+                        });
+                    }
                 }
             }
         } else {
             // No CSS selector → extract URLs directly from full HTML
             let urls = ItemMatcher::extract_matching_urls(html, source_url, &match_patterns);
             if urls.is_empty() {
-                // Fallback: save entire HTML as one item
+                // Fallback: save entire HTML as one item (content goes to crawl_data later)
                 let item_hash = Self::hash(html);
                 items.push(NewRawItem {
                     source_url: source_url.to_string(),
                     item_type: "page".into(),
                     item_hash,
-                    raw_content: Some(html.to_string()),
                     extracted_url: None,
                 });
             } else {
@@ -592,19 +615,8 @@ impl DataPreprocessor {
                         source_url: source_url.to_string(),
                         item_type: "url".into(),
                         item_hash,
-                        raw_content: None,
                         extracted_url: Some(url),
                     });
-                }
-            }
-        }
-
-        // Apply extract rules (field extraction từ HTML)
-        if !config.extract_rules.is_empty() {
-            for item in &mut items {
-                if let Some(content) = &item.raw_content {
-                    let extracted = Self::apply_extract_rules(content, &config.extract_rules);
-                    item.raw_content = Some(extracted);
                 }
             }
         }
@@ -661,7 +673,6 @@ impl DataPreprocessor {
                 source_url: source_url.to_string(),
                 item_type: "csv_row".into(),
                 item_hash,
-                raw_content: Some(row_str),
                 extracted_url: None,
             });
         }
@@ -722,7 +733,6 @@ impl DataPreprocessor {
                 source_url: source_url.to_string(),
                 item_type: "json_item".into(),
                 item_hash,
-                raw_content: Some(item_str),
                 extracted_url,
             });
         }
@@ -776,7 +786,6 @@ impl DataPreprocessor {
                 source_url: source_url.to_string(),
                 item_type: "xml_item".into(),
                 item_hash,
-                raw_content: Some(content),
                 extracted_url,
             });
         }
@@ -788,7 +797,6 @@ impl DataPreprocessor {
                 source_url: source_url.to_string(),
                 item_type: "xml_doc".into(),
                 item_hash,
-                raw_content: Some(data.to_string()),
                 extracted_url: None,
             });
         }
@@ -823,7 +831,6 @@ impl DataPreprocessor {
                 source_url: source_url.to_string(),
                 item_type: if is_url { "url".into() } else { "text".into() },
                 item_hash,
-                raw_content: Some(line.to_string()),
                 extracted_url: if is_url { Some(line.to_string()) } else { None },
             });
         }
