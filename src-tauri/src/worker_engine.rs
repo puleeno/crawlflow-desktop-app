@@ -627,12 +627,13 @@ impl WorkerEngine {
     ) -> Result<serde_json::Value, String> {
         let url = &item.source_url;
 
-        let html: String = if item.item_type == "url" {
+        let html: String = if let Some(rc) = repo.get_crawl_data_content(item.id) {
+            rc
+        } else if item.item_type == "url" {
             let profile = worker.client_profile.clone().unwrap_or_default();
             Self::blocking_fetch(url, &profile)?
         } else {
-            // Product JSON is stored separately by plugin; webpage HTML is stored in crawl_data
-            repo.get_crawl_data_content(item.id).unwrap_or_default()
+            String::new()
         };
 
         // Build output map

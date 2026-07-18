@@ -821,6 +821,7 @@ def _parse_product_from_html(html, url):
         "stock": stock,
         "availability": availability or "Còn hàng",
         "crawled_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        "raw_html": html,
     }
 
 
@@ -974,15 +975,16 @@ def fetch_data(config_json):
 
     products = _crawl_all_products(shop_url, max_pages, delay_ms, client_type, headless)
 
-    # Dung dinh dang item ma Rust/worker hieu: item_type='product'.
+    # Dung dinh dang item ma Rust/worker hieu: item_type='url'.
     items = []
     for p in products:
         item_url = p.get("url", "")
+        raw_html = p.pop("raw_html", "")
         items.append({
             "source_url": item_url,
-            "item_type": "product",
+            "item_type": "url",
             "item_hash": hashlib.sha256(item_url.encode("utf-8")).hexdigest() if item_url else hashlib.sha256(json.dumps(p, ensure_ascii=False).encode("utf-8")).hexdigest(),
-            "raw_content": json.dumps(p, ensure_ascii=False),
+            "raw_content": raw_html,
             "extracted_url": item_url,
         })
 
