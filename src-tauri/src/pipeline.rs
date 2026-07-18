@@ -442,6 +442,8 @@ fn process_node(
                 .data
                 .get("processorConfig")
                 .cloned()
+                .or_else(|| node.data.get("settings").cloned())
+                .or_else(|| node.data.get("config").cloned())
                 .unwrap_or(serde_json::Value::Null);
 
             let result = match processor_type {
@@ -895,6 +897,11 @@ pub async fn execute_repository_pipeline(
                                 //   - "url"/"product" → already-resolved product URLs.
                                 let mut listing_from_plugin: Vec<crate::pipeline::FetchedDataPlaceholder> =
                                     Vec::new();
+                                // Map item_hash -> raw_content so we can persist the
+                                // plugin's structured payload into crawl_data for
+                                // product items (worker unwraps it later).
+                                let mut raw_content_by_hash: std::collections::HashMap<String, String> =
+                                    std::collections::HashMap::new();
                                 let new_items: Vec<crate::repository::NewRawItem> = plugin_items
                                     .iter()
                                     .filter_map(|item| {
@@ -956,6 +963,9 @@ pub async fn execute_repository_pipeline(
                                         };
                                         let item_hash =
                                             crate::pipeline_config::simple_hash(hash_input);
+                                        if let Some(rc) = raw_content.clone() {
+                                            raw_content_by_hash.insert(item_hash.clone(), rc);
+                                        }
                                         Some(crate::repository::NewRawItem {
                                             source_url: source,
                                             item_type: item_type.to_string(),
@@ -980,6 +990,21 @@ pub async fn execute_repository_pipeline(
                                     match repo.save_items(&new_items) {
                                         Ok(r) => {
                                             total_ingested += r.inserted;
+                                            // Persist plugin raw_content (structured
+                                            // product JSON) into crawl_data keyed by id.
+                                            for (idx, item) in new_items.iter().enumerate() {
+                                                if let Some(rc) =
+                                                    raw_content_by_hash.get(&item.item_hash)
+                                                {
+                                                    if let Some(id) = r.ids.get(idx) {
+                                                        let _ = repo.save_crawl_data(
+                                                            *id,
+                                                            "json",
+                                                            rc,
+                                                        );
+                                                    }
+                                                }
+                                            }
                                             log_manager.info(
                                                 project_id,
                                                 "fetching",

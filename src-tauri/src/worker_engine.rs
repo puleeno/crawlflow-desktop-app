@@ -629,6 +629,22 @@ impl WorkerEngine {
         );
         fields.insert("item_type".into(), serde_json::json!(item.item_type));
 
+        // Plugin-emitted structured item (item_type='product'): the plugin has
+        // already parsed the data, so unwrap its JSON payload as the fields.
+        // This lets Python plugins fully own the extraction logic.
+        if item.item_type == "product" {
+            if let Some(rc) = repo.get_crawl_data_content(item.id) {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&rc) {
+                    if let serde_json::Value::Object(obj) = parsed {
+                        for (k, v) in obj {
+                            fields.entry(k).or_insert(v);
+                        }
+                    }
+                }
+            }
+            return Ok(serde_json::Value::Object(fields));
+        }
+
         let extract_rules = worker.extract_rules.as_deref().unwrap_or(&[]);
 
         if !html.is_empty() {

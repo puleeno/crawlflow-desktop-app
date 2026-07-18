@@ -60,11 +60,21 @@ fn get_user_plugins_dir() -> PathBuf {
 
 fn get_builtin_plugins_dir() -> Option<PathBuf> {
     let bundled_dir = std::env::current_exe().ok().and_then(|path| {
-        path.parent()?
-            .parent()
-            .map(|resources| resources.join("plugins"))
+        let contents = path.parent()?; // .../Contents/MacOS -> .../Contents
+        // Standard: <Contents>/Resources/plugins
+        let resources = contents.join("Resources");
+        let std = resources.join("plugins");
+        if std.is_dir() {
+            return Some(std);
+        }
+        // Fallback: <Contents>/Resources/_up_/plugins
+        let up = resources.join("_up_").join("plugins");
+        if up.is_dir() {
+            return Some(up);
+        }
+        None
     });
-    if bundled_dir.as_ref().is_some_and(|path| path.is_dir()) {
+    if bundled_dir.is_some() {
         return bundled_dir;
     }
 

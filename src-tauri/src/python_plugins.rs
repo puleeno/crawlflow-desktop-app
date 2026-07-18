@@ -620,8 +620,41 @@ fn create_crawlflow_api<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyModule>> 
     Ok(module.into())
 }
 
-#[pyfunction(name = "fetch_url", signature = (url, headers=None))]
-fn py_fetch_url(url: String, headers: Option<Vec<(String, String)>>) -> PyResult<String> {
+#[pyfunction(name = "fetch_url", signature = (url, headers=None, client_type=None, headless=None))]
+fn py_fetch_url(
+    url: String,
+    headers: Option<Vec<(String, String)>>,
+    client_type: Option<String>,
+    headless: Option<bool>,
+) -> PyResult<String> {
+    use crate::models::ClientProfile;
+
+    let use_chrome = client_type.as_deref() == Some("chrome")
+        || client_type.as_deref() == Some("cdp");
+
+    if use_chrome {
+        let profile = ClientProfile {
+            client_type: "chrome".into(),
+            headless: Some(headless.unwrap_or(true)),
+            ..Default::default()
+        };
+        let (result, _session) = crate::request_clients::fetch_via_cdp(
+            &url,
+            &profile,
+            None,
+            None,
+            None,
+        );
+        let body = result.html.unwrap_or_default();
+        let status = if result.status == 200 { 200 } else { 0 };
+        let out = serde_json::json!({
+            "status": status,
+            "body": body,
+            "url": url,
+        });
+        return serde_json::to_string(&out)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()));
+    }
 
     let result = std::thread::spawn(move || -> PyResult<String> {
         let rt = tokio::runtime::Runtime::new()

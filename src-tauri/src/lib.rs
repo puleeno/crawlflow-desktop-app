@@ -37,9 +37,15 @@ fn get_user_plugins_dir() -> PathBuf {
 
 fn get_builtin_plugins_dir(app: &tauri::App) -> Option<PathBuf> {
     if let Ok(resource_dir) = app.path().resource_dir() {
+        // Standard location: <resource_dir>/plugins
         let path = resource_dir.join("plugins");
         if path.is_dir() {
             return Some(path);
+        }
+        // Fallback for bundles that ship plugins under <resource_dir>/_up_/plugins
+        let up_path = resource_dir.join("_up_").join("plugins");
+        if up_path.is_dir() {
+            return Some(up_path);
         }
     }
     let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

@@ -636,6 +636,17 @@ def _has_next_page(html, current_page):
     """
     next_page_num = current_page + 1
 
+    # 0. Tim tat ca so trang tu link ?page=N / &page=N trong HTML. Neu co
+    #    trang lon hon current -> chac chan con trang sau (Oreka render day du
+    #    pagination nen cach nay rat tin cay).
+    page_nums = [
+        int(m)
+        for m in re.findall(r'[?&]page=(\d+)', html)
+        if m.isdigit()
+    ]
+    if page_nums and max(page_nums) > current_page:
+        return True
+
     # 1. rel="next"
     if re.search(r'rel=["\']next["\']', html, re.IGNORECASE):
         return True
@@ -799,10 +810,10 @@ def _parse_product_from_html(html, url):
 
     return {
         "url": url,
-        "name": name or os.path.basename(url),
+        "product_name": name or os.path.basename(url),
         "price": price,
         "old_price": old_price,
-        "image": image,
+        "image_url": image,
         "sku": sku,
         "description": description[:500] if description else "",
         "specs": specs,
@@ -822,84 +833,161 @@ def on_load(config):
         crawlflow.log("[OrekaShop] openpyxl not installed - will use CSV output", "warn")
 
 
-def fetch_data(config_json):
-    """Lay store page HTML, trich storeId va sinh danh sach listing URL.
+def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headless=None):
+    """Tu crawl toan bo san pham cua shop (phan trang + trich product URL + parse).
 
-    Plugin tu quyet dinh logic phan trang + rewrite URL. Tra ve truc tiep
-    N item kieu 'listing_url' (URL da duoc rewrite thanh /mua-ban?storeId=...
-    &page=N). Rust chi can gom cac item nay vao fetched_sources de Stage B
-    trich product URLs (qua [URL Patterns] cua fetch-data node).
+    Tra ve danh sach cac dict san pham (da duoc parse day du). Logic phan trang
+    hoan toan nam trong Python plugin (linh dong, khong phu thuoc Rust Stage B).
+    client_type: 'reqwest' (mac dinh) hoac 'chrome' — su dung 2 kenh fetch.
+    """
+    def _fetch(url):
+        # Goi Python SDK fetch_url voi kem client_type de chon kenh reqwest/chrome.
+        return crawlflow.fetch_url(url, None, client_type, headless)
+
+    # 1. Lay storeId tu store page.
+    try:
+        raw = _fetch(shop_url)
+        store_result = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception as e:
+        crawlflow.log(f"[OrekaShop] Loi fetch store page: {e}", "error")
+        return []
+
+    store_html = store_result.get("body", "") if isinstance(store_result, dict) else ""
+    if not store_html:
+        crawlflow.log("[OrekaShop] Store page rong", "error")
+        return []
+
+    store_id = _extract_store_id_from_html(store_html) or _extract_store_id_from_html(shop_url)
+    if not store_id:
+        crawlflow.log("[OrekaShop] Khong tim thay storeId", "error")
+        return []
+
+    base_listing_url = _oreka_listing_url(shop_url, store_id)
+    crawlflow.log(
+        f"[OrekaShop] storeId={store_id} | listing base={base_listing_url}", "info"
+    )
+
+    products = []
+    seen_urls = set()
+    page_num = 1
+
+    while True:
+        page_url = _add_page_to_url(base_listing_url, "page", page_num) if page_num > 1 else base_listing_url
+        crawlflow.log(f"[OrekaShop] Listing page {page_num}: {page_url}", "info")
+
+        try:
+            raw = _fetch(page_url)
+            listing_result = json.loads(raw) if isinstance(raw, str) else raw
+        except Exception as e:
+            crawlflow.log(f"[OrekaShop] Loi fetch listing page {page_num}: {e}", "error")
+            break
+
+        listing_html = listing_result.get("body", "") if isinstance(listing_result, dict) else ""
+        if not listing_html:
+            crawlflow.log(f"[OrekaShop] Listing page {page_num} rong", "warn")
+            break
+
+        # Trich product URLs tu listing HTML.
+        product_urls = _extract_oreka_listing_links(listing_html, page_url)
+        crawlflow.log(
+            f"[OrekaShop] Tim thay {len(product_urls)} product URL o trang {page_num}",
+            "info",
+        )
+
+        for p_url in product_urls:
+            if p_url in seen_urls:
+                continue
+            seen_urls.add(p_url)
+            try:
+                praw = _fetch(p_url)
+                pres = json.loads(praw) if isinstance(praw, str) else praw
+                phtml = pres.get("body", "") if isinstance(pres, dict) else ""
+                if phtml:
+                    prod = _parse_product_from_html(phtml, p_url)
+                    products.append(prod)
+            except Exception as e:
+                crawlflow.log(f"[OrekaShop] Loi fetch product {p_url}: {e}", "warn")
+
+        # Tiep tuc phan trang: reqwest da lay xong HTML listing, giao cho
+        # Python tim nut "next page" trong chinh HTML do (khong fetch them).
+        if page_num >= max_pages:
+            crawlflow.log(f"[OrekaShop] Da du max_pages={max_pages}", "info")
+            break
+
+        has_next = _has_next_page(listing_html, page_num)
+        if not has_next:
+            crawlflow.log(f"[OrekaShop] Het phan trang tai trang {page_num}", "info")
+            break
+        if page_num >= max_pages:
+            crawlflow.log(f"[OrekaShop] Da du max_pages={max_pages}", "info")
+            break
+        page_num += 1
+        if delay_ms > 0:
+            time.sleep(delay_ms / 1000.0)
+
+    return products
+
+
+def fetch_data(config_json):
+    """Crawl toan bo san pham cua shop va tra ve truc tiep N item 'product'.
+
+    Plugin tu quyet dinh toan bo logic: lay storeId, phan trang listing,
+    trich product URL, parse chi tiet. Rust chi can gom cac item nay vao
+    raw_items (item_type='product') de worker + exporter xu ly tiep.
 
     Config:
         shop_url (str, bat buoc): URL cua store (vd: https://www.oreka.vn/store/motsach)
-        max_pages (int, mac dinh: 50): so trang listing can crawl
+        max_pages (int, mac dinh: 50): gioi han so trang (de an toan)
+        delay_ms (int, mac dinh: 1000): nghi giua cac request
         project_id (str): ID project (tu dong inject)
     """
     config = json.loads(config_json) if isinstance(config_json, str) else config_json
 
-    shop_url = config.get("shop_url", "").strip()
+    shop_url = (config.get("shop_url") or "").strip()
+    if not shop_url:
+        # Fallback: dung chinh sourceValue neu shop_url chua duoc set.
+        shop_url = (config.get("source_value") or "").strip()
     if not shop_url:
         crawlflow.log("[OrekaShop] Thieu shop_url trong config", "error")
         return json.dumps([])
 
-    project_id = config.get("project_id", "default")
-
-    crawlflow.log(f"[OrekaShop][fetch_data] Lay raw HTML store page: {shop_url}", "info")
-
-    # Chi fetch store page HTML thoi (de lay storeId).
-    try:
-        raw = crawlflow.fetch_url(shop_url, None)
-        result = json.loads(raw) if isinstance(raw, str) else raw
-    except Exception as e:
-        crawlflow.log(f"[OrekaShop][fetch_data] Loi fetch store page: {e}", "error")
-        return json.dumps([])
-
-    if result.get("status") != 200:
-        crawlflow.log(
-            f"[OrekaShop][fetch_data] Store page tra ve status {result.get('status')}",
-            "error",
-        )
-        return json.dumps([])
-
-    html_body = result.get("body", "")
-    if not html_body:
-        crawlflow.log("[OrekaShop][fetch_data] Store page rong", "warn")
-        return json.dumps([])
-
-    crawlflow.log(
-        f"[OrekaShop][fetch_data] Lay duoc HTML {len(html_body)} ky tu",
-        "info",
-    )
-
-    # Plugin tu trich storeId va rewrite thanh listing URL.
-    store_id = _extract_store_id_from_html(html_body) or _extract_store_id_from_html(shop_url)
-    if not store_id:
-        crawlflow.log("[OrekaShop][fetch_data] Khong tim thay storeId", "error")
-        return json.dumps([])
-
-    base_listing_url = _oreka_listing_url(shop_url, store_id)
-
     max_pages = int((config.get("max_pages") or 50) or 50)
     if max_pages < 1:
         max_pages = 1
+    delay_ms = int((config.get("delay_ms") or 1000) or 1000)
+    if delay_ms < 0:
+        delay_ms = 0
 
+    # Chon kenh fetch: reqwest (mac dinh) hoac chrome. Doc tu config
+    # (clientType) hoac urlSettings.httpClient.clientType cua node.
+    client_type = (config.get("clientType") or config.get("client_type")
+                   or (config.get("urlSettings") or {}).get("httpClient", {}).get("clientType"))
+    if client_type not in ("reqwest", "chrome", "cdp"):
+        client_type = "reqwest"
+    headless = bool((config.get("headless")
+                     or (config.get("urlSettings") or {}).get("httpClient", {}).get("headless", True)))
+
+    crawlflow.log(
+        f"[OrekaShop][fetch_data] Bat dau crawl shop={shop_url} (max_pages={max_pages}, client={client_type})",
+        "info",
+    )
+
+    products = _crawl_all_products(shop_url, max_pages, delay_ms, client_type, headless)
+
+    # Dung dinh dang item ma Rust/worker hieu: item_type='product'.
     items = []
-    for page_num in range(1, max_pages + 1):
-        page_url = _add_page_to_url(base_listing_url, "page", page_num) if page_num > 1 else base_listing_url
-        crawlflow.log(
-            f"[OrekaShop][fetch_data] Listing page {page_num}: {page_url} (storeId={store_id})",
-            "info",
-        )
+    for p in products:
+        item_url = p.get("url", "")
         items.append({
-            "source_url": page_url,
-            "item_type": "listing_url",
-            "item_hash": hashlib.sha256(page_url.encode("utf-8")).hexdigest(),
-            "raw_content": None,
-            "extracted_url": page_url,
+            "source_url": item_url,
+            "item_type": "product",
+            "item_hash": hashlib.sha256(item_url.encode("utf-8")).hexdigest() if item_url else hashlib.sha256(json.dumps(p, ensure_ascii=False).encode("utf-8")).hexdigest(),
+            "raw_content": json.dumps(p, ensure_ascii=False),
+            "extracted_url": item_url,
         })
 
     crawlflow.log(
-        f"[OrekaShop][fetch_data] Da tao {len(items)} listing URL (page 1..{max_pages})",
+        f"[OrekaShop][fetch_data] Hoan tat: {len(items)} san pham",
         "info",
     )
     return json.dumps(items)

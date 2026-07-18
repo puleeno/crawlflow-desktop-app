@@ -242,6 +242,17 @@ impl RawItemRepository {
             .map(|c| c.content)
     }
 
+    /// Look up a raw_item id by its hash (used to attach crawl_data after insert).
+    pub fn get_raw_item_id_by_hash(&self, item_hash: &str) -> Result<i64, String> {
+        self.conn
+            .query_row(
+                "SELECT id FROM raw_items WHERE item_hash = ?1 LIMIT 1",
+                params![item_hash],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to lookup raw_item by hash: {}", e))
+    }
+
     /// Lấy tất cả JSON-LD blocks của một raw_item.
     pub fn get_json_ld(&self, raw_item_id: i64) -> Result<Vec<JsonLd>, String> {
         let mut stmt = self
