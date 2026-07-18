@@ -181,7 +181,7 @@
             "id": "1784179298015",
             "name": "images",
             "extractFrom": "html-element",
-            "selector": ".image-gallery-thumbnail ing",
+            "selector": ".image-gallery-thumbnail img",
             "extract": "attribute",
             "extractMultiple": true,
             "attribute": "Src"
