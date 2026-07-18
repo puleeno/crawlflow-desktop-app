@@ -217,7 +217,6 @@ impl WorkerEngine {
         for item in items.iter_mut() {
             let item_json = serde_json::json!({
                 "source_url": item.source_url,
-                "extracted_url": item.extracted_url,
                 "item_type": item.item_type,
             });
 
@@ -288,7 +287,7 @@ impl WorkerEngine {
                         "[worker::{}] Fetched+parsed item {} → {}",
                         worker.name,
                         item.id,
-                        item.extracted_url.as_deref().unwrap_or(&item.source_url)
+                        item.source_url
                     );
                     data
                 }
@@ -445,7 +444,7 @@ impl WorkerEngine {
                             "[worker::{}] Fetched+parsed item {} → {} (attempt {})",
                             worker.name,
                             item.id,
-                            item.extracted_url.as_deref().unwrap_or(&item.source_url),
+                            item.source_url,
                             retry_count + 1
                         );
                         data
@@ -595,7 +594,7 @@ impl WorkerEngine {
     /// Fetch the detail page for a matched item and parse it using the worker's
     /// extract_rules, returning a flat JSON object with all extracted fields.
     ///
-    /// • item_type = 'url'  → makes an HTTP GET of extracted_url (or source_url)
+    /// • item_type = 'url'  → makes an HTTP GET of source_url
     /// • item_type = 'url' → fetch detail page from network (Oreka flow:
     ///   worker fetches the product detail page).
     /// • item_type = 'page' / 'raw' / other → uses content from `crawl_data`
@@ -605,17 +604,13 @@ impl WorkerEngine {
         item: &RawItem,
         worker: &WorkerDef,
     ) -> Result<serde_json::Value, String> {
-        let url = item
-            .extracted_url
-            .as_deref()
-            .filter(|u| !u.is_empty())
-            .unwrap_or(&item.source_url);
+        let url = &item.source_url;
 
         let html: String = if item.item_type == "url" {
             let profile = worker.client_profile.clone().unwrap_or_default();
             Self::blocking_fetch(url, &profile)?
         } else {
-            repo.get_crawl_data_content(item.id).unwrap_or_default()
+            repo.get_crawl_data_content(&item.source_url).unwrap_or_default()
         };
 
         // Build output map
@@ -623,17 +618,13 @@ impl WorkerEngine {
         fields.insert("id".into(), serde_json::json!(item.id));
         fields.insert("url".into(), serde_json::json!(url));
         fields.insert("source_url".into(), serde_json::json!(item.source_url));
-        fields.insert(
-            "extracted_url".into(),
-            serde_json::json!(item.extracted_url),
-        );
         fields.insert("item_type".into(), serde_json::json!(item.item_type));
 
         // Plugin-emitted structured item (item_type='product'): the plugin has
         // already parsed the data, so unwrap its JSON payload as the fields.
         // This lets Python plugins fully own the extraction logic.
         if item.item_type == "product" {
-            if let Some(rc) = repo.get_crawl_data_content(item.id) {
+            if let Some(rc) = repo.get_crawl_data_content(&item.source_url) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&rc) {
                     if let serde_json::Value::Object(obj) = parsed {
                         for (k, v) in obj {

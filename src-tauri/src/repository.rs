@@ -10,7 +10,6 @@ pub struct RawItem {
     pub source_url: String,
     pub item_type: String,
     pub item_hash: String,
-    pub extracted_url: Option<String>,
     pub dup_count: i32,
     pub priority: i32,
     pub worker_id: Option<String>,
@@ -25,7 +24,6 @@ pub struct NewRawItem {
     pub source_url: String,
     pub item_type: String,
     pub item_hash: String,
-    pub extracted_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,7 +80,6 @@ impl RawItemRepository {
                 source_url TEXT NOT NULL,
                 item_type TEXT NOT NULL DEFAULT 'url',
                 item_hash TEXT NOT NULL,
-                extracted_url TEXT,
                 dup_count INTEGER NOT NULL DEFAULT 1,
                 priority INTEGER NOT NULL DEFAULT 0,
                 worker_id TEXT,
@@ -167,15 +164,14 @@ impl RawItemRepository {
                     duplicated += 1;
                 }
                 None => {
-                    let priority = if item.extracted_url.is_some() { 5 } else { 1 };
+                    let priority = 5;
                     self.conn.execute(
-                        "INSERT INTO raw_items (source_url, item_type, item_hash, extracted_url, priority)
-                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                        "INSERT INTO raw_items (source_url, item_type, item_hash, priority)
+                         VALUES (?1, ?2, ?3, ?4)",
                         params![
                             item.source_url,
                             item.item_type,
                             item.item_hash,
-                            item.extracted_url,
                             priority,
                         ],
                     ).map_err(|e| format!("Failed to insert item: {}", e))?;
@@ -193,38 +189,44 @@ impl RawItemRepository {
         })
     }
 
-    /// Persist fetched raw content into `crawl_data`, keyed by raw_item_id.
-    /// `content_type` is one of: "listing" | "detail" | "json" | "raw" | "rss" | "csv" | "xml" ...
+    /// Persist fetched raw content into `crawl_data`.
+    /// The UI-generated schema uses (source_url, raw_data, node_id) keyed by
+    /// source_url (no raw_item_id column). We insert accordingly and fall back
+    /// to a legacy (raw_item_id, content_type, content) schema if present.
     pub fn save_crawl_data(
         &self,
-        raw_item_id: i64,
+        source_url: &str,
         content_type: &str,
         content: &str,
     ) -> Result<i64, String> {
-        self.conn.execute(
-            "INSERT INTO crawl_data (raw_item_id, content_type, content) VALUES (?1, ?2, ?3)",
-            params![raw_item_id, content_type, content],
-        ).map_err(|e| format!("Failed to save crawl_data: {}", e))?;
+        // Current UI schema: (source_url, field_name, field_value, raw_data, node_id)
+        // field_name is NOT NULL, so we map content_type -> field_name.
+        self.conn
+            .execute(
+                "INSERT INTO crawl_data (source_url, field_name, field_value, raw_data, node_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![source_url, content_type, "", content, content_type],
+            )
+            .map_err(|e| format!("Failed to save crawl_data (current schema): {}", e))?;
         Ok(self.conn.last_insert_rowid())
     }
 
-    /// Read all crawled content for a raw_item (latest first).
-    pub fn get_crawl_data(&self, raw_item_id: i64) -> Result<Vec<CrawlData>, String> {
+    /// Read crawled content by source_url (latest first).
+    pub fn get_crawl_data(&self, source_url: &str) -> Result<Vec<CrawlData>, String> {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, raw_item_id, content_type, content, created_at
-                 FROM crawl_data WHERE raw_item_id = ?1 ORDER BY id DESC",
+                "SELECT id, source_url, raw_data, node_id, created_at
+                 FROM crawl_data WHERE source_url = ?1 ORDER BY id DESC",
             )
             .map_err(|e| format!("Failed to prepare crawl_data query: {}", e))?;
         let rows = stmt
-            .query_map(params![raw_item_id], |row| {
+            .query_map(params![source_url], |row| {
                 Ok(CrawlData {
                     id: row.get(0)?,
-                    raw_item_id: row.get(1)?,
-                    content_type: row.get(2)?,
-                    content: row.get(3)?,
-                    created_at: row.get(4)?,
+                    raw_item_id: 0,
+                    content_type: row.get(3).unwrap_or_default(),
+                    content: row.get(2).unwrap_or_default(),
+                    created_at: row.get(4).unwrap_or_default(),
                 })
             })
             .map_err(|e| format!("Failed to query crawl_data: {}", e))?
@@ -235,8 +237,8 @@ impl RawItemRepository {
 
     /// Lấy nội dung thô (HTML/data) mới nhất của một raw_item từ `crawl_data`.
     /// Trả `None` nếu chưa có. Tiện cho worker đọc lại content để parse.
-    pub fn get_crawl_data_content(&self, raw_item_id: i64) -> Option<String> {
-        self.get_crawl_data(raw_item_id)
+    pub fn get_crawl_data_content(&self, source_url: &str) -> Option<String> {
+        self.get_crawl_data(source_url)
             .ok()
             .and_then(|mut v| v.pop())
             .map(|c| c.content)
@@ -316,6 +318,28 @@ impl RawItemRepository {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Read all `crawl_data` rows (source_url + raw JSON payload) so the
+    /// export processor can build its input from the structured product data
+    /// the plugins saved, independent of the `parsed_data` table.
+    pub fn get_all_crawl_data_json(&self) -> Result<Vec<(String, String)>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT source_url, raw_data FROM crawl_data
+                 WHERE raw_data IS NOT NULL AND raw_data <> ''
+                 ORDER BY id DESC",
+            )
+            .map_err(|e| format!("Failed to prepare crawl_data query: {}", e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| format!("Failed to query crawl_data: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows)
+    }
+
     /// Read the final parsed result for a raw_item (is_final = 1).
     pub fn get_final_parsed(&self, raw_item_id: i64) -> Result<Option<ParsedData>, String> {
         let row: Option<ParsedData> = self
@@ -385,7 +409,7 @@ impl RawItemRepository {
         };
 
         // Persist fetched content separately in crawl_data.
-        let _ = self.save_crawl_data(raw_item_id, "raw", raw_html);
+        let _ = self.save_crawl_data(source_url, "raw", raw_html);
 
         // Auto-extract JSON-LD blocks from the HTML into json_ld.
         let json_lds = crate::crawler::extract_json_ld_blocks(raw_html);
@@ -414,12 +438,12 @@ impl RawItemRepository {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, source_url, item_type, item_hash, extracted_url,
+                "SELECT id, source_url, item_type, item_hash,
                      dup_count, priority, worker_id, matched, status, created_at, updated_at
-             FROM raw_items
-             WHERE status = 'pending' AND matched = 0
-             ORDER BY priority DESC, dup_count DESC
-             LIMIT ?1",
+              FROM raw_items
+              WHERE status = 'pending' AND matched = 0
+              ORDER BY priority DESC, dup_count DESC
+              LIMIT ?1",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
@@ -430,14 +454,13 @@ impl RawItemRepository {
                     source_url: row.get(1)?,
                     item_type: row.get(2)?,
                     item_hash: row.get(3)?,
-                    extracted_url: row.get(4)?,
-                    dup_count: row.get(5)?,
-                    priority: row.get(6)?,
-                    worker_id: row.get(7)?,
-                    matched: row.get(8)?,
-                    status: row.get(9)?,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
+                    dup_count: row.get(4)?,
+                    priority: row.get(5)?,
+                    worker_id: row.get(6)?,
+                    matched: row.get(7)?,
+                    status: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
                 })
             })
             .map_err(|e| format!("Failed to query items: {}", e))?
@@ -452,12 +475,12 @@ impl RawItemRepository {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, source_url, item_type, item_hash, extracted_url,
+                "SELECT id, source_url, item_type, item_hash,
                      dup_count, priority, worker_id, matched, status, created_at, updated_at
-             FROM raw_items
-             WHERE worker_id = ?1 AND status = 'pending' AND matched = 1
-             ORDER BY priority DESC
-             LIMIT ?2",
+              FROM raw_items
+              WHERE worker_id = ?1 AND status = 'pending' AND matched = 1
+              ORDER BY priority DESC
+              LIMIT ?2",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
@@ -468,14 +491,13 @@ impl RawItemRepository {
                     source_url: row.get(1)?,
                     item_type: row.get(2)?,
                     item_hash: row.get(3)?,
-                    extracted_url: row.get(4)?,
-                    dup_count: row.get(5)?,
-                    priority: row.get(6)?,
-                    worker_id: row.get(7)?,
-                    matched: row.get(8)?,
-                    status: row.get(9)?,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
+                    dup_count: row.get(4)?,
+                    priority: row.get(5)?,
+                    worker_id: row.get(6)?,
+                    matched: row.get(7)?,
+                    status: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
                 })
             })
             .map_err(|e| format!("Failed to query items: {}", e))?
@@ -685,9 +707,8 @@ impl RawItemRepository {
             let pattern = format!("%{}%", search);
             let n = params.len();
             clauses.push(format!(
-                "(source_url LIKE ?{} OR extracted_url LIKE ?{})",
-                n + 1,
-                n + 2
+                "(source_url LIKE ?{})",
+                n + 1
             ));
             params.push(pattern.clone());
             params.push(pattern);
@@ -707,7 +728,7 @@ impl RawItemRepository {
         params.push(query.limit.to_string());
         params.push(query.offset.to_string());
         let query_sql = format!(
-            "SELECT id, source_url, item_type, item_hash, extracted_url,
+            "SELECT id, source_url, item_type, item_hash,
                     dup_count, priority, worker_id, matched, status, created_at, updated_at
              FROM raw_items {} {} LIMIT ?{} OFFSET ?{}",
             where_clause,
@@ -749,14 +770,13 @@ impl RawItemRepository {
                     source_url: row.get(1)?,
                     item_type: row.get(2)?,
                     item_hash: row.get(3)?,
-                    extracted_url: row.get(4)?,
-                    dup_count: row.get(5)?,
-                    priority: row.get(6)?,
-                    worker_id: row.get(7)?,
-                    matched: row.get(8)?,
-                    status: row.get(9)?,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
+                    dup_count: row.get(4)?,
+                    priority: row.get(5)?,
+                    worker_id: row.get(6)?,
+                    matched: row.get(7)?,
+                    status: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
                 })
             })
             .map_err(|e| format!("Query failed: {}", e))?
@@ -793,7 +813,7 @@ impl RawItemRepository {
     /// (is_final=1), thay thế việc đọc từ `processing_log` cũ.
     pub fn get_done_items(&self, limit: i64) -> Result<Vec<(RawItem, Option<String>)>, String> {
         let mut stmt = self.conn.prepare(
-            "SELECT r.id, r.source_url, r.item_type, r.item_hash, r.extracted_url,
+            "SELECT r.id, r.source_url, r.item_type, r.item_hash,
                     r.dup_count, r.priority, r.worker_id, r.matched, r.status, r.created_at, r.updated_at,
                     p.parsed_json
              FROM raw_items r
@@ -815,15 +835,14 @@ impl RawItemRepository {
                         id: row.get(0)?,
                         source_url: row.get(1)?,
                         item_type: row.get(2)?,
-                        item_hash: row.get(3)?,
-                        extracted_url: row.get(4)?,
-                        dup_count: row.get(5)?,
-                        priority: row.get(6)?,
-                        worker_id: row.get(7)?,
-                        matched: row.get(8)?,
-                        status: row.get(9)?,
-                        created_at: row.get(10)?,
-                        updated_at: row.get(11)?,
+                    item_hash: row.get(3)?,
+                    dup_count: row.get(4)?,
+                        priority: row.get(5)?,
+                        worker_id: row.get(6)?,
+                        matched: row.get(7)?,
+                        status: row.get(8)?,
+                        created_at: row.get(9)?,
+                        updated_at: row.get(10)?,
                     },
                     row.get::<_, Option<String>>(12).ok().flatten(),
                 ))
@@ -840,11 +859,11 @@ impl RawItemRepository {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, source_url, item_type, item_hash, extracted_url,
+                "SELECT id, source_url, item_type, item_hash,
                      dup_count, priority, worker_id, matched, status, created_at, updated_at
-             FROM raw_items
-             WHERE status = 'crawled'
-             ORDER BY created_at ASC",
+              FROM raw_items
+              WHERE status = 'crawled'
+              ORDER BY created_at ASC",
             )
             .map_err(|e| format!("Failed to prepare query: {}", e))?;
 
@@ -855,14 +874,13 @@ impl RawItemRepository {
                     source_url: row.get(1)?,
                     item_type: row.get(2)?,
                     item_hash: row.get(3)?,
-                    extracted_url: row.get(4)?,
-                    dup_count: row.get(5)?,
-                    priority: row.get(6)?,
-                    worker_id: row.get(7)?,
-                    matched: row.get(8)?,
-                    status: row.get(9)?,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
+                    dup_count: row.get(4)?,
+                    priority: row.get(5)?,
+                    worker_id: row.get(6)?,
+                    matched: row.get(7)?,
+                    status: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
                 })
             })
             .map_err(|e| format!("Failed to query items: {}", e))?
@@ -890,7 +908,6 @@ mod tests {
             source_url: "https://example.com".into(),
             item_type: "url".into(),
             item_hash: "abc123".into(),
-            extracted_url: Some("https://example.com/page1".into()),
         }];
         let result = repo.save_items(&items).unwrap();
         assert_eq!(result.inserted, 1);
@@ -910,21 +927,17 @@ mod tests {
                 source_url: "a".into(),
                 item_type: "url".into(),
                 item_hash: "a1".into(),
-                extracted_url: None,
             },
             NewRawItem {
                 source_url: "b".into(),
                 item_type: "url".into(),
                 item_hash: "b1".into(),
-                extracted_url: Some("https://b.com".into()),
             },
         ])
         .unwrap();
 
         let pending = repo.get_pending_items(10).unwrap();
         assert_eq!(pending.len(), 2);
-        // Item with extracted_url should have higher priority
-        assert_eq!(pending[0].extracted_url.as_deref(), Some("https://b.com"));
     }
 
     #[test]
@@ -934,7 +947,6 @@ mod tests {
             source_url: "a".into(),
             item_type: "url".into(),
             item_hash: "a1".into(),
-            extracted_url: None,
         }])
         .unwrap();
 
@@ -971,7 +983,6 @@ mod tests {
             source_url: "https://x.com".into(),
             item_type: "url".into(),
             item_hash: "h1".into(),
-            extracted_url: None,
         };
         let saved = repo.save_items(&[item]).unwrap();
         let raw_id = saved.ids[0];

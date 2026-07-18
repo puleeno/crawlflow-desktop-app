@@ -446,6 +446,42 @@ fn process_node(
                 .or_else(|| node.data.get("config").cloned())
                 .unwrap_or(serde_json::Value::Null);
 
+            // Inject `extractFields` (field names from the upstream extractor
+            // node) so the export plugin keeps the extractor output columns
+            // instead of dropping them as metadata.
+            let mut processor_config_obj = if processor_config.is_object() {
+                processor_config.as_object().cloned().unwrap()
+            } else {
+                serde_json::Map::new()
+            };
+            if !processor_config_obj.contains_key("extractFields") {
+                let extract_fields: Vec<String> = config
+                    .nodes
+                    .iter()
+                    .filter(|n| n.node_type == "html-data-extractor")
+                    .filter_map(|n| {
+                        let rules = n
+                            .data
+                            .get("customRules")
+                            .or_else(|| n.data.get("extractionRules"))
+                            .or_else(|| n.data.get("extractRules"))?
+                            .as_array()?;
+                        Some(
+                            rules
+                                .iter()
+                                .filter_map(|r| r.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                                .collect::<Vec<String>>(),
+                        )
+                    })
+                    .flatten()
+                    .collect();
+                if !extract_fields.is_empty() {
+                    processor_config_obj
+                        .insert("extractFields".into(), serde_json::json!(extract_fields));
+                }
+            }
+            let processor_config = serde_json::Value::Object(processor_config_obj);
+
             let result = match processor_type {
                 "rust-deduplicate" => {
                     let cfg = processor_config;
@@ -913,10 +949,6 @@ pub async fn execute_repository_pipeline(
                                             .get("url")
                                             .and_then(|v| v.as_str())
                                             .unwrap_or("");
-                                        let extracted_url = item
-                                            .get("extracted_url")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string());
                                         let raw_content = item
                                             .get("raw_content")
                                             .and_then(|v| v.as_str())
@@ -956,7 +988,12 @@ pub async fn execute_repository_pipeline(
                                         // Default: product/url item.
                                         let raw_json =
                                             serde_json::to_string(item).unwrap_or_default();
-                                        let hash_input = if !url.is_empty() {
+                                        // Hash from source_url (stable per item) so re-crawls
+                                        // deduplicate correctly instead of creating duplicates
+                                        // when the plugin returns a slightly different `url`.
+                                        let hash_input = if !source.is_empty() {
+                                            source.as_str()
+                                        } else if !url.is_empty() {
                                             url
                                         } else {
                                             &raw_json
@@ -970,18 +1007,6 @@ pub async fn execute_repository_pipeline(
                                             source_url: source,
                                             item_type: item_type.to_string(),
                                             item_hash,
-                                            extracted_url: if extracted_url
-                                                .as_deref()
-                                                .map_or(true, |u| u.is_empty())
-                                            {
-                                                if url.is_empty() {
-                                                    None
-                                                } else {
-                                                    Some(url.to_string())
-                                                }
-                                            } else {
-                                                extracted_url
-                                            },
                                         })
                                     })
                                     .collect();
@@ -991,17 +1016,35 @@ pub async fn execute_repository_pipeline(
                                         Ok(r) => {
                                             total_ingested += r.inserted;
                                             // Persist plugin raw_content (structured
-                                            // product JSON) into crawl_data keyed by id.
-                                            for (idx, item) in new_items.iter().enumerate() {
+                                            // product JSON) into crawl_data keyed by source_url.
+                                            log_manager.info(
+                                                project_id,
+                                                "fetching",
+                                                &format!(
+                                                    "[node={}] raw_content_by_hash size={}, new_items={}",
+                                                    node_label, raw_content_by_hash.len(), new_items.len()
+                                                ),
+                                            );
+                                            for item in &new_items {
                                                 if let Some(rc) =
                                                     raw_content_by_hash.get(&item.item_hash)
                                                 {
-                                                    if let Some(id) = r.ids.get(idx) {
-                                                        let _ = repo.save_crawl_data(
-                                                            *id,
-                                                            "json",
-                                                            rc,
-                                                        );
+                                                    match repo.save_crawl_data(
+                                                        &item.source_url,
+                                                        "json",
+                                                        rc,
+                                                    ) {
+                                                        Ok(_) => {}
+                                                        Err(e) => {
+                                                            log_manager.error(
+                                                                project_id,
+                                                                "fetching",
+                                                                &format!(
+                                                                    "[node={}] save_crawl_data failed: {}",
+                                                                    node_label, e
+                                                                ),
+                                                            );
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1256,7 +1299,7 @@ pub async fn execute_repository_pipeline(
             if already {
                 continue;
             }
-            if let Some(html) = repo.get_crawl_data_content(item.id) {
+            if let Some(html) = repo.get_crawl_data_content(&item.source_url) {
                 fetched_sources.push(FetchedData {
                     source_url: item.source_url,
                     raw_data: html,
@@ -1443,11 +1486,7 @@ pub async fn execute_repository_pipeline(
                         let listing_urls: Vec<String> = items
                             .iter()
                             .filter(|it| it.item_type == "listing_url")
-                            .map(|it| {
-                                it.extracted_url
-                                    .clone()
-                                    .unwrap_or_else(|| it.source_url.clone())
-                            })
+                            .map(|it| it.source_url.clone())
                             .filter(|u| !u.is_empty())
                             .collect();
 
@@ -2405,7 +2444,7 @@ mod tests {
                         "includeHeader": true,
                         "sheetName": "Oreka Products",
                         "columnMapping": {
-                            "extracted_url": "URL",
+                            "source_url": "URL",
                             "product_name": "Tên sản phẩm",
                             "price": "Giá",
                             "description": "Mô tả",
@@ -2540,13 +2579,12 @@ mod tests {
         eprintln!("Total items in repo: {}", items.len());
         for item in &items {
             eprintln!(
-                "  id={} type={} status={} matched={} source_url={:?} extracted_url={:?}",
+                "  id={} type={} status={} matched={} source_url={:?}",
                 item.id,
                 item.item_type,
                 item.status,
                 item.matched,
                 item.source_url,
-                item.extracted_url
             );
         }
 

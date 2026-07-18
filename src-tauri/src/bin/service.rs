@@ -482,19 +482,145 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                             Some(&now),
                             None,
                         );
-                        lm.info(
-                            &project_id,
-                            "service",
-                            &format!(
-                                "Cycle #{}: ingested={}, matched={}, processed={}, failed={}",
-                                cycle,
-                                result.ingested,
-                                result.matched,
-                                result.processed,
-                                result.failed
-                            ),
-                        );
-                    } else {
+                            lm.info(
+                                &project_id,
+                                "service",
+                                &format!(
+                                    "Cycle #{}: ingested={}, matched={}, processed={}, failed={}",
+                                    cycle,
+                                    result.ingested,
+                                    result.matched,
+                                    result.processed,
+                                    result.failed
+                                ),
+                            );
+
+                            // ── Run export processor nodes (e.g. generate-excel-file) ──
+                            // The repository phase (worker) only crawls + parses items and
+                            // saves final_output into parsed_data. The standalone processor
+                            // nodes live in the pipeline graph and are NOT executed by the
+                            // repository phase, so we drive them here using the parsed output.
+                            if result.processed > 0 {
+                                let repo = match crawlflow_lib::repository::RawItemRepository::open(&db_path) {
+                                    Ok(r) => {
+                                        r.ensure_tables().ok();
+                                        r
+                                    }
+                                    Err(e) => {
+                                        lm.error(&project_id, "service", &format!("Cycle #{}: cannot open repo: {}", cycle, e));
+                                        continue;
+                                    }
+                                };
+                                let crawl_rows = repo.get_all_crawl_data_json().unwrap_or_default();
+                                let mut export_input: Vec<serde_json::Value> = Vec::new();
+                                let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
+                                for (source_url, raw_json) in crawl_rows {
+                                    let obj = match serde_json::from_str::<serde_json::Value>(&raw_json)
+                                        .ok()
+                                        .and_then(|v| v.as_object().cloned())
+                                    {
+                                        Some(o) => o,
+                                        None => serde_json::Map::new(),
+                                    };
+                                    let mut rec = obj;
+                                    rec.entry("source_url".to_string())
+                                        .or_insert_with(|| serde_json::Value::String(source_url.clone()));
+                                    // Deduplicate by source_url: keep the first occurrence.
+                                    if seen_urls.contains(&source_url) {
+                                        continue;
+                                    }
+                                    seen_urls.insert(source_url);
+                                    export_input.push(serde_json::Value::Object(rec));
+                                }
+
+                                for node in &config.nodes {
+                                    if node.node_type != "processor" {
+                                        continue;
+                                    }
+                                    let ptype = node
+                                        .data
+                                        .get("processorType")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    if ptype != "generate-excel-file"
+                                        && ptype != "excel-export"
+                                        && ptype != "rust-excel-export"
+                                    {
+                                        continue;
+                                    }
+                                    let mut pconfig = node
+                                        .data
+                                        .get("processorConfig")
+                                        .cloned()
+                                        .or_else(|| node.data.get("settings").cloned())
+                                        .or_else(|| node.data.get("config").cloned())
+                                        .unwrap_or(serde_json::Value::Null);
+                                    if let Some(obj) = pconfig.as_object_mut() {
+                                        if !obj.contains_key("extractFields") {
+                                            let extract_fields: Vec<String> = config
+                                                .nodes
+                                                .iter()
+                                                .filter(|n| n.node_type == "html-data-extractor")
+                                                .filter_map(|n| {
+                                                    let rules = n
+                                                        .data
+                                                        .get("customRules")
+                                                        .or_else(|| n.data.get("extractionRules"))
+                                                        .or_else(|| n.data.get("extractRules"))?
+                                                        .as_array()?;
+                                                    Some(
+                                                        rules
+                                                            .iter()
+                                                            .filter_map(|r| {
+                                                                r.get("name")
+                                                                    .and_then(|v| v.as_str())
+                                                                    .map(|s| s.to_string())
+                                                            })
+                                                            .collect::<Vec<String>>(),
+                                                    )
+                                                })
+                                                .flatten()
+                                                .collect();
+                                            if !extract_fields.is_empty() {
+                                                obj.insert(
+                                                    "extractFields".into(),
+                                                    serde_json::json!(extract_fields),
+                                                );
+                                            }
+                                        }
+                                    }
+                                    match crawlflow_lib::plugins::excel_export_plugin(
+                                        export_input.clone(),
+                                        pconfig,
+                                    ) {
+                                        Ok(out) => {
+                                            let file = out
+                                                .first()
+                                                .and_then(|v| v.get("file"))
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("<unknown>");
+                                            lm.info(
+                                                &project_id,
+                                                "service",
+                                                &format!(
+                                                    "Cycle #{}: export wrote {} items -> {}",
+                                                    cycle,
+                                                    export_input.len(),
+                                                    file
+                                                ),
+                                            );
+                                        }
+                                        Err(e) => {
+                                            lm.error(
+                                                &project_id,
+                                                "service",
+                                                &format!("Cycle #{}: export failed: {}", cycle, e),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
                         let err = result.error.clone().unwrap_or_default();
                         set_runner_status(
                             &conn,

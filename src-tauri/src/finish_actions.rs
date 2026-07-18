@@ -157,10 +157,6 @@ impl ActionEngine {
                 let mut map = serde_json::Map::new();
                 map.insert("id".into(), serde_json::json!(item.id));
                 map.insert("source_url".into(), serde_json::json!(item.source_url));
-                map.insert(
-                    "extracted_url".into(),
-                    serde_json::json!(item.extracted_url),
-                );
                 map.insert("status".into(), serde_json::json!(item.status));
                 if let Some(out) = output {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(out) {
@@ -301,10 +297,6 @@ impl ActionEngine {
                 let mut map = serde_json::Map::new();
                 map.insert("id".into(), serde_json::json!(item.id));
                 map.insert("source_url".into(), serde_json::json!(item.source_url));
-                map.insert(
-                    "extracted_url".into(),
-                    serde_json::json!(item.extracted_url),
-                );
                 map.insert("status".into(), serde_json::json!(item.status));
                 if let Some(out) = output {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(out) {

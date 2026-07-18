@@ -342,7 +342,7 @@ impl DataPreprocessor {
             let concrete_url_items = listing_result
                 .items
                 .iter()
-                .filter(|item| item.extracted_url.is_some())
+                .filter(|item| item.item_type == "url")
                 .count();
             if concrete_url_items > 0 {
                 log::info!(
@@ -359,7 +359,6 @@ impl DataPreprocessor {
                 source_url: transformed_url.clone(),
                 item_type: "url".to_string(),
                 item_hash: format!("{:x}", md5::compute(transformed_url.as_bytes())),
-                extracted_url: Some(transformed_url),
             };
 
             PreprocessorResult {
@@ -565,10 +564,9 @@ impl DataPreprocessor {
                     for url in urls {
                         let item_hash = Self::hash(&url);
                         items.push(NewRawItem {
-                            source_url: source_url.to_string(),
+                            source_url: url,
                             item_type: "url".into(),
                             item_hash,
-                            extracted_url: Some(url),
                         });
                     }
                 }
@@ -582,16 +580,14 @@ impl DataPreprocessor {
                         source_url: source_url.to_string(),
                         item_type: "page".into(),
                         item_hash,
-                        extracted_url: None,
                     });
                 } else {
                     for url in urls {
                         let item_hash = Self::hash(&url);
                         items.push(NewRawItem {
-                            source_url: source_url.to_string(),
+                            source_url: url,
                             item_type: "url".into(),
                             item_hash,
-                            extracted_url: Some(url),
                         });
                     }
                 }
@@ -606,16 +602,14 @@ impl DataPreprocessor {
                     source_url: source_url.to_string(),
                     item_type: "page".into(),
                     item_hash,
-                    extracted_url: None,
                 });
             } else {
                 for url in urls {
                     let item_hash = Self::hash(&url);
                     items.push(NewRawItem {
-                        source_url: source_url.to_string(),
+                        source_url: url,
                         item_type: "url".into(),
                         item_hash,
-                        extracted_url: Some(url),
                     });
                 }
             }
@@ -673,7 +667,6 @@ impl DataPreprocessor {
                 source_url: source_url.to_string(),
                 item_type: "csv_row".into(),
                 item_hash,
-                extracted_url: None,
             });
         }
 
@@ -722,18 +715,18 @@ impl DataPreprocessor {
         for item_val in arr {
             let item_str = item_val.to_string();
             let item_hash = Self::hash(&item_str);
-            let extracted_url = item_val
+            let item_source = item_val
                 .get("url")
                 .or_else(|| item_val.get("link"))
                 .or_else(|| item_val.get("href"))
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| source_url.to_string());
 
             items.push(NewRawItem {
-                source_url: source_url.to_string(),
+                source_url: item_source,
                 item_type: "json_item".into(),
                 item_hash,
-                extracted_url,
             });
         }
 
@@ -777,16 +770,16 @@ impl DataPreprocessor {
             let item_hash = Self::hash(&content);
 
             // Extract URL from <link> or <url> child
-            let extracted_url = regex::Regex::new(r"<(?:link|url)>(.*?)</(?:link|url)>")
+            let item_source = regex::Regex::new(r"<(?:link|url)>(.*?)</(?:link|url)>")
                 .ok()
                 .and_then(|re| re.captures(&content))
-                .map(|c| c[1].to_string());
+                .map(|c| c[1].to_string())
+                .unwrap_or_else(|| source_url.to_string());
 
             items.push(NewRawItem {
-                source_url: source_url.to_string(),
+                source_url: item_source,
                 item_type: "xml_item".into(),
                 item_hash,
-                extracted_url,
             });
         }
 
@@ -797,7 +790,6 @@ impl DataPreprocessor {
                 source_url: source_url.to_string(),
                 item_type: "xml_doc".into(),
                 item_hash,
-                extracted_url: None,
             });
         }
 
@@ -828,10 +820,9 @@ impl DataPreprocessor {
             let is_url = line.starts_with("http://") || line.starts_with("https://");
 
             items.push(NewRawItem {
-                source_url: source_url.to_string(),
+                source_url: if is_url { line.to_string() } else { source_url.to_string() },
                 item_type: if is_url { "url".into() } else { "text".into() },
                 item_hash,
-                extracted_url: if is_url { Some(line.to_string()) } else { None },
             });
         }
 
@@ -969,8 +960,8 @@ mod tests {
         let result = DataPreprocessor::process(json, "https://example.com/data.json", &config);
         assert_eq!(result.extracted_count, 2);
         assert_eq!(
-            result.items[0].extracted_url.as_deref(),
-            Some("https://a.com")
+            result.items[0].source_url.as_str(),
+            "https://a.com"
         );
     }
 
@@ -1034,19 +1025,13 @@ mod tests {
         let result = DataPreprocessor::process(html, "https://www.oreka.vn", &config);
         assert_eq!(result.extracted_count, 3);
         assert!(result.items[0]
-            .extracted_url
-            .as_deref()
-            .unwrap()
+            .source_url
             .contains("--detail/1112311"));
         assert!(result.items[1]
-            .extracted_url
-            .as_deref()
-            .unwrap()
+            .source_url
             .contains("--detail/2223422"));
         assert!(result.items[2]
-            .extracted_url
-            .as_deref()
-            .unwrap()
+            .source_url
             .contains("--detail/3334533"));
     }
 
