@@ -532,6 +532,17 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                                     seen_urls.insert(source_url);
                                     export_input.push(serde_json::Value::Object(rec));
                                 }
+                                lm.info(
+                                    &project_id,
+                                    "service",
+                                    &format!(
+                                        "Cycle #{}: export_input built = {} items; sample keys = {:?}; sample product_name = {:?}",
+                                        cycle,
+                                        export_input.len(),
+                                        export_input.first().and_then(|v| v.as_object()).map(|o| o.keys().cloned().collect::<Vec<String>>()),
+                                        export_input.first().and_then(|v| v.get("product_name")).map(|v| v.to_string()),
+                                    ),
+                                );
 
                                 for node in &config.nodes {
                                     if node.node_type != "processor" {

@@ -1136,6 +1136,16 @@ pub fn excel_export_plugin(
         })
         .collect();
 
+    log::info!(
+        "[excel_export_plugin] input={} items; extractFields={:?}; mapped_data[0]={}",
+        data.len(),
+        extract_fields,
+        mapped_data
+            .first()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "<empty>".into())
+    );
+
     let raw_file_name = config
         .get("fileName")
         .and_then(|v| v.as_str())
@@ -1161,24 +1171,10 @@ pub fn excel_export_plugin(
 
     let out_path = out_dir.join(file_name);
 
-    // ── Per-item accumulate ────────────────────────────────────────
-    // When `generate-excel-file` runs as a per-item processor step inside a
-    // worker's chain, this plugin is invoked once per item. We accumulate the
-    // rows across all calls (keyed by the resolved output path) and rewrite
-    // the whole workbook (header + every row so far) on each call, so the
-    // final file contains ALL items, not just the last one.
-    let key = out_path.to_string_lossy().to_string();
-    let mut store = EXCEL_ACCUMULATOR.lock().unwrap();
-    let rows: &mut Vec<serde_json::Value> = store.entry(key.clone()).or_default();
-    // If the file was removed/renamed between runs, start fresh.
-    if !out_path.exists() {
-        rows.clear();
-    }
-    for r in &mapped_data {
-        rows.push(r.clone());
-    }
-    let all_rows = rows.clone();
-    drop(store);
+    // Write exactly the rows passed in this call. No cross-cycle accumulation:
+    // the service invokes the export once per run with the full dataset, so
+    // appending would duplicate rows and shift data to the wrong row index.
+    let all_rows = mapped_data;
 
     let bytes = inner_export_excel(&all_rows, sheet_name, include_header)
         .map_err(|e| format!("Excel generation failed ({} rows): {}", all_rows.len(), e))?;
@@ -1204,18 +1200,6 @@ pub fn excel_export_plugin(
         "count": data.len(),
         "format": "xlsx"
     })])
-}
-
-/// Accumulates Excel rows per output path so a per-item `generate-excel-file`
-/// processor step produces one workbook containing every item.
-static EXCEL_ACCUMULATOR: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, Vec<serde_json::Value>>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-
-/// Reset the Excel accumulator (e.g. at the start of a fresh pipeline run so a
-/// new cycle does not append to the previous run's rows).
-pub(crate) fn reset_excel_accumulator() {
-    EXCEL_ACCUMULATOR.lock().unwrap().clear();
 }
 
 fn chrono_now() -> String {
