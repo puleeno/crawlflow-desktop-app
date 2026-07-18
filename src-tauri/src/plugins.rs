@@ -1107,27 +1107,47 @@ pub fn excel_export_plugin(
         .map(|item| {
             if let serde_json::Value::Object(obj) = item {
                 let mut new_obj = serde_json::Map::new();
-                for (k, v) in obj.iter() {
-                    // Skip DB/metadata fields unless they are explicitly part of
-                    // the extractor settings or an explicit column mapping.
-                    let is_metadata = matches!(
-                        k.as_str(),
-                        "id" | "url" | "source_url" | "extracted_url" | "item_type"
-                            | "html" | "text" | "status"
-                    );
-                    let allowed_by_extract =
-                        extract_fields.as_ref().map(|f| f.contains(k)).unwrap_or(true);
-                    let allowed_by_mapping = mapped_keys.contains(k);
-
-                    if is_metadata && !allowed_by_extract && !allowed_by_mapping {
-                        continue;
+                // When extractFields is provided, the Excel columns must follow
+                // exactly the extractor settings (name + order). Only those
+                // fields are emitted, in that order, so the header matches the
+                // worker's Data Extractor configuration.
+                if let Some(fields) = extract_fields.as_ref() {
+                    for f in fields {
+                        // Allow a field to be remapped via columnMapping.
+                        let src_key = column_mapping
+                            .and_then(|m| {
+                                m.iter()
+                                    .find(|(_, h)| h.as_str() == Some(f.as_str()))
+                                    .map(|(k, _)| k.clone())
+                            })
+                            .unwrap_or_else(|| f.clone());
+                        let val = obj
+                            .get(&src_key)
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
+                        new_obj.insert(f.clone(), val);
                     }
-
-                    let new_key = column_mapping
-                        .and_then(|m| m.get(k))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(k);
-                    new_obj.insert(new_key.to_string(), v.clone());
+                    // Always keep source_url for traceability if present.
+                    if let Some(su) = obj.get("source_url") {
+                        new_obj.insert("source_url".to_string(), su.clone());
+                    }
+                } else {
+                    for (k, v) in obj.iter() {
+                        let is_metadata = matches!(
+                            k.as_str(),
+                            "id" | "url" | "source_url" | "extracted_url" | "item_type"
+                                | "html" | "text" | "status"
+                        );
+                        let allowed_by_mapping = mapped_keys.contains(k);
+                        if is_metadata && !allowed_by_mapping {
+                            continue;
+                        }
+                        let new_key = column_mapping
+                            .and_then(|m| m.get(k))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(k);
+                        new_obj.insert(new_key.to_string(), v.clone());
+                    }
                 }
                 serde_json::Value::Object(new_obj)
             } else {
@@ -1188,7 +1208,7 @@ pub fn excel_export_plugin(
     })?;
     log::info!(
         "[excel_export_plugin] appended {} row(s) -> {} (total {} rows, {} bytes)",
-        mapped_data.len(),
+        all_rows.len(),
         out_path.to_string_lossy(),
         all_rows.len(),
         bytes.len()
@@ -1197,7 +1217,7 @@ pub fn excel_export_plugin(
     Ok(vec![serde_json::json!({
         "success": true,
         "file": out_path.to_string_lossy().to_string(),
-        "count": data.len(),
+        "count": all_rows.len(),
         "format": "xlsx"
     })])
 }

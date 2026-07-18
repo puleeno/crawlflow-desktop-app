@@ -72,10 +72,41 @@ impl RawItemRepository {
     }
 
     pub fn ensure_tables(&self) -> Result<(), String> {
-        self.conn
-            .execute_batch(
-                "
-            CREATE TABLE IF NOT EXISTS raw_items (
+        // Canonical schema. If an incompatible table already exists (e.g. one
+        // created by an older build / the UI with a different `crawl_data`
+        // layout), drop and recreate it so the whole schema stays consistent.
+        let table_cols = |conn: &Connection, name: &str| -> Vec<String> {
+            conn.query_row(
+                &format!("SELECT sql FROM sqlite_master WHERE name = '{}'", name),
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .map(|sql| {
+                sql.to_lowercase()
+                    .split(',')
+                    .map(|c| c.trim().split_whitespace().next().unwrap_or("").to_string())
+                    .filter(|c| !c.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+        };
+
+        // raw_items: drop if it lacks the canonical `source_url` column.
+        if table_cols(&self.conn, "raw_items").contains(&"source_url".to_string()) == false
+            && self.table_exists("raw_items")
+        {
+            self.conn.execute("DROP TABLE IF EXISTS raw_items", []).ok();
+        }
+        // crawl_data: drop if it lacks `raw_item_id` (old UI schema used source_url).
+        if table_cols(&self.conn, "crawl_data").contains(&"raw_item_id".to_string()) == false
+            && self.table_exists("crawl_data")
+        {
+            self.conn.execute("DROP TABLE IF EXISTS crawl_data", []).ok();
+        }
+
+        let statements = [
+            "CREATE TABLE IF NOT EXISTS raw_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 source_url TEXT NOT NULL,
                 item_type TEXT NOT NULL DEFAULT 'url',
@@ -87,22 +118,20 @@ impl RawItemRepository {
                 status TEXT NOT NULL DEFAULT 'pending',
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-            CREATE INDEX IF NOT EXISTS idx_raw_items_hash ON raw_items(item_hash);
-            CREATE INDEX IF NOT EXISTS idx_raw_items_status ON raw_items(status);
-            CREATE INDEX IF NOT EXISTS idx_raw_items_matched ON raw_items(matched);
-            CREATE INDEX IF NOT EXISTS idx_raw_items_worker ON raw_items(worker_id);
-
-            CREATE TABLE IF NOT EXISTS crawl_data (
+            )",
+            "CREATE INDEX IF NOT EXISTS idx_raw_items_hash ON raw_items(item_hash)",
+            "CREATE INDEX IF NOT EXISTS idx_raw_items_status ON raw_items(status)",
+            "CREATE INDEX IF NOT EXISTS idx_raw_items_matched ON raw_items(matched)",
+            "CREATE INDEX IF NOT EXISTS idx_raw_items_worker ON raw_items(worker_id)",
+            "CREATE TABLE IF NOT EXISTS crawl_data (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 raw_item_id INTEGER NOT NULL,
                 content_type TEXT NOT NULL DEFAULT 'raw',
                 content TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-            CREATE INDEX IF NOT EXISTS idx_crawl_data_item ON crawl_data(raw_item_id);
-
-            CREATE TABLE IF NOT EXISTS parsed_data (
+            )",
+            "CREATE INDEX IF NOT EXISTS idx_crawl_data_item ON crawl_data(raw_item_id)",
+            "CREATE TABLE IF NOT EXISTS parsed_data (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 raw_item_id INTEGER NOT NULL,
                 worker_id TEXT,
@@ -113,21 +142,37 @@ impl RawItemRepository {
                 status TEXT NOT NULL DEFAULT 'pending',
                 error TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-            CREATE INDEX IF NOT EXISTS idx_parsed_data_item ON parsed_data(raw_item_id);
-            CREATE INDEX IF NOT EXISTS idx_parsed_data_final ON parsed_data(raw_item_id, is_final);
-
-            CREATE TABLE IF NOT EXISTS json_ld (
+            )",
+            "CREATE INDEX IF NOT EXISTS idx_parsed_data_item ON parsed_data(raw_item_id)",
+            "CREATE INDEX IF NOT EXISTS idx_parsed_data_final ON parsed_data(raw_item_id, is_final)",
+            "CREATE TABLE IF NOT EXISTS json_ld (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 raw_item_id INTEGER NOT NULL,
                 ld_type TEXT NOT NULL DEFAULT 'unknown',
                 data TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-            CREATE INDEX IF NOT EXISTS idx_json_ld_item ON json_ld(raw_item_id);
-        ",
+            )",
+            "CREATE INDEX IF NOT EXISTS idx_json_ld_item ON json_ld(raw_item_id)",
+        ];
+        for stmt in statements {
+            if let Err(e) = self.conn.execute(stmt, []) {
+                if !e.to_string().contains("already exists") {
+                    return Err(format!("Failed to create table ({}): {}", stmt, e));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn table_exists(&self, name: &str) -> bool {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = ?1",
+                params![name],
+                |r| r.get::<_, i64>(0),
             )
-            .map_err(|e| format!("Failed to create tables: {}", e))
+            .unwrap_or(0)
+            > 0
     }
 
     /// Save items with dedup. Increments dup_count for existing items.
@@ -315,7 +360,8 @@ impl RawItemRepository {
                 if is_final { 1i64 } else { 0i64 },
             ],
         ).map_err(|e| format!("Failed to save parsed_data: {}", e))?;
-        Ok(self.conn.last_insert_rowid())
+        let id = self.conn.last_insert_rowid();
+        Ok(id)
     }
 
     /// Read all `crawl_data` rows (source_url + raw JSON payload) so the
@@ -567,14 +613,19 @@ impl RawItemRepository {
         } else {
             output.unwrap_or("").to_string()
         };
-        self.save_parsed_data(
+        match self.save_parsed_data(
             item_id,
             worker_id,
             processor_type,
             &parsed_json,
             is_final,
-        )?;
-        Ok(())
+        ) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                eprintln!("[log_processing] save_parsed_data failed for item {}: {}", item_id, e);
+                Err(e)
+            }
+        }
     }
 
     /// Dem so items theo status

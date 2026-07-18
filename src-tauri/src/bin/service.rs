@@ -511,25 +511,25 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                                         continue;
                                     }
                                 };
-                                let crawl_rows = repo.get_all_crawl_data_json().unwrap_or_default();
+                                let done_items = repo.get_done_items(i64::MAX).unwrap_or_default();
                                 let mut export_input: Vec<serde_json::Value> = Vec::new();
                                 let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
-                                for (source_url, raw_json) in crawl_rows {
-                                    let obj = match serde_json::from_str::<serde_json::Value>(&raw_json)
-                                        .ok()
-                                        .and_then(|v| v.as_object().cloned())
-                                    {
-                                        Some(o) => o,
+                                for (raw, parsed) in done_items {
+                                    let obj = match parsed {
+                                        Some(s) => serde_json::from_str::<serde_json::Value>(&s)
+                                            .ok()
+                                            .and_then(|v| v.as_object().cloned())
+                                            .unwrap_or_else(|| serde_json::Map::new()),
                                         None => serde_json::Map::new(),
                                     };
                                     let mut rec = obj;
                                     rec.entry("source_url".to_string())
-                                        .or_insert_with(|| serde_json::Value::String(source_url.clone()));
+                                        .or_insert_with(|| serde_json::Value::String(raw.source_url.clone()));
                                     // Deduplicate by source_url: keep the first occurrence.
-                                    if seen_urls.contains(&source_url) {
+                                    if seen_urls.contains(&raw.source_url) {
                                         continue;
                                     }
-                                    seen_urls.insert(source_url);
+                                    seen_urls.insert(raw.source_url);
                                     export_input.push(serde_json::Value::Object(rec));
                                 }
                                 lm.info(

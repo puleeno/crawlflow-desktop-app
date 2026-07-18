@@ -192,6 +192,17 @@ pub struct ProcessorStep {
 
 pub struct WorkerEngine;
 
+fn is_export_processor(kind: &str) -> bool {
+    matches!(
+        kind,
+        "generate-excel-file"
+            | "generate-csv-file"
+            | "excel-export"
+            | "rust-excel-export"
+            | "csv-export"
+    )
+}
+
 impl WorkerEngine {
     /// Chunk raw items into batches for parallel processing
     #[allow(dead_code)]
@@ -325,6 +336,13 @@ impl WorkerEngine {
             let mut item_failed = false;
 
             for (step_idx, step) in worker.processor_chain.iter().enumerate() {
+                // Export processors (excel/csv) are driven separately by the
+                // service after parsing; they must NOT run inside the worker
+                // chain, otherwise their result (a file path) becomes the
+                // final_output instead of the extracted product fields.
+                if is_export_processor(&step.processor_type) {
+                    continue;
+                }
                 let _ = repo.log_processing(
                     item.id,
                     Some(&worker.id),
@@ -492,6 +510,9 @@ impl WorkerEngine {
                 let mut item_failed = false;
 
                 for (step_idx, step) in worker.processor_chain.iter().enumerate() {
+                    if is_export_processor(&step.processor_type) {
+                        continue;
+                    }
                     let _ = repo.log_processing(
                         item.id,
                         Some(&worker.id),

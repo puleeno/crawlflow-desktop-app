@@ -1786,10 +1786,6 @@ pub async fn execute_repository_pipeline(
         "Phase 3: Worker Processing (chain of processors)",
     );
 
-    // Start each run from a clean Excel accumulator so a fresh cycle does
-    // not append to the previous run's rows.
-    crate::plugins::reset_excel_accumulator();
-
     let mut total_processed = 0i64;
     let mut total_failed = 0i64;
 
