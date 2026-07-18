@@ -46,16 +46,14 @@ pub(crate) fn parse_extract_rules_array(arr: &[Value]) -> Vec<ModelsExtractRule>
                     .to_string()
             };
 
-            // Determine attribute: if extract == 'attribute', use the attribute field
+            // Determine attribute: only read the attribute field when extract == 'attribute'
             let extract_mode = r.get("extract").and_then(|v| v.as_str()).unwrap_or("text");
             let attribute = if extract_mode == "attribute" {
                 r.get("attribute")
                     .and_then(|v| v.as_str())
                     .map(String::from)
             } else {
-                r.get("attribute")
-                    .and_then(|v| v.as_str())
-                    .map(String::from)
+                None
             };
 
             let extract_multiple = r

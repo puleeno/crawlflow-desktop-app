@@ -176,7 +176,7 @@ def register_presets():
                             "extractFrom": "html-element",
                             "selector": "img.styles_imageThumb__OYuNp.object-cover.rounded-md",
                             "extract": "attribute",
-                            "attribute": "Src",
+                            "attribute": "src",
                         },
                         {
                             "id": "preset-ecom-html-6",
