@@ -2,7 +2,15 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex};
 use crate::models::ProcessorConfig;
+
+/// Registry of Python filters registered via `crawlflow.register_filter(name, func)`.
+/// Maps a filter name -> (plugin_id, python_function_name).
+/// The Python function is invoked by Rust automatically on the relevant data stage
+/// (e.g. `parsed_data` is called on every item's parsed data after extraction).
+static FILTER_REGISTRY: LazyLock<Mutex<HashMap<String, (String, String)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Format a Python exception including its full traceback, so plugin failures
 /// are debuggable instead of showing only a one-line message.
@@ -78,7 +86,7 @@ impl PythonPlugin {
             .map_err(|e| pyo3::exceptions::PyFileNotFoundError::new_err(e.to_string()))?;
 
         let globals = PyDict::new(py);
-        let api = create_crawlflow_api(py)?;
+        let api = create_crawlflow_api(py, &self.id)?;
         globals.set_item("crawlflow", api)?;
 
         let code_cstr = std::ffi::CString::new(code)
@@ -318,6 +326,42 @@ impl PythonPluginEngine {
 
             serde_json::from_str(&result_str)
                 .map_err(|e| format!("Failed to parse Python result JSON: {}", e))
+        })
+    }
+
+    /// Invoke a registered filter (declared via `crawlflow.register_filter`)
+    /// on a batch of parsed data. Returns `None` if no filter with `name` is
+    /// registered (caller should keep the original data). If registered but the
+    /// plugin fails, the original data is returned unchanged.
+    pub fn call_filter(
+        &mut self,
+        name: &str,
+        data: Vec<serde_json::Value>,
+    ) -> Option<Vec<serde_json::Value>> {
+        let (plugin_id, func_name) = {
+            match FILTER_REGISTRY.lock().ok()?.get(name) {
+                Some(v) => v.clone(),
+                None => return None,
+            }
+        };
+
+        let plugin = self.plugins.get_mut(&plugin_id)?;
+
+        Python::with_gil(|py| -> Option<Vec<serde_json::Value>> {
+            let globals = plugin.ensure_loaded(py).ok()?;
+            let func = globals.get_item(&func_name).ok().flatten()?;
+            if !func.is_callable() {
+                return None;
+            }
+            let data_json = serde_json::to_string(&data).ok()?;
+            let result = func
+                .call1((data_json,))
+                .map_err(|e| {
+                    log::warn!("Python filter '{}' failed: {}", func_name, format_pyerr(py, &e));
+                })
+                .ok()?;
+            let result_str: String = result.extract().ok()?;
+            serde_json::from_str(&result_str).ok()
         })
     }
 
@@ -601,7 +645,9 @@ pub struct PipelineStep {
 // ── Python-accessible API (`crawlflow` module) ───────────────────
 
 /// Create the `crawlflow` Python module exposing Rust backend APIs.
-fn create_crawlflow_api<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyModule>> {
+/// `plugin_id` is the id of the plugin currently being loaded, so that
+/// `register_filter` can associate a filter with its owning plugin.
+fn create_crawlflow_api<'py>(py: Python<'py>, plugin_id: &str) -> PyResult<Bound<'py, PyModule>> {
     let module = PyModule::new(py, "crawlflow")?;
 
     module.add_function(wrap_pyfunction!(py_fetch_url, py)?)?;
@@ -616,8 +662,44 @@ fn create_crawlflow_api<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyModule>> 
     module.add_function(wrap_pyfunction!(py_update_progress, py)?)?;
     module.add_function(wrap_pyfunction!(py_spreadsheet_read, py)?)?;
     module.add_function(wrap_pyfunction!(py_spreadsheet_write, py)?)?;
+    module.add_function(wrap_pyfunction!(py_register_filter, py)?)?;
+
+    // Stash the owning plugin id so register_filter knows the caller.
+    module.add("__plugin_id", plugin_id)?;
 
     Ok(module.into())
+}
+
+/// `crawlflow.register_filter(name, func)` — register a reusable filter
+/// (a "library" function) that Rust invokes automatically on the matching
+/// data stage. Example: `crawlflow.register_filter("parsed_data", my_filter)`
+/// makes `my_filter(data)` run on every item's parsed data after extraction.
+#[pyfunction(signature = (name, func))]
+fn py_register_filter(name: String, func: Bound<'_, PyAny>) -> PyResult<()> {
+    if !func.is_callable() {
+        return Err(pyo3::exceptions::PyTypeError::new_err(
+            "register_filter expects a callable function",
+        ));
+    }
+    let globals = func.getattr("__globals__").ok();
+    let plugin_id = globals
+        .as_ref()
+        .and_then(|g| g.get_item("crawlflow").ok())
+        .and_then(|cf| cf.getattr("__plugin_id").ok())
+        .and_then(|p| p.extract::<String>().ok())
+        .unwrap_or_default();
+
+    // Resolve the Python function name from the callable.
+    let func_name = func
+        .getattr("__name__")
+        .ok()
+        .and_then(|n| n.extract::<String>().ok())
+        .unwrap_or_else(|| "filter".to_string());
+
+    if let Ok(mut reg) = FILTER_REGISTRY.lock() {
+        reg.insert(name, (plugin_id, func_name));
+    }
+    Ok(())
 }
 
 #[pyfunction(name = "fetch_url", signature = (url, headers=None, client_type=None, headless=None))]

@@ -282,6 +282,7 @@ impl WorkerEngine {
             &serde_json::Value,
             &serde_json::Value,
         ) -> Result<serde_json::Value, String>,
+        mut filter_parsed: Option<&mut dyn FnMut(&serde_json::Value) -> serde_json::Value>,
     ) -> Result<ProcessResult, String> {
         let mut processed = 0i64;
         let mut failed = 0i64;
@@ -294,13 +295,18 @@ impl WorkerEngine {
             // Step 2 — fetch detail page + parse HTML
             let parsed_data = match Self::fetch_and_parse_item(repo, item, worker) {
                 Ok(data) => {
+                    let filtered = if let Some(f) = filter_parsed.as_mut() {
+                        f(&data)
+                    } else {
+                        data
+                    };
                     log::info!(
                         "[worker::{}] Fetched+parsed item {} → {}",
                         worker.name,
                         item.id,
                         item.source_url
                     );
-                    data
+                    filtered
                 }
                 Err(e) => {
                     log::error!(
@@ -442,6 +448,7 @@ impl WorkerEngine {
             &serde_json::Value,
             &serde_json::Value,
         ) -> Result<serde_json::Value, String>,
+        mut filter_parsed: Option<&mut dyn FnMut(&serde_json::Value) -> serde_json::Value>,
         max_retries: u32,
     ) -> Result<ProcessResult, String> {
         let mut processed = 0i64;
@@ -458,6 +465,11 @@ impl WorkerEngine {
                 // Step 2 — fetch detail page + parse HTML
                 let parsed_data = match Self::fetch_and_parse_item(repo, item, worker) {
                     Ok(data) => {
+                        let filtered = if let Some(f) = filter_parsed.as_mut() {
+                            f(&data)
+                        } else {
+                            data
+                        };
                         log::info!(
                             "[worker::{}] Fetched+parsed item {} → {} (attempt {})",
                             worker.name,
@@ -465,7 +477,7 @@ impl WorkerEngine {
                             item.source_url,
                             retry_count + 1
                         );
-                        data
+                        filtered
                     }
                     Err(e) => {
                         log::error!(

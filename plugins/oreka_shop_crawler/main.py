@@ -582,6 +582,32 @@ def _upgrade_oreka_images(value):
     return value
 
 
+# ── Reusable "library" filter, registered with the backend ───────────────
+# Rust invokes this automatically on every item's parsed data (the `images`
+# array) — no hard-coded field surgery inside process_data.
+def oreka_filter_parsed_data(data_json):
+    """Filter chay tu dong tren parsed data cua tung item.
+
+    Input: JSON string cua mot list gom 1 object item.
+    Output: JSON string cua list (cung kich thuoc) voi image/images da duoc
+    chuan hoa (len size 800-800, loai bo anh quang cao oreka).
+    """
+    try:
+        items = json.loads(data_json) if isinstance(data_json, str) else data_json
+    except Exception:
+        return data_json
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if "image" in item:
+            item["image"] = _upgrade_oreka_image(item.get("image", ""))
+        if "images" in item:
+            item["images"] = _upgrade_oreka_images(item.get("images"))
+
+    return json.dumps(items)
+
+
 def _extract_attr(html, attr="src"):
     """Lay attribute value tu the HTML dau tien."""
     m = re.search(rf'{attr}\s*=\s*["\']([^"\']+)["\']', html)
@@ -805,7 +831,6 @@ def _parse_product_from_html(html, url):
             img_match = re.search(r'<img[^>]*src\s*=\s*["\']([^"\']+(?:product|san-pham)[^"\']+)["\']', html)
             if img_match:
                 image = img_match.group(1)
-    image = _upgrade_oreka_image(image)
 
     # SKU
     sku_matches = re.findall(r'(?:SKU|Mã sản phẩm|Product Code|Mã SP)\s*[:;]\s*([^\s<]+)', html, re.IGNORECASE)
@@ -881,6 +906,14 @@ def on_load(config):
         crawlflow.log("[OrekaShop] openpyxl available - will use Excel output", "info")
     except ImportError:
         crawlflow.log("[OrekaShop] openpyxl not installed - will use CSV output", "warn")
+
+    # Dang ky filter "library" chay tu dong tren parsed data cua tung item.
+    # Rust se goi oreka_filter_parsed_data() moi khi co parsed data (mang images).
+    try:
+        crawlflow.register_filter("parsed_data", oreka_filter_parsed_data)
+        crawlflow.log("[OrekaShop] Registered 'parsed_data' filter", "info")
+    except Exception as e:
+        crawlflow.log(f"[OrekaShop] register_filter failed: {e}", "warn")
 
 
 def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headless=None):
@@ -1056,8 +1089,8 @@ def process_data(data_json, config_json):
             "name": item.get("name", "").strip(),
             "price": _safe_float(item.get("price", 0)),
             "old_price": _safe_float(item.get("old_price", 0)),
-            "image": _upgrade_oreka_image(item.get("image", "")),
-            "images": _upgrade_oreka_images(item.get("images")),
+            "image": item.get("image", ""),
+            "images": item.get("images"),
             "sku": item.get("sku", "").strip(),
             "description": (item.get("description", "") or "").strip(),
             "category": item.get("category", "").strip(),

@@ -1852,11 +1852,28 @@ pub async fn execute_repository_pipeline(
         );
 
         for chunk in &chunks {
+            // Reusable "parsed_data" filter (declared by Python plugins via
+            // crawlflow.register_filter). Rust invokes it on each item's parsed
+            // data automatically; no hard-coded field mapping required.
+            let mut filter_fn = |data: &serde_json::Value| -> serde_json::Value {
+                if let Some(engine) = python_engine.as_deref_mut() {
+                    if let Some(filtered) =
+                        engine.call_filter("parsed_data", vec![data.clone()])
+                    {
+                        if let Some(first) = filtered.into_iter().next() {
+                            return first;
+                        }
+                    }
+                }
+                data.clone()
+            };
+
             match WorkerEngine::process_items_with_retry(
                 &repo,
                 worker,
                 chunk,
                 &process_fn,
+                Some(&mut filter_fn),
                 worker.max_retries,
             ) {
                 Ok(result) => {
