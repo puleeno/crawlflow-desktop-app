@@ -6,6 +6,31 @@ import type { ReactNode } from 'react';
 export type DataSourceType = 'url' | 'api' | 'xml' | 'csv' | 'json' | 'mysql';
 export type FileInputMethod = 'paste' | 'upload' | 'cloudUrl';
 
+// ── Realtime service status & progress (mirrors src-tauri/src/services.rs) ──
+
+export interface ServiceProgress {
+    items_total: number;
+    items_processed: number;
+    items_success: number;
+    items_failed: number;
+    items_pending: number;
+    progress_pct: number;
+    phase: string;
+    message: string;
+    last_run_at: string;
+}
+
+export interface ServiceInfo {
+    project_id: string;
+    status: string;
+    cycle_count: number;
+    started_at: string;
+    last_run_at: string;
+    last_error: string | null;
+    interval_seconds: number;
+    progress: ServiceProgress;
+}
+
 export interface MySQLConnection {
     host?: string;
     port?: string;

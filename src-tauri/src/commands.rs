@@ -1137,6 +1137,7 @@ fn ensure_runtime_table(conn: &rusqlite::Connection) {
             cycle_count   INTEGER NOT NULL DEFAULT 0,
             last_run_at   TEXT,
             last_error    TEXT,
+            progress_json TEXT,
             updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
         )",
         [],

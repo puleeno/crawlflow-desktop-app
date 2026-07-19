@@ -178,6 +178,7 @@ const App: React.FC = () => {
   const [isLogPanelOpen, setLogPanelOpen] = useState(false);
   const [serviceStatus, setServiceStatus] = useState<string>('stopped');
   const [serviceCycleCount, setServiceCycleCount] = useState(0);
+  const [serviceProgress, setServiceProgress] = useState<any>(null);
   const isRunning = serviceStatus === 'running' || serviceStatus === 'idle';
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
@@ -222,15 +223,17 @@ const App: React.FC = () => {
         if (info) {
           setServiceStatus(info.status || 'stopped');
           setServiceCycleCount(info.cycle_count || 0);
+          setServiceProgress(info.progress || null);
         } else {
           setServiceStatus('stopped');
           setServiceCycleCount(0);
+          setServiceProgress(null);
         }
       } catch (_) { /* not in tauri */ }
     };
 
     fetchStatus(); // immediate
-    const timer = setInterval(fetchStatus, 5000);
+    const timer = setInterval(fetchStatus, 3000);
 
     // Also keep Tauri event subscription for in-app executor (if ever used)
     let unlisten: (() => void) | null = null;
@@ -241,6 +244,7 @@ const App: React.FC = () => {
           const p = event.payload;
           setServiceStatus(p.status || 'stopped');
           setServiceCycleCount(p.cycle_count || 0);
+          setServiceProgress(p.progress || null);
         });
       } catch (_) { /* ignore */ }
     };
@@ -1527,22 +1531,39 @@ const App: React.FC = () => {
             Run Demo
           </button>
         )}
-        <div className="flex items-center gap-2">
-          {/* Service status indicator */}
-          <button
-            onClick={() => setLogPanelOpen(!isLogPanelOpen)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
-          >
-            <span className={`inline-block w-2.5 h-2.5 rounded-full ${serviceStatus === 'running' ? 'bg-green-500 animate-pulse' :
-              serviceStatus === 'paused' ? 'bg-amber-500' :
-                serviceStatus?.startsWith('error') ? 'bg-red-500' :
-                  'bg-gray-400'
-              }`} />
-            Service
-            {serviceCycleCount > 0 && (
-              <span className="text-xs text-gray-400">#{serviceCycleCount}</span>
+          <div className="flex items-center gap-2">
+            {/* Service status indicator */}
+            <button
+              onClick={() => setLogPanelOpen(!isLogPanelOpen)}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
+            >
+              <span className={`inline-block w-2.5 h-2.5 rounded-full ${serviceStatus === 'running' ? 'bg-green-500 animate-pulse' :
+                serviceStatus === 'paused' ? 'bg-amber-500' :
+                  serviceStatus?.startsWith('error') ? 'bg-red-500' :
+                    'bg-gray-400'
+                }`} />
+              Service
+              {serviceCycleCount > 0 && (
+                <span className="text-xs text-gray-400">#{serviceCycleCount}</span>
+              )}
+            </button>
+            {/* Realtime progress bar */}
+            {serviceProgress && (serviceProgress.items_total > 0 || serviceProgress.items_processed > 0) && (
+              <div className="flex items-center gap-2 px-2 py-1 bg-slate-100 rounded-lg">
+                <div className="w-32 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${serviceProgress.items_failed > 0 && serviceProgress.progress_pct >= 100 ? 'bg-amber-500' : 'bg-blue-500'}`}
+                    style={{ width: `${Math.max(0, Math.min(100, serviceProgress.progress_pct))}%` }}
+                  />
+                </div>
+                <span className="text-xs font-mono text-gray-600">
+                  {Math.max(0, Math.min(100, serviceProgress.progress_pct)).toFixed(0)}%
+                </span>
+                <span className="text-[11px] text-gray-400">
+                  {serviceProgress.items_success}/{serviceProgress.items_total}
+                </span>
+              </div>
             )}
-          </button>
           <button
             onClick={() => setShowRawItemsBrowser(true)}
             className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
@@ -1669,6 +1690,7 @@ const App: React.FC = () => {
             isRunning={isRunning}
             serviceStatus={serviceStatus}
             serviceCycleCount={serviceCycleCount}
+            serviceProgress={serviceProgress}
           />
         </ReactFlowProvider>
       </div>

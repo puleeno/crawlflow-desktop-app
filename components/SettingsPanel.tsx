@@ -36,6 +36,7 @@ interface SettingsPanelProps {
     isRunning?: boolean;
     serviceStatus?: string;
     serviceCycleCount?: number;
+    serviceProgress?: any;
 }
 
 const commonInputClasses = "w-full p-2 bg-white text-gray-900 border border-slate-300 rounded-md shadow-sm placeholder:text-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-slate-100 disabled:text-gray-500";

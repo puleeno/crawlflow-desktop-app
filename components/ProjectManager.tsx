@@ -6,7 +6,7 @@ import { EmptyState } from './EmptyState';
 import { RawItemsBrowser } from './RawItemsBrowser';
 import LiveLogs from './LiveLogs';
 import { listProjects, createProject, createProjectFromPreset, deleteProject } from '../lib/db';
-import type { Preset } from '../types';
+import type { Preset, ServiceInfo } from '../types';
 
 interface ProjectRecord {
     id: string;
@@ -26,6 +26,7 @@ interface ProjectManagerProps {
 
 export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, onImportProject, onOpenSettings }) => {
     const [projects, setProjects] = useState<ProjectRecord[]>([]);
+    const [serviceInfos, setServiceInfos] = useState<Record<string, ServiceInfo>>({});
     const [loading, setLoading] = useState(true);
     const [showCreate, setShowCreate] = useState(false);
     const [creating, setCreating] = useState(false);
@@ -46,6 +47,33 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
     useEffect(() => {
         loadProjects();
     }, [loadProjects]);
+
+    // Poll realtime service status + progress for every project (background service)
+    useEffect(() => {
+        let cancelled = false;
+
+        const fetchServices = async () => {
+            try {
+                const { invoke } = await import('@tauri-apps/api/core');
+                const infos = await invoke<ServiceInfo[]>('list_project_services_cmd');
+                if (cancelled) return;
+                const map: Record<string, ServiceInfo> = {};
+                for (const info of infos) {
+                    map[info.project_id] = info;
+                }
+                setServiceInfos(map);
+            } catch (_) {
+                // Not in Tauri env or command unavailable
+            }
+        };
+
+        fetchServices();
+        const timer = setInterval(fetchServices, 3000);
+        return () => {
+            cancelled = true;
+            clearInterval(timer);
+        };
+    }, []);
 
     const handleCreate = async (name: string, description: string) => {
         setCreating(true);
@@ -168,6 +196,7 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
                             <ProjectCard
                                 key={project.id}
                                 project={project}
+                                serviceInfo={serviceInfos[project.id]}
                                 onOpen={onOpenProject}
                                 onDelete={handleDelete}
                                 onBrowseRawItems={setBrowseRawProjectId}

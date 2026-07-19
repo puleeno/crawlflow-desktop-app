@@ -12,6 +12,36 @@ pub struct ServiceInfo {
     pub last_run_at: String,
     pub last_error: Option<String>,
     pub interval_seconds: u64,
+    // Realtime progress (written by the background service each cycle)
+    pub progress: ServiceProgress,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ServiceProgress {
+    pub items_total: i64,
+    pub items_processed: i64,
+    pub items_success: i64,
+    pub items_failed: i64,
+    pub items_pending: i64,
+    pub progress_pct: f64,
+    pub phase: String,
+    pub message: String,
+    pub last_run_at: String,
+}
+
+impl Default for ServiceInfo {
+    fn default() -> Self {
+        Self {
+            project_id: String::new(),
+            status: "stopped".to_string(),
+            cycle_count: 0,
+            started_at: String::new(),
+            last_run_at: String::new(),
+            last_error: None,
+            interval_seconds: 60,
+            progress: ServiceProgress::default(),
+        }
+    }
 }
 
 // Simplified ServiceManager - only reads/writes SQLite state
@@ -181,12 +211,13 @@ impl ServiceManager {
             .join("com.CrawlFlow.desktop")
             .join("crawlflow.db");
         if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-            let row: rusqlite::Result<(String, i64, Option<String>, Option<String>, u64)> = conn.query_row(
-                "SELECT runner_status, cycle_count, last_run_at, last_error, COALESCE(runner_pid, 0) FROM project_runtime WHERE project_id = ?1",
+            Self::ensure_progress_column(&conn);
+            let row: rusqlite::Result<(String, i64, Option<String>, Option<String>, Option<String>)> = conn.query_row(
+                "SELECT runner_status, cycle_count, last_run_at, last_error, progress_json FROM project_runtime WHERE project_id = ?1",
                 rusqlite::params![project_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, u64>(4).unwrap_or(0))),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4).ok().flatten())),
             );
-            if let Ok((status, cycle_count, last_run_at, last_error, _runner_pid)) = row {
+            if let Ok((status, cycle_count, last_run_at, last_error, progress_json)) = row {
                 // For background service "running" status, verify the PID is still alive
                 let effective_status = if status == "running" {
                     if is_project_running_in_background(project_id) {
@@ -202,23 +233,16 @@ impl ServiceManager {
                     status: effective_status.to_string(),
                     cycle_count: cycle_count as u64,
                     started_at: String::new(),
-                    last_run_at: last_run_at.unwrap_or_default(),
+                    last_run_at: last_run_at.clone().unwrap_or_default(),
                     last_error,
                     interval_seconds: 60,
+                    progress: Self::parse_progress(progress_json.as_deref(), last_run_at),
                 });
             }
         }
 
         // Default: stopped (no record means no service has ever run)
-        Some(ServiceInfo {
-            project_id: project_id.to_string(),
-            status: "stopped".to_string(),
-            cycle_count: 0,
-            started_at: String::new(),
-            last_run_at: String::new(),
-            last_error: None,
-            interval_seconds: 60,
-        })
+        Some(ServiceInfo::default())
     }
 
     pub fn list_service_infos(&self) -> Vec<ServiceInfo> {
@@ -227,17 +251,19 @@ impl ServiceManager {
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("com.CrawlFlow.desktop")
             .join("crawlflow.db");
-        
+
         let conn = match rusqlite::Connection::open(&db_path) {
             Ok(c) => c,
             Err(_) => return vec![],
         };
-        
-        let mut stmt = match conn.prepare("SELECT project_id, runner_status, cycle_count, last_run_at, last_error, COALESCE(runner_pid, 0) FROM project_runtime") {
+
+        Self::ensure_progress_column(&conn);
+
+        let mut stmt = match conn.prepare("SELECT project_id, runner_status, cycle_count, last_run_at, last_error, progress_json FROM project_runtime") {
             Ok(s) => s,
             Err(_) => return vec![],
         };
-        
+
         let rows = match stmt.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -245,15 +271,15 @@ impl ServiceManager {
                 row.get::<_, i64>(2)?,
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, Option<String>>(4)?,
-                row.get::<_, u64>(5)?,
+                row.get::<_, Option<String>>(5)?,
             ))
         }) {
             Ok(r) => r,
             Err(_) => return vec![],
         };
-        
+
         rows.filter_map(|r| r.ok())
-            .map(|(pid, status, cycle_count, last_run_at, last_error, _runner_pid)| {
+            .map(|(pid, status, cycle_count, last_run_at, last_error, progress_json)| {
                 let effective_status = if status == "running" {
                     if is_project_running_in_background(&pid) {
                         "running"
@@ -268,12 +294,66 @@ impl ServiceManager {
                     status: effective_status.to_string(),
                     cycle_count: cycle_count as u64,
                     started_at: String::new(),
-                    last_run_at: last_run_at.unwrap_or_default(),
+                    last_run_at: last_run_at.clone().unwrap_or_default(),
                     last_error,
                     interval_seconds: 60,
+                    progress: Self::parse_progress(progress_json.as_deref(), last_run_at),
                 }
             })
             .collect()
+    }
+
+    fn ensure_progress_column(conn: &rusqlite::Connection) {
+        let _ = conn.execute(
+            "ALTER TABLE project_runtime ADD COLUMN progress_json TEXT",
+            [],
+        );
+    }
+
+    fn parse_progress(progress_json: Option<&str>, last_run_at: Option<String>) -> ServiceProgress {
+        match progress_json {
+            Some(s) if !s.is_empty() => {
+                serde_json::from_str::<ServiceProgress>(s).unwrap_or_else(|_| {
+                    let mut p = ServiceProgress::default();
+                    p.last_run_at = last_run_at.unwrap_or_default();
+                    p
+                })
+            }
+            _ => {
+                let mut p = ServiceProgress::default();
+                p.last_run_at = last_run_at.unwrap_or_default();
+                p
+            }
+        }
+    }
+
+    /// Persist realtime progress JSON for a project into the master DB.
+    /// Called by the background service each cycle.
+    pub fn write_progress_json(project_id: &str, progress: &ServiceProgress) {
+        ensure_progress_column_static();
+        if let Ok(conn) = rusqlite::Connection::open(master_db_path()) {
+            Self::ensure_progress_column(&conn);
+            let json = serde_json::to_string(progress).unwrap_or_default();
+            let _ = conn.execute(
+                "INSERT INTO project_runtime (project_id, progress_json, updated_at)
+                 VALUES (?1, ?2, datetime('now'))
+                 ON CONFLICT(project_id) DO UPDATE SET progress_json = ?2, updated_at = datetime('now')",
+                rusqlite::params![project_id, json],
+            );
+        }
+    }
+}
+
+fn master_db_path() -> std::path::PathBuf {
+    dirs_next::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("com.CrawlFlow.desktop")
+        .join("crawlflow.db")
+}
+
+fn ensure_progress_column_static() {
+    if let Ok(conn) = rusqlite::Connection::open(master_db_path()) {
+        let _ = conn.execute("ALTER TABLE project_runtime ADD COLUMN progress_json TEXT", []);
     }
 }
 
@@ -291,6 +371,7 @@ mod tests {
             last_run_at: "2024-01-01T01:00:00.000Z".into(),
             last_error: None,
             interval_seconds: 60,
+            progress: ServiceProgress::default(),
         };
         assert_eq!(info.project_id, "test-proj");
         assert_eq!(info.status, "running");
@@ -308,6 +389,7 @@ mod tests {
             last_run_at: String::new(),
             last_error: Some("timeout".into()),
             interval_seconds: 30,
+            progress: ServiceProgress::default(),
         };
         assert_eq!(info.status, "error: timeout");
         assert_eq!(info.last_error.unwrap(), "timeout");
@@ -323,6 +405,7 @@ mod tests {
             last_run_at: "2026-01-02T00:00:00.000Z".into(),
             last_error: None,
             interval_seconds: 60,
+            progress: ServiceProgress::default(),
         };
         let json = serde_json::to_string(&info).unwrap();
         let back: ServiceInfo = serde_json::from_str(&json).unwrap();
@@ -343,6 +426,7 @@ mod tests {
             last_run_at: "2026-01-03T00:00:00.000Z".into(),
             last_error: Some("timeout".into()),
             interval_seconds: 30,
+            progress: ServiceProgress::default(),
         };
         let json = serde_json::to_string(&info).unwrap();
         let back: ServiceInfo = serde_json::from_str(&json).unwrap();

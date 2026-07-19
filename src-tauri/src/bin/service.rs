@@ -218,10 +218,12 @@ fn ensure_runtime_table(conn: &rusqlite::Connection) {
             runner_status TEXT NOT NULL DEFAULT 'stopped',
             runner_pid INTEGER,
             runner_type TEXT DEFAULT 'service',
+            service_control TEXT NOT NULL DEFAULT 'run',
             edit_pid INTEGER,
             cycle_count INTEGER NOT NULL DEFAULT 0,
             last_run_at TEXT,
             last_error TEXT,
+            progress_json TEXT,
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )",
         [],
@@ -271,6 +273,71 @@ fn is_project_being_edited(conn: &rusqlite::Connection, project_id: &str) -> boo
         Ok(Some(pid)) if pid > 0 => is_pid_alive(pid as u32),
         _ => false,
     }
+}
+
+/// Compute realtime progress from the pipeline result + repository aggregate
+/// counts, then persist it to the master DB so the GUI can read it.
+fn report_progress(
+    project_id: &str,
+    db_path: &PathBuf,
+    result: &crawlflow_lib::pipeline::RepositoryPipelineResult,
+    now: &str,
+) {
+    use crawlflow_lib::services::{ServiceManager, ServiceProgress};
+
+    // Aggregate counts from the repository give the true backlog state.
+    let summary = crawlflow_lib::repository::RawItemRepository::open(db_path)
+        .ok()
+        .and_then(|repo| repo.get_summary().ok());
+
+    let (items_total, items_done, items_error, items_pending) = match summary {
+        Some(s) => (
+            s.total,
+            s.done,
+            s.error,
+            s.pending + s.processing,
+        ),
+        None => (0, 0, 0, 0),
+    };
+
+    let progress_pct = if items_total > 0 {
+        (items_done + items_error) as f64 / items_total as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    let phase = if result.success {
+        result.phase.clone()
+    } else {
+        format!("error: {}", result.phase)
+    };
+
+    let message = if result.success {
+        format!(
+            "Cycle ok · ingested={} matched={} processed={} failed={} · done={}/{}",
+            result.ingested, result.matched, result.processed, result.failed, items_done, items_total
+        )
+    } else {
+        format!(
+            "Cycle failed ({}) · {}",
+            result.phase,
+            result.error.clone().unwrap_or_default()
+        )
+    };
+
+    let progress = ServiceProgress {
+        items_total,
+        items_processed: items_done + items_error,
+        items_success: items_done,
+        items_failed: items_error,
+        items_pending,
+        progress_pct,
+        phase,
+        message,
+        last_run_at: now.to_string(),
+    };
+
+    ServiceManager::write_progress_json(project_id, &progress);
 }
 
 fn set_runner_status(
@@ -668,6 +735,9 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                         );
                     }
                 }
+
+                // ── Report realtime progress to the master DB (read by the GUI) ──
+                report_progress(&project_id, &db_path, &result, &now);
             }
             Err(e) => {
                 if let Ok(conn) = rusqlite::Connection::open(&master_db) {

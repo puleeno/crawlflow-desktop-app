@@ -25,5 +25,18 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "include": [
+    "*.ts",
+    "*.tsx",
+    "components",
+    "lib",
+    "types",
+    "plugins"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src-tauri/target"
+  ]
 }
