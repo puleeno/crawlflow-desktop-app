@@ -125,6 +125,12 @@ fn create_python_plugin_engine(
         .filter(|plugin_id| enabled_plugin_ids.is_empty() || enabled_plugin_ids.contains(plugin_id))
         .collect();
     println!("[SERVICE] Python plugins initialized: {:?}", enabled_discovered);
+
+    // Eagerly load plugins so their `on_load` hooks run and any registered
+    // filters (e.g. oreka's `parsed_data` image filter) are available before
+    // the pipeline invokes `call_filter`.
+    engine.load_all();
+
     Ok(engine)
 }
 
@@ -374,6 +380,15 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
     // Ensure project_runtime table exists
     if let Ok(conn) = rusqlite::Connection::open(&master_db) {
         ensure_runtime_table(&conn);
+        // The service is taking ownership of execution for this project, so
+        // clear any stale edit lock left by the GUI. Without this, a manually
+        // launched service + an open GUI would deadlock: the GUI keeps
+        // edit_pid set (thinking no service is running) and the service skips
+        // every cycle because is_project_being_edited() returns true.
+        let _ = conn.execute(
+            "UPDATE project_runtime SET edit_pid = NULL, updated_at = datetime('now') WHERE project_id = ?1",
+            rusqlite::params![&project_id],
+        );
     }
 
     let lm = Arc::new(SimpleLogger::as_log_manager(master_db_path()));

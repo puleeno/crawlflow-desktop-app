@@ -985,7 +985,27 @@ pub async fn execute_repository_pipeline(
                                         // Default: product/url item.
                                         let raw_json =
                                             serde_json::to_string(item).unwrap_or_default();
-                                        let content_to_save = raw_content.unwrap_or(raw_json);
+                                        let mut content_to_save = raw_content.unwrap_or(raw_json);
+
+                                        // Apply the reusable "parsed_data" filter (registered by
+                                        // plugins via crawlflow.register_filter) to the structured
+                                        // product JSON before persisting it, so crawl_data and the
+                                        // downstream worker both see the transformed data.
+                                        if let Some(engine) = python_engine.as_deref_mut() {
+                                            if let Ok(parsed) =
+                                                serde_json::from_str::<serde_json::Value>(&content_to_save)
+                                            {
+                                                if let Some(filtered) =
+                                                    engine.call_filter("parsed_data", vec![parsed])
+                                                {
+                                                    if let Some(first) = filtered.into_iter().next() {
+                                                        if let Ok(s) = serde_json::to_string(&first) {
+                                                            content_to_save = s;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                         // Hash from source_url (stable per item) so re-crawls
                                         // deduplicate correctly instead of creating duplicates
                                         // when the plugin returns a slightly different `url`.

@@ -93,6 +93,19 @@ impl PythonPlugin {
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         py.run(&code_cstr, Some(&globals), None)?;
 
+    // Run the optional `on_load` hook so plugins can register filters,
+    // presets, etc. Called once, on first load (globals are cached after).
+    // Pass an empty config dict so plugins declaring `on_load(config)` work,
+    // while those with `on_load(config=None)` accept it too.
+    if let Ok(Some(hook)) = globals.get_item("on_load") {
+        if hook.is_callable() {
+            let empty_cfg = pyo3::types::PyDict::new(py);
+            if let Err(e) = hook.call1((empty_cfg,)) {
+                log::warn!("Plugin '{}' on_load failed: {}", self.id, format_pyerr(py, &e));
+            }
+        }
+    }
+
         self.globals = Some(globals.clone().unbind());
         Ok(globals)
     }
@@ -214,6 +227,25 @@ impl PythonPluginEngine {
 
     pub fn list_plugins(&self) -> Vec<&PythonPlugin> {
         self.plugins.values().collect()
+    }
+
+    /// Eagerly load every discovered plugin so its `on_load` hook runs and
+    /// any filters (registered via `crawlflow.register_filter`) become
+    /// available immediately. Without this, a filter would only be registered
+    /// the first time some other hook (e.g. `process_data`) happened to load
+    /// the plugin — which never fires for plugins used purely as a data
+    /// source, leaving `call_filter` a no-op.
+    pub fn load_all(&mut self) {
+        let ids: Vec<String> = self.plugins.keys().cloned().collect();
+        for id in ids {
+            Python::with_gil(|py| {
+                if let Some(plugin) = self.plugins.get_mut(&id) {
+                    if let Err(e) = plugin.ensure_loaded(py) {
+                        log::warn!("Failed to pre-load plugin '{}': {}", id, e);
+                    }
+                }
+            });
+        }
     }
 
     /// Keep only the plugins enabled in the application's extension settings.
@@ -376,7 +408,7 @@ impl PythonPluginEngine {
             .get_mut(plugin_id)
             .ok_or_else(|| format!("Python plugin '{}' not found", plugin_id))?;
 
-        Python::with_gil(|py| -> Result<Vec<serde_json::Value>, String> {
+        let items: Vec<serde_json::Value> = Python::with_gil(|py| -> Result<Vec<serde_json::Value>, String> {
             let globals = plugin
                 .ensure_loaded(py)
                 .map_err(|e| format!("Failed to load plugin: {}", e))?;
@@ -399,7 +431,20 @@ impl PythonPluginEngine {
 
             serde_json::from_str(&result_str)
                 .map_err(|e| format!("Failed to parse Python result JSON: {}", e))
-        })
+        })?;
+
+        // Apply the reusable "parsed_data" filter (declared by plugins via
+        // crawlflow.register_filter) to each emitted item before it is
+        // persisted. This is the single choke-point for source plugins that
+        // emit product data directly (e.g. oreka's image URL transform),
+        // so no hard-coded field mapping is needed in Rust.
+        if !items.is_empty() {
+            if let Some(filtered) = self.call_filter("parsed_data", items.clone()) {
+                return Ok(filtered);
+            }
+        }
+
+        Ok(items)
     }
 
     /// Call `export_data` hook in a Python plugin.
@@ -674,7 +719,7 @@ fn create_crawlflow_api<'py>(py: Python<'py>, plugin_id: &str) -> PyResult<Bound
 /// (a "library" function) that Rust invokes automatically on the matching
 /// data stage. Example: `crawlflow.register_filter("parsed_data", my_filter)`
 /// makes `my_filter(data)` run on every item's parsed data after extraction.
-#[pyfunction(signature = (name, func))]
+#[pyfunction(name = "register_filter", signature = (name, func))]
 fn py_register_filter(name: String, func: Bound<'_, PyAny>) -> PyResult<()> {
     if !func.is_callable() {
         return Err(pyo3::exceptions::PyTypeError::new_err(

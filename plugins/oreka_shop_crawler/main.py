@@ -541,7 +541,7 @@ _OREKA_IMAGE_SIZE = "800-800"
 _OREKA_SIZE_PREFIX_RE = re.compile(r'^(https?://[^/]*static\.oreka\.vn/)\d+-\d+_(.*)$')
 
 # Cac URL khong phai anh san pham thuc su (anh quang cao / thumbnail cua oreka)
-_OREKA_AD_IMAGE_RE = re.compile(r'static\.oreka\.vn/(?:d/)?_next/static/', re.IGNORECASE)
+_OREKA_AD_IMAGE_RE = re.compile(r'static\.oreka\.vn/(?:[^/]+/)*_next/static/', re.IGNORECASE)
 
 
 def _upgrade_oreka_image(url):
@@ -602,6 +602,8 @@ def oreka_filter_parsed_data(data_json):
             continue
         if "image" in item:
             item["image"] = _upgrade_oreka_image(item.get("image", ""))
+        if "image_url" in item:
+            item["image_url"] = _upgrade_oreka_image(item.get("image_url", ""))
         if "images" in item:
             item["images"] = _upgrade_oreka_images(item.get("images"))
 
@@ -899,7 +901,7 @@ def _parse_product_from_html(html, url):
     }
 
 
-def on_load(config):
+def on_load(config=None):
     crawlflow.log("[OrekaShop] Plugin loaded", "info")
     try:
         import openpyxl
