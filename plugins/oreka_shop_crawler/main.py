@@ -534,6 +534,54 @@ def _safe_int(val, default=0):
         return default
 
 
+# Kich thuoc anh lon nhat duoc ho tro boi static.oreka.vn CDN
+_OREKA_IMAGE_SIZE = "800-800"
+
+# Regex bat tien to kich thuoc dang "250-250_", "800-800_", ...
+_OREKA_SIZE_PREFIX_RE = re.compile(r'^(https?://[^/]*static\.oreka\.vn/)\d+-\d+_(.*)$')
+
+# Cac URL khong phai anh san pham thuc su (anh quang cao / thumbnail cua oreka)
+_OREKA_AD_IMAGE_RE = re.compile(r'static\.oreka\.vn/(?:d/)?_next/static/', re.IGNORECASE)
+
+
+def _upgrade_oreka_image(url):
+    """Chuyen URL anh oreka.vn tu kich thuoc nho (vd 250-250) sang kich thuoc lon (800-800).
+
+    Chi ap dung voi CDN static.oreka.vn co tien to <w>-<h>_.
+    Cac URL quang cao / thumbnail cua oreka (vd /d/_next/static/...thumbnail...)
+    bi loai bo (tra ve chuoi rong).
+    """
+    if not url:
+        return url
+    url = url.strip()
+    # Loai bo anh quang cao / thumbnail cua oreka
+    if _OREKA_AD_IMAGE_RE.search(url):
+        return ""
+    m = _OREKA_SIZE_PREFIX_RE.match(url)
+    if not m:
+        return url
+    return f"{m.group(1)}{_OREKA_IMAGE_SIZE}_{m.group(2)}"
+
+
+def _upgrade_oreka_images(value):
+    """Upgrade mot hoac nhieu URL anh (chuoi cach nhau boi khoang trang hoac list).
+
+    Cac URL bi loai bo se khong xuat hien trong ket qua.
+    """
+    if value is None:
+        return value
+    if isinstance(value, list):
+        return [u for u in (_upgrade_oreka_image(v) for v in value) if u]
+    if isinstance(value, str):
+        parts = value.split()
+        upgraded = [_upgrade_oreka_image(u) for u in parts]
+        kept = [u for u in upgraded if u]
+        if len(parts) > 1:
+            return " ".join(kept)
+        return kept[0] if kept else ""
+    return value
+
+
 def _extract_attr(html, attr="src"):
     """Lay attribute value tu the HTML dau tien."""
     m = re.search(rf'{attr}\s*=\s*["\']([^"\']+)["\']', html)
@@ -757,6 +805,7 @@ def _parse_product_from_html(html, url):
             img_match = re.search(r'<img[^>]*src\s*=\s*["\']([^"\']+(?:product|san-pham)[^"\']+)["\']', html)
             if img_match:
                 image = img_match.group(1)
+    image = _upgrade_oreka_image(image)
 
     # SKU
     sku_matches = re.findall(r'(?:SKU|Mã sản phẩm|Product Code|Mã SP)\s*[:;]\s*([^\s<]+)', html, re.IGNORECASE)
@@ -1007,7 +1056,8 @@ def process_data(data_json, config_json):
             "name": item.get("name", "").strip(),
             "price": _safe_float(item.get("price", 0)),
             "old_price": _safe_float(item.get("old_price", 0)),
-            "image": item.get("image", ""),
+            "image": _upgrade_oreka_image(item.get("image", "")),
+            "images": _upgrade_oreka_images(item.get("images")),
             "sku": item.get("sku", "").strip(),
             "description": (item.get("description", "") or "").strip(),
             "category": item.get("category", "").strip(),
