@@ -45,6 +45,7 @@ import { PluginManagerPanel } from './components/PluginManagerPanel';
 import { RawItemsBrowser } from './components/RawItemsBrowser';
 import LiveLogs from './components/LiveLogs';
 import AppSettings from './components/AppSettings';
+import { ProjectWsClient } from '@/wsClient';
 
 
 import { NodeData, ProjectSettings, HTMLDataExtractorNodeData, ShapeNodeData, ShapeType } from './types';
@@ -186,6 +187,7 @@ const App: React.FC = () => {
 
   // Auto-save project metadata (name, status) to master DB with debounce
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wsRef = useRef<ProjectWsClient | null>(null);
   useEffect(() => {
     if (!currentProjectId) return;
 
@@ -209,11 +211,11 @@ const App: React.FC = () => {
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   }, [projectSettings, currentProjectId]);
 
-  // Realtime background service status.
-  // The GUI process emits a `service-status:<id>` Tauri event on every SQLite
-  // read (the background service writes progress every ~1s while running), so we
-  // rely on the event subscription as the primary source. A slow poll remains
-  // as a fallback in case an event is missed.
+  // Realtime background service status + progress.
+  // The GUI process emits a `service-status:<id>` Tauri event for control-plane
+  // signals (status, ws_port), while the continuous progress stream arrives
+  // live over the per-project WebSocket server (no polling delay). The slow
+  // 15s poll remains as a fallback in case both miss a frame.
   useEffect(() => {
     if (!currentProjectId) {
       setServiceStatus('stopped');
@@ -229,6 +231,8 @@ const App: React.FC = () => {
           setServiceStatus(info.status || 'stopped');
           setServiceCycleCount(info.cycle_count || 0);
           setServiceProgress(info.progress || null);
+          // Discover / maintain the realtime WS connection.
+          wsRef.current?.connect(info.ws_port || 0);
         } else {
           setServiceStatus('stopped');
           setServiceCycleCount(0);
@@ -248,15 +252,35 @@ const App: React.FC = () => {
           const p = event.payload;
           setServiceStatus(p.status || 'stopped');
           setServiceCycleCount(p.cycle_count || 0);
-          setServiceProgress(p.progress || null);
+          if (p.progress) setServiceProgress(p.progress);
+          // Connect / re-connect to the live WS channel.
+          wsRef.current?.connect(p.ws_port || 0);
         });
       } catch (_) { /* ignore */ }
     };
     setupEvent();
 
+    // Realtime WebSocket client for this project.
+    const ws = new ProjectWsClient(currentProjectId, {
+      onProgress: (payload) => setServiceProgress(payload),
+      onStatus: (payload) => {
+        if (payload?.status) setServiceStatus(payload.status);
+      },
+      onClose: () => {
+        // Fall back to a one-off status fetch so the UI recovers if the
+        // service WS drops (e.g. service restarted).
+        fetchStatus();
+      },
+    });
+    wsRef.current = ws;
+    // Kick off the connection using the port we just fetched.
+    fetchStatus().then(() => {});
+
     return () => {
       clearInterval(timer);
       if (unlisten) unlisten();
+      ws.disconnect();
+      wsRef.current = null;
     };
   }, [currentProjectId]);
 

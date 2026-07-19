@@ -29,6 +29,7 @@ export interface ServiceInfo {
     last_error: string | null;
     interval_seconds: number;
     progress: ServiceProgress;
+    ws_port: number;
 }
 
 export interface MySQLConnection {

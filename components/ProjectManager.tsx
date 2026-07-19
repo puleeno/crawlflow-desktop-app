@@ -7,6 +7,7 @@ import { RawItemsBrowser } from './RawItemsBrowser';
 import LiveLogs from './LiveLogs';
 import { listProjects, createProject, createProjectFromPreset, deleteProject } from '../lib/db';
 import type { Preset, ServiceInfo } from '../types';
+import { ProjectWsClient } from '@/wsClient';
 
 interface ProjectRecord {
     id: string;
@@ -93,6 +94,48 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
             clearInterval(timer);
         };
     }, []);
+
+    // Realtime progress over WebSocket for every running project. The
+    // control-plane status still arrives via the Tauri event above; here we
+    // subscribe to each project's WS server (port from ServiceInfo.ws_port)
+    // to push progress frames live into the same map. We only (re)connect when
+    // the set of (project_id, port) endpoints actually changes, so frequent
+    // progress updates don't churn sockets.
+    const wsSignature = Object.values(serviceInfos as Record<string, ServiceInfo>)
+        .map((i) => `${i.project_id}:${i.ws_port || 0}`)
+        .filter((s) => !s.endsWith(':0'))
+        .sort()
+        .join('|');
+    useEffect(() => {
+        const clients: ProjectWsClient[] = [];
+        for (const info of Object.values(serviceInfos as Record<string, ServiceInfo>)) {
+            const port = info.ws_port || 0;
+            if (port === 0) continue;
+            const client = new ProjectWsClient(info.project_id, {
+                onProgress: (payload) => {
+                    if (!payload) return;
+                    setServiceInfos((prev) => {
+                        const existing = prev[info.project_id];
+                        if (!existing) return prev;
+                        return {
+                            ...prev,
+                            [info.project_id]: {
+                                ...existing,
+                                progress: payload,
+                                ws_port: port,
+                            },
+                        };
+                    });
+                },
+            });
+            client.connect(port);
+            clients.push(client);
+        }
+        return () => {
+            for (const c of clients) c.disconnect();
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [wsSignature]);
 
     const handleCreate = async (name: string, description: string) => {
         setCreating(true);

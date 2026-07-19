@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crawlflow_lib::services::get_export_settings;
+use crawlflow_lib::ws::{self, WsHub};
 
 /// Current UTC timestamp as an ISO-8601-ish string for progress/status stamps.
 fn now_iso() -> String {
@@ -248,6 +249,7 @@ fn ensure_runtime_table(conn: &rusqlite::Connection) {
             last_run_at TEXT,
             last_error TEXT,
             progress_json TEXT,
+            ws_port INTEGER,
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         )",
         [],
@@ -382,6 +384,7 @@ fn report_progress(
 
     let progress = build_progress(project_id, db_path, Some(&phase), Some(&message), now);
     ServiceManager::write_progress_json(project_id, &progress);
+    crawlflow_lib::ws::publish_progress(project_id, serde_json::to_value(&progress).unwrap_or_default());
 }
 
 fn set_runner_status(
@@ -410,7 +413,12 @@ fn set_runner_status(
 
 // ── Per-project async loop ─────────────────────────────────────────────────────────
 
-async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<AtomicBool>) {
+async fn run_project_loop(
+    proj: ProjectRow,
+    interval_secs: u64,
+    shutdown: Arc<AtomicBool>,
+    ws_hub: Arc<WsHub>,
+) {
     let project_id = proj.id.clone();
     let db_path = project_db_path(&proj.db_path);
     let master_db = master_db_path();
@@ -430,6 +438,15 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
     }
 
     let lm = Arc::new(SimpleLogger::as_log_manager(master_db_path()));
+
+    // Start (or reuse) this project's realtime WebSocket server and remember
+    // its port so logs / progress / per-item events can be pushed live.
+    let ws_port = ws_hub.start_for_project(&project_id).await;
+    lm.info(
+        &project_id,
+        "service",
+        &format!("[WS] Realtime channel listening on port {}", ws_port),
+    );
 
     // Resolve export settings (global export folder + per-project grouping)
     // once per project loop so the export plugin places files correctly.
@@ -589,6 +606,8 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                         let now = now_iso();
                         let progress = build_progress(&ticker_pid, &ticker_db, None, None, &now);
                         crawlflow_lib::services::ServiceManager::write_progress_json(&ticker_pid, &progress);
+                        // Push live over WebSocket (no polling delay).
+                        crawlflow_lib::ws::publish_progress(&ticker_pid, serde_json::to_value(&progress).unwrap_or_default());
                     }
                 });
 
@@ -917,6 +936,25 @@ async fn main() {
         .ok();
     }
 
+    // ── Realtime WebSocket hub ──────────────────────────────────────
+    // Each project gets its own WS server so the GUI can subscribe to live
+    // progress / logs / per-item events with zero polling delay.
+    let ws_hub = WsHub::new();
+    {
+        let master = master_db_path();
+        ws_hub.set_port_persister(Box::new(move |project_id, port| {
+            if let Ok(conn) = rusqlite::Connection::open(&master) {
+                let _ = conn.execute(
+                    "INSERT INTO project_runtime (project_id, ws_port, updated_at)
+                     VALUES (?1, ?2, datetime('now'))
+                     ON CONFLICT(project_id) DO UPDATE SET ws_port = ?2, updated_at = datetime('now')",
+                    rusqlite::params![project_id, port as i64],
+                );
+            }
+        }));
+    }
+    ws::set_global_hub(ws_hub.clone());
+
     // Resolve project list
     let all_projects = match list_enabled_projects() {
         Ok(p) => p,
@@ -947,7 +985,8 @@ async fn main() {
     let mut handles = Vec::new();
     for proj in projects {
         let sd = shutdown.clone();
-        handles.push(tokio::spawn(run_project_loop(proj, interval_secs, sd)));
+        let hub = ws_hub.clone();
+        handles.push(tokio::spawn(run_project_loop(proj, interval_secs, sd, hub)));
     }
 
     for h in handles {

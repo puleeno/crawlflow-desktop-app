@@ -16,6 +16,7 @@ pub mod repository;
 pub mod request_clients;
 pub mod services;
 pub mod settings_engine;
+pub mod ws;
 pub mod spreadsheet;
 mod system_service;
 mod worker_engine;

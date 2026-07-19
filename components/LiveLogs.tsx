@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { XMarkIcon, ChevronDownIcon, ChevronUpIcon } from './icons';
+import { ProjectWsClient } from '@/wsClient';
 
 interface LogEntry {
   id: number;
@@ -110,6 +111,40 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
       unlistenRef.current?.();
       unlistenStatusRef.current?.();
     };
+  }, [projectId]);
+
+  // Realtime logs over WebSocket (the headless service cannot emit Tauri
+  // events, so its logs only arrived via DB polling before). The WS server
+  // pushes every log frame live. We connect using ws_port from service status.
+  useEffect(() => {
+    let client: ProjectWsClient | null = null;
+    (async () => {
+      let port = 0;
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const info: any = await invoke('get_service_status_cmd', { projectId });
+        port = info?.ws_port || 0;
+      } catch { /* ignore */ }
+      if (!port) return;
+      client = new ProjectWsClient(projectId, {
+        onLog: (payload) => {
+          if (!payload || typeof payload.id !== 'number') return;
+          setLogs(prev => {
+            if (payload.id <= maxIdRef.current) return prev;
+            maxIdRef.current = payload.id;
+            const next = [...prev, payload as LogEntry];
+            if (next.length > 500) next.splice(0, next.length - 500);
+            return next;
+          });
+        },
+        onStatus: (payload) => {
+          if (payload?.status) setServiceStatus(payload.status);
+          if (payload) setServiceInfo(payload);
+        },
+      });
+      client.connect(port);
+    })();
+    return () => { client?.disconnect(); };
   }, [projectId]);
 
   // Auto-scroll

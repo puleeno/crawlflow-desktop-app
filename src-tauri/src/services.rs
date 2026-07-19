@@ -15,6 +15,8 @@ pub struct ServiceInfo {
     pub interval_seconds: u64,
     // Realtime progress (written by the background service each cycle)
     pub progress: ServiceProgress,
+    // Port of the project's realtime WebSocket server (0 = not running)
+    pub ws_port: u16,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -122,6 +124,7 @@ impl Default for ServiceInfo {
             last_error: None,
             interval_seconds: 60,
             progress: ServiceProgress::default(),
+            ws_port: 0,
         }
     }
 }
@@ -325,12 +328,12 @@ impl ServiceManager {
             .join("crawlflow.db");
         if let Ok(conn) = rusqlite::Connection::open(&db_path) {
             Self::ensure_progress_column(&conn);
-            let row: rusqlite::Result<(String, i64, Option<String>, Option<String>, Option<String>)> = conn.query_row(
-                "SELECT runner_status, cycle_count, last_run_at, last_error, progress_json FROM project_runtime WHERE project_id = ?1",
+            let row: rusqlite::Result<(String, i64, Option<String>, Option<String>, Option<String>, Option<i64>)> = conn.query_row(
+                "SELECT runner_status, cycle_count, last_run_at, last_error, progress_json, ws_port FROM project_runtime WHERE project_id = ?1",
                 rusqlite::params![project_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4).ok().flatten())),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4).ok().flatten(), r.get(5).ok().flatten())),
             );
-            if let Ok((status, cycle_count, last_run_at, last_error, progress_json)) = row {
+            if let Ok((status, cycle_count, last_run_at, last_error, progress_json, ws_port)) = row {
                 // For background service "running" status, verify the PID is still alive
                 let effective_status = if status == "running" {
                     if is_project_running_in_background(project_id) {
@@ -350,6 +353,7 @@ impl ServiceManager {
                     last_error,
                     interval_seconds: 60,
                     progress: Self::parse_progress(progress_json.as_deref(), last_run_at),
+                    ws_port: ws_port.unwrap_or(0) as u16,
                 };
                 self.emit_service_info(&info);
                 return Some(info);
@@ -398,7 +402,7 @@ impl ServiceManager {
 
         Self::ensure_progress_column(&conn);
 
-        let mut stmt = match conn.prepare("SELECT project_id, runner_status, cycle_count, last_run_at, last_error, progress_json FROM project_runtime") {
+        let mut stmt = match conn.prepare("SELECT project_id, runner_status, cycle_count, last_run_at, last_error, progress_json, ws_port FROM project_runtime") {
             Ok(s) => s,
             Err(_) => return vec![],
         };
@@ -411,6 +415,7 @@ impl ServiceManager {
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<i64>>(6)?,
             ))
         }) {
             Ok(r) => r,
@@ -418,7 +423,7 @@ impl ServiceManager {
         };
 
         rows.filter_map(|r| r.ok())
-            .map(|(pid, status, cycle_count, last_run_at, last_error, progress_json)| {
+            .map(|(pid, status, cycle_count, last_run_at, last_error, progress_json, ws_port)| {
                 let effective_status = if status == "running" {
                     if is_project_running_in_background(&pid) {
                         "running"
@@ -437,6 +442,7 @@ impl ServiceManager {
                     last_error,
                     interval_seconds: 60,
                     progress: Self::parse_progress(progress_json.as_deref(), last_run_at),
+                    ws_port: ws_port.unwrap_or(0) as u16,
                 }
             })
             .collect()
@@ -453,6 +459,10 @@ impl ServiceManager {
     fn ensure_progress_column(conn: &rusqlite::Connection) {
         let _ = conn.execute(
             "ALTER TABLE project_runtime ADD COLUMN progress_json TEXT",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE project_runtime ADD COLUMN ws_port INTEGER",
             [],
         );
     }
@@ -494,6 +504,7 @@ impl ServiceManager {
 fn ensure_progress_column_static() {
     if let Ok(conn) = rusqlite::Connection::open(master_db_path()) {
         let _ = conn.execute("ALTER TABLE project_runtime ADD COLUMN progress_json TEXT", []);
+        let _ = conn.execute("ALTER TABLE project_runtime ADD COLUMN ws_port INTEGER", []);
     }
 }
 
@@ -512,6 +523,7 @@ mod tests {
             last_error: None,
             interval_seconds: 60,
             progress: ServiceProgress::default(),
+            ws_port: 0,
         };
         assert_eq!(info.project_id, "test-proj");
         assert_eq!(info.status, "running");
@@ -530,6 +542,7 @@ mod tests {
             last_error: Some("timeout".into()),
             interval_seconds: 30,
             progress: ServiceProgress::default(),
+            ws_port: 0,
         };
         assert_eq!(info.status, "error: timeout");
         assert_eq!(info.last_error.unwrap(), "timeout");
@@ -546,6 +559,7 @@ mod tests {
             last_error: None,
             interval_seconds: 60,
             progress: ServiceProgress::default(),
+            ws_port: 0,
         };
         let json = serde_json::to_string(&info).unwrap();
         let back: ServiceInfo = serde_json::from_str(&json).unwrap();
@@ -553,6 +567,7 @@ mod tests {
         assert_eq!(back.status, "running");
         assert_eq!(back.cycle_count, 5);
         assert_eq!(back.interval_seconds, 60);
+        assert_eq!(back.ws_port, 0);
         assert!(back.last_error.is_none());
     }
 
@@ -567,11 +582,13 @@ mod tests {
             last_error: Some("timeout".into()),
             interval_seconds: 30,
             progress: ServiceProgress::default(),
+            ws_port: 0,
         };
         let json = serde_json::to_string(&info).unwrap();
         let back: ServiceInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(back.status, "error: timeout");
-        assert_eq!(back.last_error, Some("timeout".into()));
+        assert_eq!(back.last_error.unwrap(), "timeout");
         assert_eq!(back.interval_seconds, 30);
+        assert_eq!(back.ws_port, 0);
     }
 }

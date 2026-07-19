@@ -48,6 +48,8 @@ base64 = "0.22.1"
 regex = "1"
 lazy_static = "1.4"
 tungstenite = "0.24"
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
 md5 = "0.7"
 url = "2.5"
 # Used by the headless service binary only

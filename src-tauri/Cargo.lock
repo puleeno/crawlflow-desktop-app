@@ -647,6 +647,7 @@ dependencies = [
  "calamine",
  "ctrlc",
  "dirs-next",
+ "futures-util",
  "lazy_static",
  "log",
  "md5",
@@ -666,6 +667,7 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-sql",
  "tokio",
+ "tokio-tungstenite",
  "tungstenite",
  "url",
  "zip",
@@ -5310,6 +5312,18 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite",
 ]
 
 [[package]]

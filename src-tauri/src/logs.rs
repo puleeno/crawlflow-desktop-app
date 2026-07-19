@@ -209,6 +209,22 @@ impl LogManager {
             }
         }
 
+        // Realtime push to any connected WebSocket clients (headless service).
+        // No-op in the GUI binary where no global WS hub is registered.
+        if let Some(hub) = crate::ws::global_hub() {
+            hub.publish(
+                &entry.project_id,
+                &crate::ws::WsMessage::log(serde_json::json!({
+                    "id": entry.id,
+                    "timestamp": entry.timestamp,
+                    "level": entry.level,
+                    "source": entry.source,
+                    "message": entry.message,
+                    "details": entry.details,
+                })),
+            );
+        }
+
         entry
     }
 

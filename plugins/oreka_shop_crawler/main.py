@@ -389,14 +389,16 @@ def register_preprocessors():
 
 
 def preprocess_data(data_json):
-    """Lay store ID tu HTML nguon, rewrite thanh listing URL.
+    """Lay store ID tu HTML nguon, fetch tung trang listing va luu product URL
+    vao DB NGAY khi tim thay (de progress bar cap nhat realtime).
 
-    Chi tra ve 1 item kieu 'listing_url' (URL da duoc rewrite thanh
-    /mua-ban?storeId=...). Rust se fetch HTML cua URL nay o Stage B
-    va dung [URL Patterns] cua fetch-data node de trich product URLs.
+    Khac voi truoc day (tra ve 1 loat 'listing_url' de Rust fetch sau), o day
+    plugin tu fetch tung trang, trich product URL va goi crawlflow.save_raw_items
+    luu tung luot vao DB. UI ('items_pending') se tang len tung buoc thay vi
+    chi nhay 1 lan sau khi xong het.
 
-    Cac page da crawl xong (luu trong bang crawl_pages) se duoc bo qua
-    de ho tro resume khi service bi dung dot ngot.
+    Tra ve [] de bao cho Rust rang item da duoc luu truc tiep vao DB
+    (Rust se skip Stage B trich URL trung lap).
     """
     payload = json.loads(data_json) if isinstance(data_json, str) else data_json
     html = payload.get("raw_data", "")
@@ -411,8 +413,7 @@ def preprocess_data(data_json):
     base_listing_url = _oreka_listing_url(source_url, store_id)
 
     # Pagination: Oreka store listing supports ?page=N.
-    # max_pages = 0 hoac None => unlimited (Rust se dung URL Patterns +
-    # _has_next_page de dung o trang cuoi).
+    # max_pages = 0 hoac None => unlimited.
     max_pages = int((config.get("max_pages") or 0) or 0)
     if max_pages < 1:
         max_pages = 0  # 0 = unlimited
@@ -425,12 +426,15 @@ def preprocess_data(data_json):
         except Exception:
             done_pages = set()
 
-    items = []
+    total_saved = 0
     page_num = 1
+    delay_ms = int((config.get("delay_ms") or 1000) or 1000)
+
     while True:
         if max_pages and page_num > max_pages:
             break
         page_url = _add_page_to_url(base_listing_url, "page", page_num)
+
         if page_num in done_pages:
             crawlflow.log(
                 f"[OrekaShop][preprocess] Bo qua page {page_num} (da done, resume)",
@@ -438,24 +442,80 @@ def preprocess_data(data_json):
             )
             page_num += 1
             continue
+
         crawlflow.log(
-            f"[OrekaShop][preprocess] Listing page {page_num}: {page_url} (storeId={store_id})",
+            f"[OrekaShop][preprocess] Fetch listing page {page_num}: {page_url}",
             "info",
         )
-        items.append({
-            "source_url": page_url,
-            "item_type": "listing_url",
-            "item_hash": hashlib.sha256(page_url.encode("utf-8")).hexdigest(),
-            "raw_content": None,
-            "extracted_url": page_url,
-        })
+
+        try:
+            raw = crawlflow.fetch_url(page_url, None, "reqwest", False)
+            result = json.loads(raw) if isinstance(raw, str) else raw
+            listing_html = result.get("body", "") if isinstance(result, dict) else ""
+        except Exception as e:
+            crawlflow.log(
+                f"[OrekaShop][preprocess] Loi fetch page {page_num}: {e}", "error"
+            )
+            break
+
+        if not listing_html:
+            crawlflow.log(
+                f"[OrekaShop][preprocess] Listing page {page_num} rong", "warn"
+            )
+            break
+
+        product_urls = _extract_oreka_listing_links(listing_html, page_url)
+        crawlflow.log(
+            f"[OrekaShop][preprocess] Tim thay {len(product_urls)} product URL o trang {page_num}",
+            "info",
+        )
+
+        # Luu tung luot product URL vao DB NGAY de UI cap nhat realtime.
+        if product_urls and project_id:
+            raw_items = []
+            for p_url in product_urls:
+                raw_items.append({
+                    "source_url": p_url,
+                    "item_type": "url",
+                    "item_hash": hashlib.sha256(p_url.encode("utf-8")).hexdigest(),
+                })
+            try:
+                res = json.loads(crawlflow.save_raw_items(project_id, json.dumps(raw_items)))
+                saved = int(res.get("inserted", 0))
+                total_saved += saved
+                crawlflow.log(
+                    f"[OrekaShop][preprocess] Da luu {saved} URL moi (tong {total_saved}) vao DB",
+                    "info",
+                )
+            except Exception as e:
+                crawlflow.log(
+                    f"[OrekaShop][preprocess] Loi save_raw_items: {e}", "warn"
+                )
+
+        # Danh dau page done de resume.
+        if project_id:
+            try:
+                crawlflow.mark_page_done(project_id, page_url, page_num, len(product_urls))
+            except Exception:
+                pass
+
+        has_next = _has_next_page(listing_html, page_num)
+        if not has_next:
+            crawlflow.log(
+                f"[OrekaShop][preprocess] Het phan trang tai trang {page_num}", "info"
+            )
+            break
+
         page_num += 1
+        if delay_ms > 0:
+            time.sleep(delay_ms / 1000.0)
 
     crawlflow.log(
-        f"[OrekaShop][preprocess] Da tao {len(items)} listing URL (max_pages={max_pages or 'unlimited'}, bo qua {len(done_pages)} done)",
+        f"[OrekaShop][preprocess] Hoan tat: {total_saved} product URL da luu vao DB "
+        f"(max_pages={max_pages or 'unlimited'}, bo qua {len(done_pages)} done)",
         "info",
     )
-    return json.dumps(items)
+    return json.dumps([])
 
 
 # ── Mac dinh cho oreka.vn ──────────────────────────────────────────────

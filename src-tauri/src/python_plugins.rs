@@ -710,6 +710,8 @@ fn create_crawlflow_api<'py>(py: Python<'py>, plugin_id: &str) -> PyResult<Bound
     module.add_function(wrap_pyfunction!(py_register_filter, py)?)?;
     module.add_function(wrap_pyfunction!(py_mark_page_done, py)?)?;
     module.add_function(wrap_pyfunction!(py_get_done_pages, py)?)?;
+    module.add_function(wrap_pyfunction!(py_save_raw_items, py)?)?;
+    module.add_function(wrap_pyfunction!(py_emit_event, py)?)?;
 
     // Stash the owning plugin id so register_filter knows the caller.
     module.add("__plugin_id", plugin_id)?;
@@ -980,6 +982,62 @@ fn py_mark_page_done(
 fn py_get_done_pages(project_id: String) -> PyResult<Vec<i64>> {
     let db_path = project_db_path_for(&project_id);
     Ok(crate::repository::get_done_pages(&db_path).into_iter().collect())
+}
+
+/// Save raw items into the project repository immediately, so the UI progress
+/// (pending count) updates in real time while a plugin is still collecting URLs.
+///
+/// `items_json` must be a JSON array of objects with at least `source_url`,
+/// `item_type` and `item_hash`. Returns a JSON object `{ inserted, duplicated }`.
+#[pyfunction(name = "save_raw_items")]
+fn py_save_raw_items(project_id: String, items_json: String) -> PyResult<String> {
+    let items: Vec<crate::repository::NewRawItem> = serde_json::from_str(&items_json)
+        .map_err(|e| pyo3::exceptions::PyTypeError::new_err(e.to_string()))?;
+    let db_path = project_db_path_for(&project_id);
+    let repo = crate::repository::RawItemRepository::open(&db_path)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+    let result = repo
+        .save_items(&items)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+    // Realtime push: each saved batch is a per-item event so the UI progress
+    // bar climbs instantly instead of waiting for the DB poll.
+    if let Some(hub) = crate::ws::global_hub() {
+        hub.publish(
+            &project_id,
+            &crate::ws::WsMessage::item(serde_json::json!({
+                "event": "items_saved",
+                "inserted": result.inserted,
+                "duplicated": result.duplicated,
+                "total": items.len(),
+            })),
+        );
+    }
+    Ok(serde_json::json!({
+        "inserted": result.inserted,
+        "duplicated": result.duplicated,
+    })
+    .to_string())
+}
+
+/// Push a realtime event to connected WebSocket clients for this project.
+/// `event_type` is a free-form string (e.g. "progress", "item", "status").
+/// `payload_json` must be a JSON object/array. Used by plugins that want to
+/// drive the UI progress bar directly without polling.
+#[pyfunction(name = "emit_event")]
+fn py_emit_event(project_id: String, event_type: String, payload_json: String) -> PyResult<()> {
+    let payload: serde_json::Value = serde_json::from_str(&payload_json)
+        .map_err(|e| pyo3::exceptions::PyTypeError::new_err(e.to_string()))?;
+    if let Some(hub) = crate::ws::global_hub() {
+        let msg = match event_type.as_str() {
+            "progress" => crate::ws::WsMessage::progress(payload),
+            "log" => crate::ws::WsMessage::log(payload),
+            "item" => crate::ws::WsMessage::item(payload),
+            "status" => crate::ws::WsMessage::status(payload),
+            other => crate::ws::WsMessage { r#type: other.to_string(), payload },
+        };
+        hub.publish(&project_id, &msg);
+    }
+    Ok(())
 }
 
 // ── Spreadsheet API ──────────────────────────────────────────────
