@@ -1556,20 +1556,22 @@ const App: React.FC = () => {
               )}
             </button>
             {/* Realtime progress bar */}
-            {serviceProgress && (serviceProgress.items_total > 0 || serviceProgress.items_processed > 0) && (
+            {(serviceStatus === 'running' || serviceStatus === 'idle') && (
               <div className="flex items-center gap-2 px-2 py-1 bg-slate-100 rounded-lg">
                 <div className="w-32 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all duration-500 ${serviceProgress.items_failed > 0 && serviceProgress.progress_pct >= 100 ? 'bg-amber-500' : 'bg-blue-500'}`}
-                    style={{ width: `${Math.max(0, Math.min(100, serviceProgress.progress_pct))}%` }}
+                    className={`h-full rounded-full transition-all duration-500 ${serviceProgress?.items_failed > 0 && (serviceProgress?.progress_pct ?? 0) >= 100 ? 'bg-amber-500' : 'bg-blue-500'}`}
+                    style={{ width: `${serviceProgress ? Math.max(0, Math.min(100, serviceProgress.progress_pct)) : 0}%` }}
                   />
                 </div>
                 <span className="text-xs font-mono text-gray-600">
-                  {Math.max(0, Math.min(100, serviceProgress.progress_pct)).toFixed(0)}%
+                  {serviceProgress ? Math.max(0, Math.min(100, serviceProgress.progress_pct)).toFixed(0) : 0}%
                 </span>
-                <span className="text-[11px] text-gray-400">
-                  {serviceProgress.items_success}/{serviceProgress.items_total}
-                </span>
+                {serviceProgress && (serviceProgress.items_total > 0 || serviceProgress.items_processed > 0) && (
+                  <span className="text-[11px] text-gray-400">
+                    {serviceProgress.items_success}/{serviceProgress.items_total}
+                  </span>
+                )}
               </div>
             )}
           <button
