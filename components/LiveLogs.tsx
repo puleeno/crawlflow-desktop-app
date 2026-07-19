@@ -39,10 +39,15 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
   const [serviceStatus, setServiceStatus] = useState<string>('stopped');
   const [serviceInfo, setServiceInfo] = useState<any>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
-  const maxIdRef = useRef<number>(0);
+  // Content-based dedup key. We use `timestamp|message` instead of the numeric
+  // `id` because the headless service's in-memory log counter resets every
+  // cycle, so WebSocket log frames would otherwise arrive with ids lower than
+  // the DB-fetched history and be mistaken for duplicates and dropped.
+  const seenRef = useRef<Set<string>>(new Set());
 
   // Fetch existing logs from DB on mount (captures background service logs)
   useEffect(() => {
+    seenRef.current = new Set();
     (async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
@@ -53,8 +58,8 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
           limit: 500,
         });
         if (existing.length > 0) {
+          for (const l of existing) seenRef.current.add(`${l.timestamp}|${l.message}`);
           setLogs(existing);
-          maxIdRef.current = Math.max(...existing.map(l => l.id));
         }
       } catch (e) {
         // Not in Tauri or DB not available
@@ -76,11 +81,12 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
         const { listen } = await import('@tauri-apps/api/event');
 
         const unsub1 = await listen<LogEntry>(logEvent, (event) => {
+          const l = event.payload;
+          const key = `${l.timestamp}|${l.message}`;
+          if (seenRef.current.has(key)) return;
+          seenRef.current.add(key);
           setLogs(prev => {
-            // Avoid duplicates from overlapping DB fetch
-            if (event.payload.id <= maxIdRef.current) return prev;
-            maxIdRef.current = event.payload.id;
-            const next = [...prev, event.payload];
+            const next = [...prev, l];
             if (next.length > 500) next.splice(0, next.length - 500);
             return next;
           });
@@ -115,23 +121,26 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
 
   // Realtime logs over WebSocket (the headless service cannot emit Tauri
   // events, so its logs only arrived via DB polling before). The WS server
-  // pushes every log frame live. We connect using ws_port from service status.
+  // pushes every log frame live. We poll `get_service_status_cmd` for the
+  // ws_port and (re)connect as soon as it is available — the service may
+  // start its WS server after the GUI opens this panel, so we retry.
   useEffect(() => {
     let client: ProjectWsClient | null = null;
-    (async () => {
-      let port = 0;
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const info: any = await invoke('get_service_status_cmd', { projectId });
-        port = info?.ws_port || 0;
-      } catch { /* ignore */ }
-      if (!port) return;
+    let cancelled = false;
+    let connectedPort = 0;
+
+    const ensureConnected = (port: number) => {
+      if (port === 0 || cancelled) return;
+      if (connectedPort === port && client) return; // already connected
+      client?.disconnect();
+      connectedPort = port;
       client = new ProjectWsClient(projectId, {
         onLog: (payload) => {
-          if (!payload || typeof payload.id !== 'number') return;
+          if (!payload || typeof payload.message !== 'string') return;
+          const key = `${payload.timestamp}|${payload.message}`;
+          if (seenRef.current.has(key)) return;
+          seenRef.current.add(key);
           setLogs(prev => {
-            if (payload.id <= maxIdRef.current) return prev;
-            maxIdRef.current = payload.id;
             const next = [...prev, payload as LogEntry];
             if (next.length > 500) next.splice(0, next.length - 500);
             return next;
@@ -141,10 +150,28 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
           if (payload?.status) setServiceStatus(payload.status);
           if (payload) setServiceInfo(payload);
         },
+        onClose: () => { connectedPort = 0; },
       });
       client.connect(port);
-    })();
-    return () => { client?.disconnect(); };
+    };
+
+    const pollPort = async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const info: any = await invoke('get_service_status_cmd', { projectId });
+        ensureConnected(info?.ws_port || 0);
+      } catch { /* ignore */ }
+    };
+
+    pollPort();
+    const timer = setInterval(pollPort, 2000); // retry until WS port is up
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      client?.disconnect();
+      client = null;
+    };
   }, [projectId]);
 
   // Auto-scroll
@@ -163,6 +190,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
 
   const clearLogs = useCallback(async () => {
     setLogs([]);
+    seenRef.current = new Set();
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('clear_project_logs_cmd', { projectId });

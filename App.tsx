@@ -182,6 +182,7 @@ const App: React.FC = () => {
   const [serviceStatus, setServiceStatus] = useState<string>('stopped');
   const [serviceCycleCount, setServiceCycleCount] = useState(0);
   const [serviceProgress, setServiceProgress] = useState<any>(null);
+  const [lastLog, setLastLog] = useState<{ level: string; message: string; ts: string } | null>(null);
   const isRunning = serviceStatus === 'running' || serviceStatus === 'idle';
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
 
@@ -241,8 +242,19 @@ const App: React.FC = () => {
       } catch (_) { /* not in tauri */ }
     };
 
+    // Lightweight port poll: connect to the live WS channel as soon as the
+    // service brings it up (it may start after the GUI opens this project).
+    const pollPort = async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const info: any = await invoke('get_service_status_cmd', { projectId: currentProjectId });
+        wsRef.current?.connect(info?.ws_port || 0);
+      } catch { /* ignore */ }
+    };
+
     fetchStatus(); // immediate (also triggers an emit)
     const timer = setInterval(fetchStatus, 15000); // fallback only
+    const portTimer = setInterval(pollPort, 2000); // keep WS connected
 
     let unlisten: (() => void) | null = null;
     const setupEvent = async () => {
@@ -263,6 +275,14 @@ const App: React.FC = () => {
     // Realtime WebSocket client for this project.
     const ws = new ProjectWsClient(currentProjectId, {
       onProgress: (payload) => setServiceProgress(payload),
+      onLog: (payload) => {
+        if (!payload || !payload.message) return;
+        setLastLog({
+          level: payload.level || 'info',
+          message: payload.message,
+          ts: payload.timestamp || '',
+        });
+      },
       onStatus: (payload) => {
         if (payload?.status) setServiceStatus(payload.status);
       },
@@ -278,6 +298,7 @@ const App: React.FC = () => {
 
     return () => {
       clearInterval(timer);
+      clearInterval(portTimer);
       if (unlisten) unlisten();
       ws.disconnect();
       wsRef.current = null;
@@ -1579,22 +1600,38 @@ const App: React.FC = () => {
                 <span className="text-xs text-gray-400">#{serviceCycleCount}</span>
               )}
             </button>
-            {/* Realtime progress bar */}
+            {/* Realtime progress bar + live last-log ticker */}
             {(serviceStatus === 'running' || serviceStatus === 'idle') && (
-              <div className="flex items-center gap-2 px-2 py-1 bg-slate-100 rounded-lg">
-                <div className="w-32 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${serviceProgress?.items_failed > 0 && (serviceProgress?.progress_pct ?? 0) >= 100 ? 'bg-amber-500' : 'bg-blue-500'}`}
-                    style={{ width: `${serviceProgress ? Math.max(0, Math.min(100, serviceProgress.progress_pct)) : 0}%` }}
-                  />
-                </div>
-                <span className="text-xs font-mono text-gray-600">
-                  {serviceProgress ? Math.max(0, Math.min(100, serviceProgress.progress_pct)).toFixed(0) : 0}%
-                </span>
-                {serviceProgress && (serviceProgress.items_total > 0 || serviceProgress.items_processed > 0) && (
-                  <span className="text-[11px] text-gray-400">
-                    {serviceProgress.items_success}/{serviceProgress.items_total}
+              <div className="flex flex-col gap-1 px-2 py-1 bg-slate-100 rounded-lg max-w-md">
+                <div className="flex items-center gap-2">
+                  <div className="w-32 h-1.5 bg-gray-200 rounded-full overflow-hidden shrink-0">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${serviceProgress?.items_failed > 0 && (serviceProgress?.progress_pct ?? 0) >= 100 ? 'bg-amber-500' : 'bg-blue-500'}`}
+                      style={{ width: `${serviceProgress ? Math.max(0, Math.min(100, serviceProgress.progress_pct)) : 0}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-mono text-gray-600">
+                    {serviceProgress ? Math.max(0, Math.min(100, serviceProgress.progress_pct)).toFixed(0) : 0}%
                   </span>
+                  {serviceProgress && (serviceProgress.items_total > 0 || serviceProgress.items_processed > 0) && (
+                    <span className="text-[11px] text-gray-400">
+                      {serviceProgress.items_success}/{serviceProgress.items_total}
+                    </span>
+                  )}
+                </div>
+                {lastLog && (
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span
+                      className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+                        lastLog.level === 'error' ? 'bg-red-500' :
+                        lastLog.level === 'warn' ? 'bg-amber-500' :
+                        'bg-blue-400 animate-pulse'
+                      }`}
+                    />
+                    <span className="text-[11px] text-gray-500 truncate font-mono">
+                      {lastLog.message}
+                    </span>
+                  </div>
                 )}
               </div>
             )}
