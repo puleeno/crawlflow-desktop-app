@@ -394,10 +394,14 @@ def preprocess_data(data_json):
     Chi tra ve 1 item kieu 'listing_url' (URL da duoc rewrite thanh
     /mua-ban?storeId=...). Rust se fetch HTML cua URL nay o Stage B
     va dung [URL Patterns] cua fetch-data node de trich product URLs.
+
+    Cac page da crawl xong (luu trong bang crawl_pages) se duoc bo qua
+    de ho tro resume khi service bi dung dot ngot.
     """
     payload = json.loads(data_json) if isinstance(data_json, str) else data_json
     html = payload.get("raw_data", "")
     source_url = payload.get("source_url", "https://www.oreka.vn")
+    project_id = payload.get("project_id", "")
     store_id = _extract_store_id_from_html(html) or _extract_store_id_from_html(source_url)
 
     if not store_id:
@@ -411,9 +415,23 @@ def preprocess_data(data_json):
     if max_pages < 1:
         max_pages = 1
 
+    # Cac page da hoan thanh (tu cycle truoc) se duoc skip khi resume.
+    done_pages = set()
+    if project_id:
+        try:
+            done_pages = set(crawlflow.get_done_pages(project_id))
+        except Exception:
+            done_pages = set()
+
     items = []
     for page_num in range(1, max_pages + 1):
-        page_url = _add_page_to_url(base_listing_url, "page", page_num) if page_num > 1 else base_listing_url
+        page_url = _add_page_to_url(base_listing_url, "page", page_num)
+        if page_num in done_pages:
+            crawlflow.log(
+                f"[OrekaShop][preprocess] Bo qua page {page_num} (da done, resume)",
+                "info",
+            )
+            continue
         crawlflow.log(
             f"[OrekaShop][preprocess] Listing page {page_num}: {page_url} (storeId={store_id})",
             "info",
@@ -427,7 +445,7 @@ def preprocess_data(data_json):
         })
 
     crawlflow.log(
-        f"[OrekaShop][preprocess] Da tao {len(items)} listing URL (page 1..{max_pages})",
+        f"[OrekaShop][preprocess] Da tao {len(items)} listing URL (page 1..{max_pages}, bo qua {len(done_pages)} done)",
         "info",
     )
     return json.dumps(items)
@@ -918,7 +936,7 @@ def on_load(config=None):
         crawlflow.log(f"[OrekaShop] register_filter failed: {e}", "warn")
 
 
-def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headless=None):
+def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headless=None, project_id=None):
     """Tu crawl toan bo san pham cua shop (phan trang + trich product URL + parse).
 
     Tra ve danh sach cac dict san pham (da duoc parse day du). Logic phan trang
@@ -956,8 +974,23 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
     seen_urls = set()
     page_num = 1
 
+    # Cac page da hoan thanh o chu ky crawl truoc (luu trong bang crawl_pages)
+    # se duoc bo qua de ho tro resume khi service bi dung dot ngot.
+    done_pages = set()
+    if project_id:
+        try:
+            done_pages = set(crawlflow.get_done_pages(project_id))
+        except Exception:
+            done_pages = set()
+
     while True:
-        page_url = _add_page_to_url(base_listing_url, "page", page_num) if page_num > 1 else base_listing_url
+        page_url = _add_page_to_url(base_listing_url, "page", page_num)
+        if page_num in done_pages:
+            crawlflow.log(f"[OrekaShop] Bo qua page {page_num} (da done, resume)", "info")
+            page_num += 1
+            if page_num > max_pages:
+                break
+            continue
         crawlflow.log(f"[OrekaShop] Listing page {page_num}: {page_url}", "info")
 
         try:
@@ -978,6 +1011,13 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
             f"[OrekaShop] Tim thay {len(product_urls)} product URL o trang {page_num}",
             "info",
         )
+
+        # Danh dau page nay da hoan thanh de ho tro resume.
+        if project_id:
+            try:
+                crawlflow.mark_page_done(project_id, page_url, page_num, len(product_urls))
+            except Exception as e:
+                crawlflow.log(f"[OrekaShop] mark_page_done loi: {e}", "warn")
 
         for p_url in product_urls:
             if p_url in seen_urls:
@@ -1057,7 +1097,7 @@ def fetch_data(config_json):
         "info",
     )
 
-    products = _crawl_all_products(shop_url, max_pages, delay_ms, client_type, headless)
+    products = _crawl_all_products(shop_url, max_pages, delay_ms, client_type, headless, config.get("project_id"))
 
     # Dung dinh dang item ma Rust/worker hieu: item_type='url'.
     items = []

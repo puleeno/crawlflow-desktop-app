@@ -155,6 +155,16 @@ impl RawItemRepository {
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )",
             "CREATE INDEX IF NOT EXISTS idx_json_ld_item ON json_ld(raw_item_id)",
+            "CREATE TABLE IF NOT EXISTS crawl_pages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                page_url TEXT NOT NULL,
+                page_number INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                item_count INTEGER NOT NULL DEFAULT 0,
+                error TEXT,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_crawl_pages_url ON crawl_pages(page_url)",
         ];
         for stmt in statements {
             if let Err(e) = self.conn.execute(stmt, []) {
@@ -680,6 +690,116 @@ impl RawItemRepository {
             .map_err(|e| format!("Failed to reset done url items: {}", e))?;
         Ok(count as i64)
     }
+
+    /// Mark a crawled listing page as done in the `crawl_pages` tracking table
+    /// so a crashed/resumed run can skip it. Upserts on `page_url`.
+    pub fn mark_page_done(
+        &self,
+        page_url: &str,
+        page_number: i64,
+        item_count: i64,
+    ) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO crawl_pages (page_url, page_number, status, item_count, updated_at)
+                 VALUES (?1, ?2, 'done', ?3, datetime('now'))
+                 ON CONFLICT(page_url) DO UPDATE SET
+                    status = 'done',
+                    page_number = excluded.page_number,
+                    item_count = excluded.item_count,
+                    updated_at = datetime('now')",
+                params![page_url, page_number, item_count],
+            )
+            .map_err(|e| format!("Failed to mark page done: {}", e))?;
+        Ok(())
+    }
+
+    /// Record a failed listing page (so it can be retried on resume).
+    pub fn mark_page_error(&self, page_url: &str, page_number: i64, error: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO crawl_pages (page_url, page_number, status, error, updated_at)
+                 VALUES (?1, ?2, 'error', ?3, datetime('now'))
+                 ON CONFLICT(page_url) DO UPDATE SET
+                    status = 'error',
+                    page_number = excluded.page_number,
+                    error = excluded.error,
+                    updated_at = datetime('now')",
+                params![page_url, page_number, error],
+            )
+            .map_err(|e| format!("Failed to mark page error: {}", e))?;
+        Ok(())
+    }
+
+    /// If `source_url` is a paginated listing URL (`?page=N` / `&page=N`),
+    /// upsert it as done in `crawl_pages`. No-op for non-paginated URLs.
+    pub fn mark_page_done_if_listing(&self, source_url: &str, item_count: i64) {
+        if let Some(page_num) = page_number_from_url(source_url) {
+            let _ = self.mark_page_done(source_url, page_num, item_count);
+        }
+    }
+}
+
+/// Extract the `?page=N` / `&page=N` number from a listing URL.
+/// Returns `None` when the URL carries no page parameter (e.g. page 1).
+pub fn page_number_from_url(url: &str) -> Option<i64> {
+    let q = match url.find('?') {
+        Some(i) => &url[i..],
+        None => return None,
+    };
+    for pair in q.trim_start_matches('?').split('&') {
+        let mut it = pair.splitn(2, '=');
+        if let (Some(k), Some(v)) = (it.next(), it.next()) {
+            if k == "page" {
+                if let Ok(n) = v.parse::<i64>() {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Mark a listing page done directly from a project DB path (no live
+/// `RawItemRepository` needed). Used by callers that only hold the path.
+pub fn mark_page_done_by_path(
+    db_path: &std::path::Path,
+    page_url: &str,
+    page_number: i64,
+    item_count: i64,
+) -> Result<(), String> {
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO crawl_pages (page_url, page_number, status, item_count, updated_at)
+         VALUES (?1, ?2, 'done', ?3, datetime('now'))
+         ON CONFLICT(page_url) DO UPDATE SET
+            status = 'done',
+            page_number = excluded.page_number,
+            item_count = excluded.item_count,
+            updated_at = datetime('now')",
+        params![page_url, page_number, item_count],
+    )
+    .map_err(|e| format!("Failed to mark page done: {}", e))?;
+    Ok(())
+}
+
+/// Read the set of already-completed listing page numbers for a project.
+pub fn get_done_pages(db_path: &std::path::Path) -> std::collections::HashSet<i64> {
+    let conn = match rusqlite::Connection::open(db_path) {
+        Ok(c) => c,
+        Err(_) => return std::collections::HashSet::new(),
+    };
+    let mut set = std::collections::HashSet::new();
+    let mut stmt = match conn.prepare("SELECT page_number FROM crawl_pages WHERE status = 'done'") {
+        Ok(s) => s,
+        Err(_) => return set,
+    };
+    if let Ok(rows) = stmt.query_map([], |row| row.get::<_, i64>(0)) {
+        for r in rows.flatten() {
+            set.insert(r);
+        }
+    }
+    set
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

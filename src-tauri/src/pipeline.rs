@@ -1501,6 +1501,7 @@ pub async fn execute_repository_pipeline(
                 let data_json = serde_json::json!({
                     "raw_data": fetched.raw_data,
                     "source_url": fetched.source_url,
+                    "project_id": project_id,
                     "config": preproc_config,
                 });
                 match engine.call_preprocessor_hook("oreka-shop-crawler", data_json) {
@@ -1737,6 +1738,9 @@ pub async fn execute_repository_pipeline(
                         listing.listing_url, r.inserted, r.duplicated
                     ),
                 );
+                // Danh dau trang listing da hoan thanh de ho tro resume
+                // (bo qua trang nay o cac chu ky crawl tiep theo neu bi dung dot ngot).
+                repo.mark_page_done_if_listing(&listing.listing_url, result.extracted_count as i64);
             }
             Err(e) => {
                 log_manager.error(project_id, "preprocessing", &e);

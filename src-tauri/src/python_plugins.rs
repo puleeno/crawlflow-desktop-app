@@ -708,6 +708,8 @@ fn create_crawlflow_api<'py>(py: Python<'py>, plugin_id: &str) -> PyResult<Bound
     module.add_function(wrap_pyfunction!(py_spreadsheet_read, py)?)?;
     module.add_function(wrap_pyfunction!(py_spreadsheet_write, py)?)?;
     module.add_function(wrap_pyfunction!(py_register_filter, py)?)?;
+    module.add_function(wrap_pyfunction!(py_mark_page_done, py)?)?;
+    module.add_function(wrap_pyfunction!(py_get_done_pages, py)?)?;
 
     // Stash the owning plugin id so register_filter knows the caller.
     module.add("__plugin_id", plugin_id)?;
@@ -950,6 +952,34 @@ fn py_update_progress(project_id: String, data: String) -> PyResult<()> {
         .map_err(|e| pyo3::exceptions::PyTypeError::new_err(e.to_string()))?;
     crate::progress::update_progress(&project_id, info);
     Ok(())
+}
+
+/// Resolve a project's per-project SQLite DB path from its id.
+fn project_db_path_for(project_id: &str) -> std::path::PathBuf {
+    dirs_next::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("com.CrawlFlow.desktop")
+        .join(format!("project_{}.db", project_id))
+}
+
+/// Mark a crawled listing page as done so a resumed run can skip it.
+#[pyfunction(name = "mark_page_done")]
+fn py_mark_page_done(
+    project_id: String,
+    page_url: String,
+    page_number: i64,
+    item_count: i64,
+) -> PyResult<()> {
+    let db_path = project_db_path_for(&project_id);
+    crate::repository::mark_page_done_by_path(&db_path, &page_url, page_number, item_count)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))
+}
+
+/// Return the set of already-completed listing page numbers for a project.
+#[pyfunction(name = "get_done_pages")]
+fn py_get_done_pages(project_id: String) -> PyResult<Vec<i64>> {
+    let db_path = project_db_path_for(&project_id);
+    Ok(crate::repository::get_done_pages(&db_path).into_iter().collect())
 }
 
 // ── Spreadsheet API ──────────────────────────────────────────────

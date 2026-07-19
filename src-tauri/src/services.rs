@@ -190,8 +190,30 @@ impl ServiceManager {
     }
 
     pub fn initialize(&self, app_handle: AppHandle, log_manager: Arc<LogManager>) {
-        *self.app_handle.write().unwrap() = Some(app_handle);
+        *self.app_handle.write().unwrap() = Some(app_handle.clone());
         *self.log_manager.write().unwrap() = Some(log_manager);
+        self.start_status_broadcast(app_handle);
+    }
+
+    /// Spawn a background thread in the GUI process that polls SQLite every
+    /// second and re-broadcasts `service-status:<id>` / `service-status-update`
+    /// events. This decouples event emission from component-level reads so the
+    /// frontend receives realtime progress even when no component is actively
+    /// polling (the background service writes progress every ~1s while running).
+    fn start_status_broadcast(&self, app_handle: AppHandle) {
+        std::thread::spawn(move || loop {
+            // Read the full list (cheap; only emits for projects with a record).
+            let infos = ServiceManager::read_all_runtime();
+            for info in &infos {
+                let event = format!("service-status:{}", info.project_id);
+                let _ = app_handle.emit(&event, info);
+                let _ = app_handle.emit(
+                    "service-status-update",
+                    serde_json::json!({ "project_id": info.project_id, "info": info }),
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+        });
     }
 
     fn lm(&self) -> Arc<LogManager> {
@@ -349,14 +371,18 @@ impl ServiceManager {
         }
     }
 
-    pub fn list_service_infos(&self) -> Vec<ServiceInfo> {
-        // Read from SQLite - list all projects with runtime info
+    /// Read every project's runtime info directly from SQLite (no `self`
+    /// needed). Used by the status broadcast thread.
+    pub fn read_all_runtime() -> Vec<ServiceInfo> {
         let db_path = dirs_next::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("com.CrawlFlow.desktop")
             .join("crawlflow.db");
+        Self::read_all_runtime_from(&db_path)
+    }
 
-        let conn = match rusqlite::Connection::open(&db_path) {
+    fn read_all_runtime_from(db_path: &std::path::Path) -> Vec<ServiceInfo> {
+        let conn = match rusqlite::Connection::open(db_path) {
             Ok(c) => c,
             Err(_) => return vec![],
         };
@@ -404,11 +430,15 @@ impl ServiceManager {
                     progress: Self::parse_progress(progress_json.as_deref(), last_run_at),
                 }
             })
-            .map(|info| {
-                self.emit_service_info(&info);
-                info
-            })
             .collect()
+    }
+
+    pub fn list_service_infos(&self) -> Vec<ServiceInfo> {
+        let infos = Self::read_all_runtime();
+        for info in &infos {
+            self.emit_service_info(info);
+        }
+        infos
     }
 
     fn ensure_progress_column(conn: &rusqlite::Connection) {
