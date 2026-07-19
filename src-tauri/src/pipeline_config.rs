@@ -282,6 +282,7 @@ pub(crate) fn build_plugin_config(
     node_data: &Value,
     source_value: &str,
     project_id: &str,
+    db_path: &str,
 ) -> Value {
     let plugin_config = node_data
         .get("pluginConfig")
@@ -301,6 +302,7 @@ pub(crate) fn build_plugin_config(
     }
     config.insert("source_url".into(), serde_json::json!(source_value));
     config.insert("project_id".into(), serde_json::json!(project_id));
+    config.insert("db_path".into(), serde_json::json!(db_path));
     Value::Object(config)
 }
 

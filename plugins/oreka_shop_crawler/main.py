@@ -404,6 +404,7 @@ def preprocess_data(data_json):
     html = payload.get("raw_data", "")
     source_url = payload.get("source_url", "https://www.oreka.vn")
     project_id = payload.get("project_id", "")
+    db_path = payload.get("db_path", "")
     store_id = _extract_store_id_from_html(html) or _extract_store_id_from_html(source_url)
 
     if not store_id:
@@ -471,7 +472,7 @@ def preprocess_data(data_json):
         )
 
         # Luu tung luot product URL vao DB NGAY de UI cap nhat realtime.
-        if product_urls and project_id:
+        if product_urls and project_id and db_path:
             raw_items = []
             for p_url in product_urls:
                 raw_items.append({
@@ -480,7 +481,7 @@ def preprocess_data(data_json):
                     "item_hash": hashlib.sha256(p_url.encode("utf-8")).hexdigest(),
                 })
             try:
-                res = json.loads(crawlflow.save_raw_items(project_id, json.dumps(raw_items)))
+                res = json.loads(crawlflow.save_raw_items(project_id, db_path, json.dumps(raw_items)))
                 saved = int(res.get("inserted", 0))
                 total_saved += saved
                 crawlflow.log(
@@ -1003,7 +1004,7 @@ def on_load(config=None):
         crawlflow.log(f"[OrekaShop] register_filter failed: {e}", "warn")
 
 
-def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headless=None, project_id=None):
+def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headless=None, project_id=None, db_path=None):
     """Tu crawl toan bo san pham cua shop (phan trang + trich product URL + parse).
 
     Tra ve danh sach cac dict san pham (da duoc parse day du). Logic phan trang
@@ -1078,6 +1079,26 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
             f"[OrekaShop] Tim thay {len(product_urls)} product URL o trang {page_num}",
             "info",
         )
+
+        # Luu tung luot product URL vao DB NGAY de progress bar (pending)
+        # cap nhat realtime thay vi chi nhay 1 lan sau khi xong het.
+        if product_urls and project_id and db_path:
+            raw_items = []
+            for p_url in product_urls:
+                raw_items.append({
+                    "source_url": p_url,
+                    "item_type": "url",
+                    "item_hash": hashlib.sha256(p_url.encode("utf-8")).hexdigest(),
+                })
+            try:
+                res = json.loads(crawlflow.save_raw_items(project_id, db_path, json.dumps(raw_items)))
+                saved = int(res.get("inserted", 0))
+                crawlflow.log(
+                    f"[OrekaShop] Da luu {saved} URL moi vao DB (trang {page_num})",
+                    "info",
+                )
+            except Exception as e:
+                crawlflow.log(f"[OrekaShop] Loi save_raw_items: {e}", "warn")
 
         # Danh dau page nay da hoan thanh de ho tro resume.
         if project_id:
@@ -1161,7 +1182,7 @@ def fetch_data(config_json):
         "info",
     )
 
-    products = _crawl_all_products(shop_url, max_pages, delay_ms, client_type, headless, config.get("project_id"))
+    products = _crawl_all_products(shop_url, max_pages, delay_ms, client_type, headless, config.get("project_id"), config.get("db_path"))
 
     # Dung dinh dang item ma Rust/worker hieu: item_type='url'.
     items = []

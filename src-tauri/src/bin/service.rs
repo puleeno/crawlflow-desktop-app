@@ -438,6 +438,12 @@ async fn run_project_loop(
     }
 
     let lm = Arc::new(SimpleLogger::as_log_manager(master_db_path()));
+    // Attach the realtime WS hub to this logger so log entries are pushed live
+    // to the GUI. (set_master_db_path already installed the service handler
+    // stack; set_ws_hub re-installs it WITH the WsLogHandler attached.)
+    if let Some(hub) = ws::global_hub() {
+        lm.set_ws_hub(hub);
+    }
 
     // Start (or reuse) this project's realtime WebSocket server and remember
     // its port so logs / progress / per-item events can be pushed live.

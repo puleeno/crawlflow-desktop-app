@@ -990,11 +990,10 @@ fn py_get_done_pages(project_id: String) -> PyResult<Vec<i64>> {
 /// `items_json` must be a JSON array of objects with at least `source_url`,
 /// `item_type` and `item_hash`. Returns a JSON object `{ inserted, duplicated }`.
 #[pyfunction(name = "save_raw_items")]
-fn py_save_raw_items(project_id: String, items_json: String) -> PyResult<String> {
+fn py_save_raw_items(project_id: String, db_path: String, items_json: String) -> PyResult<String> {
     let items: Vec<crate::repository::NewRawItem> = serde_json::from_str(&items_json)
         .map_err(|e| pyo3::exceptions::PyTypeError::new_err(e.to_string()))?;
-    let db_path = project_db_path_for(&project_id);
-    let repo = crate::repository::RawItemRepository::open(&db_path)
+    let repo = crate::repository::RawItemRepository::open(&std::path::PathBuf::from(&db_path))
         .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
     let result = repo
         .save_items(&items)

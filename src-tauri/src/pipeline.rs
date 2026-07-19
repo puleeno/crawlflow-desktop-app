@@ -913,6 +913,7 @@ pub async fn execute_repository_pipeline(
                         &node.data,
                         &source_value,
                         project_id,
+                        db_path.to_str().unwrap_or(""),
                     );
 
                     // Warn if shop_url is missing from pluginConfig and source_value is empty
@@ -1502,6 +1503,7 @@ pub async fn execute_repository_pipeline(
                     "raw_data": fetched.raw_data,
                     "source_url": fetched.source_url,
                     "project_id": project_id,
+                    "db_path": db_path.to_str().unwrap_or(""),
                     "config": preproc_config,
                 });
                 match engine.call_preprocessor_hook("oreka-shop-crawler", data_json) {
@@ -2737,7 +2739,7 @@ mod tests {
         let source_value = "https://www.oreka.vn/store/C21AVGZS44L3UU";
         let project_id = "test-project";
         let config =
-            crate::pipeline_config::build_plugin_config(&node_data, source_value, project_id);
+            crate::pipeline_config::build_plugin_config(&node_data, source_value, project_id, "");
         assert_eq!(
             config.get("shop_url").and_then(|v| v.as_str()),
             Some("https://www.oreka.vn/store/C21AVGZS44L3UU")
@@ -2762,7 +2764,7 @@ mod tests {
                 "shop_url": "https://www.oreka.vn/store/EXISTING_SHOP"
             }
         });
-        let config = crate::pipeline_config::build_plugin_config(&node_data, "", "test-project");
+        let config = crate::pipeline_config::build_plugin_config(&node_data, "", "test-project", "");
         assert_eq!(
             config.get("shop_url").and_then(|v| v.as_str()),
             Some("https://www.oreka.vn/store/EXISTING_SHOP")
@@ -2777,7 +2779,7 @@ mod tests {
             "pluginSourceType": "py-oreka-shop-crawler",
             "pluginConfig": {}
         });
-        let config = crate::pipeline_config::build_plugin_config(&node_data, "", "test-project");
+        let config = crate::pipeline_config::build_plugin_config(&node_data, "", "test-project", "");
         assert!(config.get("shop_url").is_none());
     }
 
@@ -2791,6 +2793,7 @@ mod tests {
             &node_data,
             "https://example.com",
             "test-project",
+            "",
         );
         assert_eq!(
             config.get("shop_url").and_then(|v| v.as_str()),

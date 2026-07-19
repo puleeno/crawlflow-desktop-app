@@ -188,7 +188,6 @@ pub fn run() {
 
             // Initialize log manager with app handle and DB path for persistence
             let app_handle = app.handle().clone();
-            state.log_manager.set_app_handle(app_handle.clone());
             {
                 let db_path = dirs_next::data_dir()
                     .unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -196,6 +195,7 @@ pub fn run() {
                     .join("crawlflow.db");
                 state.log_manager.set_master_db_path(db_path);
             }
+            state.log_manager.set_app_handle(app_handle.clone());
 
             // Initialize service manager
             state
