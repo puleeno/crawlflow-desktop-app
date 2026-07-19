@@ -1177,10 +1177,52 @@ pub fn excel_export_plugin(
         .replace("{{date}}", &date_str)
         .replace("{{timestamp}}", &chrono_now());
 
-    let out_dir = dirs_next::data_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("com.CrawlFlow.desktop")
-        .join("exports");
+    // ── Output directory ──────────────────────────────────────────────
+    // Honour an explicit `outputDir` from config (set by the service / pipeline
+    // from the global `app_settings.export_dir`). Fall back to the OS Downloads
+    // folder, then to the legacy data-dir/exports location.
+    let output_dir: std::path::PathBuf = match config.get("outputDir").and_then(|v| v.as_str()) {
+        Some(dir) if !dir.trim().is_empty() => std::path::PathBuf::from(dir),
+        _ => dirs_next::download_dir()
+            .or_else(|| dirs_next::data_dir())
+            .unwrap_or_else(|| std::path::PathBuf::from(".")),
+    };
+
+    // ── Per-project grouping ──────────────────────────────────────────
+    // `groupExport` (bool) + `groupFormat` ("id" | "name" | "both") create a
+    // per-project subfolder. `projectId` is always appended to the file name
+    // so files never collide across projects even when grouping is off.
+    let group_export = config
+        .get("groupExport")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let group_format = config
+        .get("groupFormat")
+        .and_then(|v| v.as_str())
+        .unwrap_or("id");
+    let project_id = config.get("projectId").and_then(|v| v.as_str()).unwrap_or("");
+    let project_name = config.get("projectName").and_then(|v| v.as_str()).unwrap_or("");
+
+    let mut out_dir = output_dir.clone();
+    if group_export && !project_id.is_empty() {
+        let label = match group_format {
+            "name" if !project_name.is_empty() => sanitize_folder_name(project_name),
+            "both" if !project_name.is_empty() => {
+                format!("{}-{}", sanitize_folder_name(project_name), project_id)
+            }
+            _ => project_id.to_string(),
+        };
+        out_dir = out_dir.join(label);
+    }
+
+    // Append the project id to the file name (before the extension) so outputs
+    // from different projects never overwrite each other.
+    let file_name = if !project_id.is_empty() {
+        append_project_id_to_filename(&file_name, project_id)
+    } else {
+        file_name
+    };
+
     std::fs::create_dir_all(&out_dir).map_err(|e| {
         format!(
             "Failed to create exports dir '{}': {}",
@@ -1265,4 +1307,41 @@ fn chrono_date() -> String {
     }
     let day = remaining_days + 1;
     format!("{:04}-{:02}-{:02}", year, month, day)
+}
+
+/// Replace filesystem-unsafe characters in a project name so it can be used
+/// as a folder name. Collapses whitespace and keeps it short.
+fn sanitize_folder_name(name: &str) -> String {
+    let trimmed = name.trim();
+    let mut out = String::with_capacity(trimmed.len());
+    for c in trimmed.chars() {
+        if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' || c == '.' {
+            out.push(c);
+        } else {
+            out.push('-');
+        }
+    }
+    // Collapse runs of spaces/underscores into a single dash.
+    let out = out.split_whitespace().collect::<Vec<&str>>().join("-");
+    let out = out.trim_matches('-').to_string();
+    if out.is_empty() {
+        "project".to_string()
+    } else {
+        out
+    }
+}
+
+/// Insert ` -<project_id>` before the file extension so outputs from different
+/// projects never collide. Files without an extension get the suffix appended.
+fn append_project_id_to_filename(file_name: &str, project_id: &str) -> String {
+    match std::path::Path::new(file_name).extension().and_then(|e| e.to_str()) {
+        Some(ext) => {
+            let stem = std::path::Path::new(file_name)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(file_name);
+            format!("{}-{}.{}", stem, project_id, ext)
+        }
+        None => format!("{}-{}", file_name, project_id),
+    }
 }

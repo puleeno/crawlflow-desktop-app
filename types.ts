@@ -47,6 +47,9 @@ export interface ProjectSettings {
     userAgent: string;
     concurrency: number;
     executionMode: 'parallel' | 'queue';
+    // Per-project export grouping (global export folder is configured in App Settings)
+    groupExport?: boolean;
+    groupFormat?: 'id' | 'name' | 'both';
 }
 
 

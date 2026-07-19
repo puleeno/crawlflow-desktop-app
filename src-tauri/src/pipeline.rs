@@ -6,8 +6,10 @@ use crate::plugins;
 use crate::python_plugins::PythonPluginEngine;
 use crate::repository::RawItemRepository;
 use crate::request_clients;
+use crate::services::get_export_settings;
 use crate::worker_engine::WorkerEngine;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
@@ -377,6 +379,29 @@ pub fn execute_pipeline_with_mode(
     }
 }
 
+/// Resolve the export settings for `project_id` and inject the relevant keys
+/// (`outputDir`, `groupExport`, `groupFormat`, `projectId`, `projectName`) into
+/// the export plugin's config so output files land in the right folder and are
+/// grouped/labeled per project. Mirrors the service's export-driving logic.
+fn inject_export_settings(config: &mut serde_json::Value, project_id: &str) {
+    let project_db = dirs_next::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("com.CrawlFlow.desktop")
+        .join(format!("project_{}.db", project_id));
+    let settings = get_export_settings(project_id, &project_db);
+    if let Some(obj) = config.as_object_mut() {
+        if let Some(dir) = &settings.export_dir {
+            obj.insert("outputDir".into(), serde_json::json!(dir));
+        }
+        obj.insert("groupExport".into(), serde_json::json!(settings.group_export));
+        obj.insert("groupFormat".into(), serde_json::json!(settings.group_format));
+        obj.insert("projectId".into(), serde_json::json!(project_id));
+        if !obj.contains_key("projectName") {
+            obj.insert("projectName".into(), serde_json::json!(""));
+        }
+    }
+}
+
 fn process_node(
     node_id: &str,
     config: &PipelineConfig,
@@ -514,7 +539,8 @@ fn process_node(
                             processor_config
                         ),
                     );
-                    let cfg = processor_config.clone();
+                    let mut cfg = processor_config.clone();
+                    inject_export_settings(&mut cfg, project_id);
                     match plugins::excel_export_plugin(input.clone(), cfg) {
                         Ok(output) => {
                             let file = output
@@ -596,12 +622,14 @@ fn process_node(
                 .and_then(|v| v.as_str())
                 .unwrap_or("Sheet1");
 
+            let mut export_cfg = serde_json::json!({
+                "sheetName": sheet_name,
+                "fileName": format!("export_{}.xlsx", node.id),
+            });
+            inject_export_settings(&mut export_cfg, project_id);
             let result = plugins::excel_export_plugin(
                 input.clone(),
-                serde_json::json!({
-                    "sheetName": sheet_name,
-                    "fileName": format!("export_{}.xlsx", node.id),
-                }),
+                export_cfg,
             );
 
             match result {

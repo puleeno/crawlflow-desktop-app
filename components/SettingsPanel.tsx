@@ -1861,6 +1861,45 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
 
             </CollapsibleSection>
 
+            <CollapsibleSection title="Export">
+                <div className="flex items-center justify-between mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                    <div className="flex flex-col">
+                        <span className="text-sm font-bold text-gray-700">Group export by project</span>
+                        <span className="text-xs text-gray-500">Put exported files in a per-project subfolder (file name also includes the project id).</span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => onUpdateProjectSettings({ groupExport: !projectSettings.groupExport })}
+                        disabled={isRunning}
+                        className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 ${projectSettings.groupExport ? 'bg-green-500' : 'bg-gray-300'}`}
+                        role="switch"
+                        aria-checked={projectSettings.groupExport}
+                    >
+                        <span
+                            aria-hidden="true"
+                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${projectSettings.groupExport ? 'translate-x-5' : 'translate-x-0'}`}
+                        />
+                    </button>
+                </div>
+                <div>
+                    <label className={commonLabelClasses}>Subfolder name format</label>
+                    <div className="flex gap-2">
+                        {(['id', 'name', 'both'] as const).map((fmt) => (
+                            <button
+                                key={fmt}
+                                type="button"
+                                onClick={() => onUpdateProjectSettings({ groupFormat: fmt })}
+                                disabled={isRunning || !projectSettings.groupExport}
+                                className={`flex-1 p-2 rounded-md text-sm font-semibold border transition-colors disabled:opacity-50 ${projectSettings.groupFormat === fmt ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
+                            >
+                                {fmt === 'id' ? 'Project ID' : fmt === 'name' ? 'Project Name' : 'ID + Name'}
+                            </button>
+                        ))}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">Used only when grouping is enabled. The export folder itself is set in the global App Settings.</p>
+                </div>
+            </CollapsibleSection>
+
             <CollapsibleSection title="Actions">
                 <div className="flex gap-2">
                     <button onClick={onExport} className={`${commonButtonClasses} bg-indigo-600 hover:bg-indigo-700 flex items-center justify-center gap-2`}>

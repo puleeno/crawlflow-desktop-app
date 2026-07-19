@@ -1,5 +1,6 @@
 use crate::logs::LogManager;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 use tauri::AppHandle;
 
@@ -27,6 +28,87 @@ pub struct ServiceProgress {
     pub phase: String,
     pub message: String,
     pub last_run_at: String,
+}
+
+/// Per-run export configuration resolved from the global `app_settings`
+/// (`export_dir`) and the per-project `project_settings` (`group_export`,
+/// `group_format`). Passed into the export plugin so output files are placed
+/// in the user's chosen folder and (optionally) grouped per project.
+#[derive(Debug, Clone, Default)]
+pub struct ExportSettings {
+    /// Global export directory from `app_settings.export_dir`. `None` means
+    /// "use the OS Downloads folder".
+    pub export_dir: Option<String>,
+    /// Whether to create a per-project subfolder.
+    pub group_export: bool,
+    /// Subfolder label format: "id" | "name" | "both".
+    pub group_format: String,
+}
+
+fn master_db_path() -> std::path::PathBuf {
+    dirs_next::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("com.CrawlFlow.desktop")
+        .join("crawlflow.db")
+}
+
+/// Read the global `export_dir` from `app_settings`, falling back to None
+/// (the export plugin then defaults to the OS Downloads folder).
+fn read_global_export_dir() -> Option<String> {
+    let conn = rusqlite::Connection::open(master_db_path()).ok()?;
+    let val: Option<String> = conn
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = 'export_dir'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    let val = val?;
+    if val.trim().is_empty() {
+        None
+    } else {
+        Some(val)
+    }
+}
+
+/// Read `group_export` / `group_format` from the per-project `project_settings`
+/// table. Returns defaults (disabled) when the project DB is unavailable.
+fn read_project_export_settings(project_db_path: &Path) -> (bool, String) {
+    let conn = rusqlite::Connection::open(project_db_path).ok();
+    let conn = match conn {
+        Some(c) => c,
+        None => return (false, "id".to_string()),
+    };
+    let get = |key: &str| -> Option<String> {
+        conn.query_row(
+            "SELECT value FROM project_settings WHERE key = ?1",
+            [key],
+            |row| row.get(0),
+        )
+        .ok()
+    };
+    let group_export = match get("group_export").as_deref() {
+        Some("true") | Some("1") => true,
+        _ => false,
+    };
+    let group_format = match get("group_format").as_deref() {
+        Some("name") => "name".to_string(),
+        Some("both") => "both".to_string(),
+        _ => "id".to_string(),
+    };
+    (group_export, group_format)
+}
+
+/// Resolve the full export settings for a project run.
+pub fn get_export_settings(project_id: &str, project_db_path: &Path) -> ExportSettings {
+    let export_dir = read_global_export_dir();
+    let (group_export, group_format) = read_project_export_settings(project_db_path);
+    let _ = project_id;
+    ExportSettings {
+        export_dir,
+        group_export,
+        group_format,
+    }
 }
 
 impl Default for ServiceInfo {
@@ -342,13 +424,6 @@ impl ServiceManager {
             );
         }
     }
-}
-
-fn master_db_path() -> std::path::PathBuf {
-    dirs_next::data_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("com.CrawlFlow.desktop")
-        .join("crawlflow.db")
 }
 
 fn ensure_progress_column_static() {

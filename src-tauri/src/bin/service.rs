@@ -14,6 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crawlflow_lib::services::get_export_settings;
+
 // ── Minimal inline log manager (avoids importing Tauri-coupled crawlflow_lib::logs) ──
 
 struct SimpleLogger;
@@ -392,6 +394,11 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
     }
 
     let lm = Arc::new(SimpleLogger::as_log_manager(master_db_path()));
+
+    // Resolve export settings (global export folder + per-project grouping)
+    // once per project loop so the export plugin places files correctly.
+    let export_settings = get_export_settings(&project_id, &db_path);
+
     let enabled_plugin_ids = match get_enabled_python_plugin_ids() {
         Ok(plugin_ids) => plugin_ids,
         Err(error) => {
@@ -700,6 +707,31 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                                                 );
                                             }
                                         }
+                                        // Inject export settings so the plugin
+                                        // writes to the chosen folder and groups
+                                        // per project when enabled.
+                                        if let Some(dir) = &export_settings.export_dir {
+                                            obj.insert(
+                                                "outputDir".into(),
+                                                serde_json::json!(dir),
+                                            );
+                                        }
+                                        obj.insert(
+                                            "groupExport".into(),
+                                            serde_json::json!(export_settings.group_export),
+                                        );
+                                        obj.insert(
+                                            "groupFormat".into(),
+                                            serde_json::json!(export_settings.group_format),
+                                        );
+                                        obj.insert(
+                                            "projectId".into(),
+                                            serde_json::json!(project_id.clone()),
+                                        );
+                                        obj.insert(
+                                            "projectName".into(),
+                                            serde_json::json!(proj.name.clone()),
+                                        );
                                     }
                                     match crawlflow_lib::plugins::excel_export_plugin(
                                         export_input.clone(),

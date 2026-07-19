@@ -148,6 +148,8 @@ const App: React.FC = () => {
     userAgent: 'Crawler/1.0',
     concurrency: 5,
     executionMode: 'queue',
+    groupExport: false,
+    groupFormat: 'id',
   });
 
   // State for UI panels
@@ -1092,6 +1094,8 @@ const App: React.FC = () => {
           concurrency: String(projectSettings.concurrency),
           enabled: String(projectSettings.enabled),
           executionMode: projectSettings.executionMode,
+          group_export: String(projectSettings.groupExport ?? false),
+          group_format: projectSettings.groupFormat ?? 'id',
         });
         const { message } = await import('@tauri-apps/plugin-dialog');
         await message('Project saved successfully!', { title: 'CrawlFlow', kind: 'info' });
@@ -1460,6 +1464,8 @@ const App: React.FC = () => {
           concurrency: Number(state.settings.concurrency) || prev.concurrency,
           enabled: state.settings.enabled === 'true' || state.settings.enabled === '1' || prev.enabled,
           executionMode: (state.settings.executionMode as 'parallel' | 'queue') || prev.executionMode,
+          groupExport: state.settings.group_export === 'true' || state.settings.group_export === '1' || prev.groupExport,
+          groupFormat: (state.settings.group_format as 'id' | 'name' | 'both') || prev.groupFormat,
         }));
       }
       setCurrentProjectId(projectId);

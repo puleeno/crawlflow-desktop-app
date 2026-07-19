@@ -27,6 +27,11 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
   const [chromeLoading, setChromeLoading] = useState(false);
   const [chromeMessage, setChromeMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const [exportDir, setExportDir] = useState('');
+  const [savedExportDir, setSavedExportDir] = useState('');
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportMessage, setExportMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   const fetchInfo = useCallback(async () => {
     setLoading(true);
     try {
@@ -58,6 +63,40 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
       setSavedHeadless(isHeadless);
     } catch (e) { /* ignore */ }
   }, []);
+
+  const fetchExportDir = useCallback(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const val: string | null = await invoke('get_app_setting_cmd', { key: 'export_dir' });
+      const dir = val ?? '';
+      setExportDir(dir);
+      setSavedExportDir(dir);
+    } catch (e) { /* ignore */ }
+  }, []);
+
+  const handleSaveExportDir = async () => {
+    setExportLoading(true);
+    setExportMessage(null);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_app_setting_cmd', { key: 'export_dir', value: exportDir });
+      setSavedExportDir(exportDir);
+      setExportMessage({ type: 'success', text: 'Export folder saved.' });
+    } catch (e: any) {
+      setExportMessage({ type: 'error', text: e?.toString() || 'Failed to save' });
+    }
+    setExportLoading(false);
+  };
+
+  const handleBrowseExportDir = async () => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected: string | null = await open({ directory: true, multiple: false });
+      if (selected) {
+        setExportDir(selected);
+      }
+    } catch { /* ignore */ }
+  };
 
   const handleSaveChromePath = async () => {
     setChromeLoading(true);
@@ -93,7 +132,8 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
     fetchInfo();
     fetchChromePath();
     fetchHeadless();
-  }, [fetchInfo, fetchChromePath, fetchHeadless]);
+    fetchExportDir();
+  }, [fetchInfo, fetchChromePath, fetchHeadless, fetchExportDir]);
 
   const showMsg = (type: 'success' | 'error', text: string) => {
     setMessage({ type, text });
@@ -359,6 +399,44 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
               />
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
             </label>
+          </div>
+        </div>
+
+        {/* Export Folder */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+          <h3 className="text-base font-bold text-gray-800 mb-4">Export Folder</h3>
+          <div className="space-y-3">
+            <label className="text-sm font-semibold text-gray-700">Data export directory</label>
+            <p className="text-xs text-gray-500">
+              Folder where exported Excel/CSV files are saved. Defaults to your system Downloads folder when empty.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={exportDir}
+                onChange={e => setExportDir(e.target.value)}
+                placeholder="Leave empty to use Downloads folder"
+                className="flex-1 p-2.5 text-sm border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
+              <button
+                onClick={handleBrowseExportDir}
+                className="px-4 py-2.5 text-sm font-bold text-white bg-slate-600 hover:bg-slate-700 rounded-xl transition-colors"
+              >
+                Browse
+              </button>
+              <button
+                onClick={handleSaveExportDir}
+                disabled={exportDir === savedExportDir || exportLoading}
+                className="px-4 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-xl transition-colors"
+              >
+                Save
+              </button>
+            </div>
+            {exportMessage && (
+              <p className={`text-xs font-medium ${exportMessage.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                {exportMessage.text}
+              </p>
+            )}
           </div>
         </div>
       </div>
