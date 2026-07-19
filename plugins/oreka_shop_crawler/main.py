@@ -11,7 +11,7 @@ Flow:
 
 Config:
   shop_url: str (bat buoc)  - URL cua shop, VD: https://oreka.vn/shop/ten-shop
-  max_pages: int (mặc định: 50)
+  max_pages: int (mặc định: 0 = không giới hạn)
   delay_ms: int (mặc định: 1500)
   selectors: dict (tuỳ chon) - Ghi de selector mac dinh
   output_dir: str (mặc định: thu muc hien tai)
@@ -410,10 +410,12 @@ def preprocess_data(data_json):
 
     base_listing_url = _oreka_listing_url(source_url, store_id)
 
-    # Pagination: Oreka store listing supports ?page=N (default max 50).
-    max_pages = int((config.get("max_pages") or 50) or 50)
+    # Pagination: Oreka store listing supports ?page=N.
+    # max_pages = 0 hoac None => unlimited (Rust se dung URL Patterns +
+    # _has_next_page de dung o trang cuoi).
+    max_pages = int((config.get("max_pages") or 0) or 0)
     if max_pages < 1:
-        max_pages = 1
+        max_pages = 0  # 0 = unlimited
 
     # Cac page da hoan thanh (tu cycle truoc) se duoc skip khi resume.
     done_pages = set()
@@ -424,13 +426,17 @@ def preprocess_data(data_json):
             done_pages = set()
 
     items = []
-    for page_num in range(1, max_pages + 1):
+    page_num = 1
+    while True:
+        if max_pages and page_num > max_pages:
+            break
         page_url = _add_page_to_url(base_listing_url, "page", page_num)
         if page_num in done_pages:
             crawlflow.log(
                 f"[OrekaShop][preprocess] Bo qua page {page_num} (da done, resume)",
                 "info",
             )
+            page_num += 1
             continue
         crawlflow.log(
             f"[OrekaShop][preprocess] Listing page {page_num}: {page_url} (storeId={store_id})",
@@ -443,9 +449,10 @@ def preprocess_data(data_json):
             "raw_content": None,
             "extracted_url": page_url,
         })
+        page_num += 1
 
     crawlflow.log(
-        f"[OrekaShop][preprocess] Da tao {len(items)} listing URL (page 1..{max_pages}, bo qua {len(done_pages)} done)",
+        f"[OrekaShop][preprocess] Da tao {len(items)} listing URL (max_pages={max_pages or 'unlimited'}, bo qua {len(done_pages)} done)",
         "info",
     )
     return json.dumps(items)
@@ -988,7 +995,7 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
         if page_num in done_pages:
             crawlflow.log(f"[OrekaShop] Bo qua page {page_num} (da done, resume)", "info")
             page_num += 1
-            if page_num > max_pages:
+            if max_pages and page_num > max_pages:
                 break
             continue
         crawlflow.log(f"[OrekaShop] Listing page {page_num}: {page_url}", "info")
@@ -1035,16 +1042,13 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
 
         # Tiep tuc phan trang: reqwest da lay xong HTML listing, giao cho
         # Python tim nut "next page" trong chinh HTML do (khong fetch them).
-        if page_num >= max_pages:
+        if max_pages and page_num >= max_pages:
             crawlflow.log(f"[OrekaShop] Da du max_pages={max_pages}", "info")
             break
 
         has_next = _has_next_page(listing_html, page_num)
         if not has_next:
             crawlflow.log(f"[OrekaShop] Het phan trang tai trang {page_num}", "info")
-            break
-        if page_num >= max_pages:
-            crawlflow.log(f"[OrekaShop] Da du max_pages={max_pages}", "info")
             break
         page_num += 1
         if delay_ms > 0:
@@ -1062,7 +1066,7 @@ def fetch_data(config_json):
 
     Config:
         shop_url (str, bat buoc): URL cua store (vd: https://www.oreka.vn/store/motsach)
-        max_pages (int, mac dinh: 50): gioi han so trang (de an toan)
+        max_pages (int, mac dinh: 0): gioi han so trang (0 = khong gioi han)
         delay_ms (int, mac dinh: 1000): nghi giua cac request
         project_id (str): ID project (tu dong inject)
     """
@@ -1076,9 +1080,9 @@ def fetch_data(config_json):
         crawlflow.log("[OrekaShop] Thieu shop_url trong config", "error")
         return json.dumps([])
 
-    max_pages = int((config.get("max_pages") or 50) or 50)
+    max_pages = int((config.get("max_pages") or 0) or 0)
     if max_pages < 1:
-        max_pages = 1
+        max_pages = 0  # 0 = unlimited
     delay_ms = int((config.get("delay_ms") or 1000) or 1000)
     if delay_ms < 0:
         delay_ms = 0
