@@ -72,12 +72,12 @@ fn read_global_export_dir() -> Option<String> {
 }
 
 /// Read `group_export` / `group_format` from the per-project `project_settings`
-/// table. Returns defaults (disabled) when the project DB is unavailable.
+/// table. Returns defaults (enabled, "name") when the project DB is unavailable.
 fn read_project_export_settings(project_db_path: &Path) -> (bool, String) {
     let conn = rusqlite::Connection::open(project_db_path).ok();
     let conn = match conn {
         Some(c) => c,
-        None => return (false, "id".to_string()),
+        None => return (true, "name".to_string()),
     };
     let get = |key: &str| -> Option<String> {
         conn.query_row(
@@ -88,13 +88,13 @@ fn read_project_export_settings(project_db_path: &Path) -> (bool, String) {
         .ok()
     };
     let group_export = match get("group_export").as_deref() {
-        Some("true") | Some("1") => true,
-        _ => false,
+        Some("false") | Some("0") => false,
+        _ => true,
     };
     let group_format = match get("group_format").as_deref() {
-        Some("name") => "name".to_string(),
+        Some("id") => "id".to_string(),
         Some("both") => "both".to_string(),
-        _ => "id".to_string(),
+        _ => "name".to_string(),
     };
     (group_export, group_format)
 }

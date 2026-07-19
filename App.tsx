@@ -148,8 +148,8 @@ const App: React.FC = () => {
     userAgent: 'Crawler/1.0',
     concurrency: 5,
     executionMode: 'queue',
-    groupExport: false,
-    groupFormat: 'id',
+    groupExport: true,
+    groupFormat: 'name',
   });
 
   // State for UI panels
