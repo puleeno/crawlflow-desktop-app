@@ -166,16 +166,25 @@ fn is_process_running(pid: u32) -> bool {
 }
 
 fn is_project_running_in_background(project_id: &str) -> bool {
-    let path = dirs_next::data_dir()
+    // The background service (bin/service.rs) records its live PID in the
+    // `runner_pid` column of `project_runtime` on every status write, so we
+    // verify liveness from there instead of relying on a `.run` pidfile that
+    // the service never writes. Falling back to a non-existent file caused the
+    // GUI to show `stopped` (and hide the progress bar) even while crawling.
+    let db_path = dirs_next::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("com.CrawlFlow.desktop")
-        .join(format!("{}.run", project_id));
-    if !path.exists() {
-        return false;
-    }
-    if let Ok(content) = std::fs::read_to_string(&path) {
-        if let Ok(pid) = content.trim().parse::<u32>() {
-            return is_process_running(pid);
+        .join("crawlflow.db");
+    if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+        let pid: rusqlite::Result<Option<i64>> = conn.query_row(
+            "SELECT runner_pid FROM project_runtime WHERE project_id = ?1",
+            rusqlite::params![project_id],
+            |row| row.get(0),
+        );
+        if let Ok(Some(pid)) = pid {
+            if pid > 0 {
+                return is_process_running(pid as u32);
+            }
         }
     }
     false
