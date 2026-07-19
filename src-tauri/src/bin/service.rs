@@ -16,6 +16,22 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crawlflow_lib::services::get_export_settings;
 
+/// Current UTC timestamp as an ISO-8601-ish string for progress/status stamps.
+fn now_iso() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let (h, m, s) = ((secs % 86400) / 3600, (secs % 3600) / 60, secs % 60);
+    format!(
+        "{:04}-01-01T{:02}:{:02}:{:02}Z",
+        1970 + secs / 31536000,
+        h,
+        m,
+        s
+    )
+}
+
 // ── Minimal inline log manager (avoids importing Tauri-coupled crawlflow_lib::logs) ──
 
 struct SimpleLogger;
@@ -285,26 +301,26 @@ fn is_project_being_edited(conn: &rusqlite::Connection, project_id: &str) -> boo
 
 /// Compute realtime progress from the pipeline result + repository aggregate
 /// counts, then persist it to the master DB so the GUI can read it.
-fn report_progress(
-    project_id: &str,
+/// Build a `ServiceProgress` snapshot from the current repository summary.
+///
+/// When `phase`/`message` are `None` (live ticker), a generic "running" message
+/// is used so the GUI shows continuously-updating progress without waiting for
+/// the cycle to finish.
+fn build_progress(
+    _project_id: &str,
     db_path: &PathBuf,
-    result: &crawlflow_lib::pipeline::RepositoryPipelineResult,
+    phase: Option<&str>,
+    message: Option<&str>,
     now: &str,
-) {
-    use crawlflow_lib::services::{ServiceManager, ServiceProgress};
+) -> crawlflow_lib::services::ServiceProgress {
+    use crawlflow_lib::services::ServiceProgress;
 
-    // Aggregate counts from the repository give the true backlog state.
     let summary = crawlflow_lib::repository::RawItemRepository::open(db_path)
         .ok()
         .and_then(|repo| repo.get_summary().ok());
 
     let (items_total, items_done, items_error, items_pending) = match summary {
-        Some(s) => (
-            s.total,
-            s.done,
-            s.error,
-            s.pending + s.processing,
-        ),
+        Some(s) => (s.total, s.done, s.error, s.pending + s.processing),
         None => (0, 0, 0, 0),
     };
 
@@ -312,6 +328,37 @@ fn report_progress(
         (items_done + items_error) as f64 / items_total as f64 * 100.0
     } else {
         0.0
+    };
+
+    ServiceProgress {
+        items_total,
+        items_processed: items_done + items_error,
+        items_success: items_done,
+        items_failed: items_error,
+        items_pending,
+        progress_pct,
+        phase: phase.unwrap_or("running").to_string(),
+        message: message.unwrap_or("Running…").to_string(),
+        last_run_at: now.to_string(),
+    }
+}
+
+fn report_progress(
+    project_id: &str,
+    db_path: &PathBuf,
+    result: &crawlflow_lib::pipeline::RepositoryPipelineResult,
+    now: &str,
+) {
+    use crawlflow_lib::services::ServiceManager;
+
+    let (items_total, items_done) = {
+        let summary = crawlflow_lib::repository::RawItemRepository::open(db_path)
+            .ok()
+            .and_then(|repo| repo.get_summary().ok());
+        match summary {
+            Some(s) => (s.total, s.done),
+            None => (0, 0),
+        }
     };
 
     let phase = if result.success {
@@ -333,18 +380,7 @@ fn report_progress(
         )
     };
 
-    let progress = ServiceProgress {
-        items_total,
-        items_processed: items_done + items_error,
-        items_success: items_done,
-        items_failed: items_error,
-        items_pending,
-        progress_pct,
-        phase,
-        message,
-        last_run_at: now.to_string(),
-    };
-
+    let progress = build_progress(project_id, db_path, Some(&phase), Some(&message), now);
     ServiceManager::write_progress_json(project_id, &progress);
 }
 
@@ -537,6 +573,25 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                 };
                 // Reset cancellation before execution
                 cancellation.store(false, Ordering::Relaxed);
+
+                // Spawn a live progress ticker: while the pipeline runs, sample
+                // the repository summary every second and write progress JSON so
+                // the GUI receives realtime updates (instead of one snapshot per
+                // cycle). The GUI process picks this up and emits a Tauri event.
+                let pipeline_running = Arc::new(AtomicBool::new(true));
+                let ticker_running = pipeline_running.clone();
+                let ticker_pid = project_id.clone();
+                let ticker_db = db_path.clone();
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+                    while ticker_running.load(Ordering::Relaxed) {
+                        interval.tick().await;
+                        let now = now_iso();
+                        let progress = build_progress(&ticker_pid, &ticker_db, None, None, &now);
+                        crawlflow_lib::services::ServiceManager::write_progress_json(&ticker_pid, &progress);
+                    }
+                });
+
                 let result = crawlflow_lib::pipeline::execute_repository_pipeline(
                     &config,
                     &db_path,
@@ -546,20 +601,8 @@ async fn run_project_loop(proj: ProjectRow, interval_secs: u64, shutdown: Arc<At
                     Some(&cancellation),
                 )
                 .await;
-                let now = {
-                    let secs = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    let (h, m, s) = ((secs % 86400) / 3600, (secs % 3600) / 60, secs % 60);
-                    format!(
-                        "{:04}-01-01T{:02}:{:02}:{:02}Z",
-                        1970 + secs / 31536000,
-                        h,
-                        m,
-                        s
-                    )
-                };
+                pipeline_running.store(false, Ordering::Relaxed);
+                let now = now_iso();
                 if let Ok(conn) = rusqlite::Connection::open(&master_db) {
                     if result.success {
                         set_runner_status(

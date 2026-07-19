@@ -2,7 +2,7 @@ use crate::logs::LogManager;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceInfo {
@@ -310,7 +310,7 @@ impl ServiceManager {
                 } else {
                     &status
                 };
-                return Some(ServiceInfo {
+                let info = ServiceInfo {
                     project_id: project_id.to_string(),
                     status: effective_status.to_string(),
                     cycle_count: cycle_count as u64,
@@ -319,12 +319,34 @@ impl ServiceManager {
                     last_error,
                     interval_seconds: 60,
                     progress: Self::parse_progress(progress_json.as_deref(), last_run_at),
-                });
+                };
+                self.emit_service_info(&info);
+                return Some(info);
             }
         }
 
         // Default: stopped (no record means no service has ever run)
-        Some(ServiceInfo::default())
+        let info = ServiceInfo::default();
+        self.emit_service_info(&info);
+        Some(info)
+    }
+
+    /// Broadcast a `ServiceInfo` to the frontend.
+    ///
+    /// Emits two events (Tauri v2 has no wildcard listeners):
+    /// * `service-status:<project_id>` — for the per-project detail views.
+    /// * `service-status-update` (payload `{ project_id, info }`) — for the
+    ///   global project list, which can't subscribe per-id in advance.
+    fn emit_service_info(&self, info: &ServiceInfo) {
+        if let Some(handle) = self.app_handle.read().ok().and_then(|h| h.clone()) {
+            let project_id = info.project_id.clone();
+            let event = format!("service-status:{}", project_id);
+            let _ = handle.emit(&event, info);
+            let _ = handle.emit(
+                "service-status-update",
+                serde_json::json!({ "project_id": project_id, "info": info }),
+            );
+        }
     }
 
     pub fn list_service_infos(&self) -> Vec<ServiceInfo> {
@@ -381,6 +403,10 @@ impl ServiceManager {
                     interval_seconds: 60,
                     progress: Self::parse_progress(progress_json.as_deref(), last_run_at),
                 }
+            })
+            .map(|info| {
+                self.emit_service_info(&info);
+                info
             })
             .collect()
     }

@@ -48,7 +48,10 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
         loadProjects();
     }, [loadProjects]);
 
-    // Poll realtime service status + progress for every project (background service)
+    // Realtime service status + progress for every project.
+    // The GUI process emits `service-status-update` (payload {project_id, info})
+    // on every SQLite read; we merge it into the map. A slow poll remains as a
+    // fallback to catch any missed event.
     useEffect(() => {
         let cancelled = false;
 
@@ -67,8 +70,24 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
             }
         };
 
+        const setupEvent = async () => {
+            try {
+                const { listen } = await import('@tauri-apps/api/event');
+                await listen<any>('service-status-update', (event) => {
+                    const payload = event.payload;
+                    if (payload && payload.project_id && payload.info) {
+                        setServiceInfos((prev) => ({
+                            ...prev,
+                            [payload.project_id]: payload.info as ServiceInfo,
+                        }));
+                    }
+                });
+            } catch (_) { /* not in tauri */ }
+        };
+
         fetchServices();
-        const timer = setInterval(fetchServices, 3000);
+        setupEvent();
+        const timer = setInterval(fetchServices, 15000); // fallback only
         return () => {
             cancelled = true;
             clearInterval(timer);

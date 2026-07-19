@@ -40,10 +40,59 @@ pub struct Workbook {
     pub sheets: Vec<Sheet>,
 }
 
+// ─── Multi-value serialization ────────────────────────────────────────────────
+//
+// When a field holds several values (e.g. `extractMultiple` image src arrays),
+// they must be flattened into a single spreadsheet cell. The `mode` controls
+// HOW they are serialized and `separator` is the glue used for `Separator` mode.
+
+/// How multiple values in a single field are serialized into one cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MultiValueMode {
+    /// Join values with `separator` (default `;`).
+    #[default]
+    Separator,
+    /// Serialize the whole array as a single JSON string.
+    Json,
+    /// Join values with a newline character.
+    Newline,
+}
+
+impl MultiValueMode {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "json" => MultiValueMode::Json,
+            "newline" => MultiValueMode::Newline,
+            _ => MultiValueMode::Separator,
+        }
+    }
+}
+
+/// Options controlling multi-value field serialization during export.
+#[derive(Debug, Clone)]
+pub struct CellOpts {
+    pub separator: String,
+    pub mode: MultiValueMode,
+}
+
+impl Default for CellOpts {
+    fn default() -> Self {
+        CellOpts {
+            separator: ";".to_string(),
+            mode: MultiValueMode::Separator,
+        }
+    }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 impl Workbook {
-    pub fn from_json_rows(data: &[serde_json::Value], sheet_name: &str, include_header: bool) -> Self {
+    pub fn from_json_rows(
+        data: &[serde_json::Value],
+        sheet_name: &str,
+        include_header: bool,
+        opts: &CellOpts,
+    ) -> Self {
         let mut rows = Vec::new();
         let mut keys: Vec<String> = Vec::new();
 
@@ -66,16 +115,16 @@ impl Workbook {
 
         for item in data {
             let cells = match item {
-                serde_json::Value::Array(arr) => arr.iter().map(|v| cell_from_json(v)).collect(),
+                serde_json::Value::Array(arr) => arr.iter().map(|v| cell_from_json(v, opts)).collect(),
                 serde_json::Value::Object(obj) => {
                     if include_header && !keys.is_empty() {
                         keys.iter().map(|k| {
-                            obj.get(k).map(|v| cell_from_json(v)).unwrap_or(CellValue::Empty)
+                            obj.get(k).map(|v| cell_from_json(v, opts)).unwrap_or(CellValue::Empty)
                         }).collect()
                     } else {
                         let mut sorted_keys: Vec<&String> = obj.keys().collect();
                         sorted_keys.sort();
-                        sorted_keys.iter().map(|k| cell_from_json(&obj[*k])).collect()
+                        sorted_keys.iter().map(|k| cell_from_json(&obj[*k], opts)).collect()
                     }
                 }
                 _ => vec![CellValue::String(item.to_string())],
@@ -91,7 +140,7 @@ impl Workbook {
     }
 }
 
-fn cell_from_json(v: &serde_json::Value) -> CellValue {
+fn cell_from_json(v: &serde_json::Value, opts: &CellOpts) -> CellValue {
     match v {
         serde_json::Value::String(s) => CellValue::String(s.clone()),
         serde_json::Value::Number(n) => {
@@ -126,7 +175,13 @@ fn cell_from_json(v: &serde_json::Value) -> CellValue {
             if parts.is_empty() {
                 CellValue::Empty
             } else {
-                CellValue::String(parts.join(", "))
+                match opts.mode {
+                    MultiValueMode::Json => {
+                        CellValue::String(serde_json::Value::Array(arr.to_vec()).to_string())
+                    }
+                    MultiValueMode::Newline => CellValue::String(parts.join("\n")),
+                    MultiValueMode::Separator => CellValue::String(parts.join(&opts.separator)),
+                }
             }
         }
         serde_json::Value::Null => CellValue::Empty,
@@ -536,7 +591,7 @@ mod tests {
             {"name": "Bob", "age": 25}
         ]);
         let data: Vec<serde_json::Value> = serde_json::from_value(json).unwrap();
-        let wb = Workbook::from_json_rows(&data, "Test", false);
+        let wb = Workbook::from_json_rows(&data, "Test", false, &CellOpts::default());
         assert_eq!(wb.sheets.len(), 1);
         assert_eq!(wb.sheets[0].rows.len(), 2);
     }
@@ -548,7 +603,7 @@ mod tests {
             {"name": "Bob", "age": 25}
         ]);
         let data: Vec<serde_json::Value> = serde_json::from_value(json).unwrap();
-        let wb = Workbook::from_json_rows(&data, "Test", true);
+        let wb = Workbook::from_json_rows(&data, "Test", true, &CellOpts::default());
         assert_eq!(wb.sheets.len(), 1);
         assert_eq!(wb.sheets[0].rows.len(), 3);
         if let CellValue::String(h) = &wb.sheets[0].rows[0].cells[0] {
@@ -569,9 +624,10 @@ mod tests {
     #[test]
     fn test_cell_from_json_array_joins_values() {
         // Regression: extractMultiple attribute arrays used to become Empty cells.
-        let cell = cell_from_json(&serde_json::json!(["a.jpg", "b.jpg", "c.jpg"]));
+        // Default separator is ";".
+        let cell = cell_from_json(&serde_json::json!(["a.jpg", "b.jpg", "c.jpg"]), &CellOpts::default());
         match cell {
-            CellValue::String(s) => assert_eq!(s, "a.jpg, b.jpg, c.jpg"),
+            CellValue::String(s) => assert_eq!(s, "a.jpg;b.jpg;c.jpg"),
             other => panic!("expected joined string, got {:?}", other),
         }
     }
@@ -582,18 +638,44 @@ mod tests {
             "product_name": "Widget",
             "images": ["a.jpg", "b.jpg"]
         })];
-        let wb = Workbook::from_json_rows(&data, "Test", true);
+        let wb = Workbook::from_json_rows(&data, "Test", true, &CellOpts::default());
         // header + 1 data row
         assert_eq!(wb.sheets[0].rows.len(), 2);
         let row = &wb.sheets[0].rows[1];
         let has_joined_images = row.cells.iter().any(|c| {
-            matches!(c, CellValue::String(s) if s == "a.jpg, b.jpg")
+            matches!(c, CellValue::String(s) if s == "a.jpg;b.jpg")
         });
         assert!(
             has_joined_images,
-            "expected images array to be joined into a cell, got {:?}",
+            "expected images array to be joined into a cell with ';' separator, got {:?}",
             row.cells
         );
+    }
+
+    #[test]
+    fn test_cell_from_json_array_json_mode() {
+        let opts = CellOpts {
+            separator: ",".into(),
+            mode: MultiValueMode::Json,
+        };
+        let cell = cell_from_json(&serde_json::json!(["a.jpg", "b.jpg"]), &opts);
+        match cell {
+            CellValue::String(s) => assert_eq!(s, "[\"a.jpg\",\"b.jpg\"]"),
+            other => panic!("expected JSON string, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cell_from_json_array_newline_mode() {
+        let opts = CellOpts {
+            separator: ";".into(),
+            mode: MultiValueMode::Newline,
+        };
+        let cell = cell_from_json(&serde_json::json!(["a.jpg", "b.jpg"]), &opts);
+        match cell {
+            CellValue::String(s) => assert_eq!(s, "a.jpg\nb.jpg"),
+            other => panic!("expected newline-joined string, got {:?}", other),
+        }
     }
 
     #[test]

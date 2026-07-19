@@ -1203,6 +1203,20 @@ pub fn excel_export_plugin(
     let project_id = config.get("projectId").and_then(|v| v.as_str()).unwrap_or("");
     let project_name = config.get("projectName").and_then(|v| v.as_str()).unwrap_or("");
 
+    // ── Multi-value serialization ────────────────────────────────────
+    let multi_value_mode = config
+        .get("multiValueMode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("separator");
+    let multi_value_separator = config
+        .get("multiValueSeparator")
+        .and_then(|v| v.as_str())
+        .unwrap_or(";");
+    let cell_opts = crate::spreadsheet::CellOpts {
+        separator: multi_value_separator.to_string(),
+        mode: crate::spreadsheet::MultiValueMode::from_str(multi_value_mode),
+    };
+
     let mut out_dir = output_dir.clone();
     if group_export && !project_id.is_empty() {
         let label = match group_format {
@@ -1238,7 +1252,7 @@ pub fn excel_export_plugin(
     // appending would duplicate rows and shift data to the wrong row index.
     let all_rows = mapped_data;
 
-    let bytes = inner_export_excel(&all_rows, sheet_name, include_header)
+    let bytes = inner_export_excel(&all_rows, sheet_name, include_header, &cell_opts)
         .map_err(|e| format!("Excel generation failed ({} rows): {}", all_rows.len(), e))?;
 
     std::fs::write(&out_path, &bytes).map_err(|e| {

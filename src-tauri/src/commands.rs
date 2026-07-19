@@ -229,8 +229,9 @@ pub fn inner_export_excel(
     data: &[serde_json::Value],
     sheet_name: &str,
     include_header: bool,
+    opts: &crate::spreadsheet::CellOpts,
 ) -> Result<Vec<u8>, String> {
-    let wb = crate::spreadsheet::Workbook::from_json_rows(data, sheet_name, include_header);
+    let wb = crate::spreadsheet::Workbook::from_json_rows(data, sheet_name, include_header, opts);
     crate::spreadsheet::to_xlsx_bytes(&wb)
 }
 
@@ -295,6 +296,25 @@ fn filter_export_data(
         .collect()
 }
 
+/// Build the multi-value serialization options from an export `config`.
+///
+/// * `multiValueMode`  — "separator" (default) | "json" | "newline".
+/// * `multiValueSeparator` — join string for `separator` mode (default `;`).
+fn cell_opts_from_config(config: &serde_json::Value) -> crate::spreadsheet::CellOpts {
+    use crate::spreadsheet::{CellOpts, MultiValueMode};
+    let mode = config
+        .get("multiValueMode")
+        .and_then(|v| v.as_str())
+        .map(MultiValueMode::from_str)
+        .unwrap_or_default();
+    let separator = config
+        .get("multiValueSeparator")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| ";".to_string());
+    CellOpts { separator, mode }
+}
+
 #[tauri::command]
 pub async fn export_excel_cmd(request: ExportRequest) -> ExportResult {
     let sheet_name = request
@@ -307,10 +327,11 @@ pub async fn export_excel_cmd(request: ExportRequest) -> ExportResult {
         .get("includeHeader")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    let opts = cell_opts_from_config(&request.config);
 
     let mapped_data = filter_export_data(&request.data, &request.config);
 
-    match inner_export_excel(&mapped_data, sheet_name, include_header) {
+    match inner_export_excel(&mapped_data, sheet_name, include_header, &opts) {
         Ok(bytes) => {
             use base64::Engine;
             let content = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -370,11 +391,12 @@ pub async fn spreadsheet_export_cmd(
         .get("includeHeader")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
+    let opts = cell_opts_from_config(&config);
 
     let content: (String, String, String) = match format.as_str() {
         "csv" => {
             let wb =
-                crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header);
+                crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header, &opts);
             match crate::spreadsheet::to_csv_string(&wb) {
                 Ok(csv) => (csv, "text/csv".into(), "csv".into()),
                 Err(e) => {
@@ -388,7 +410,7 @@ pub async fn spreadsheet_export_cmd(
         }
         "ods" => {
             let wb =
-                crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header);
+                crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header, &opts);
             match crate::spreadsheet::to_ods_bytes(&wb) {
                 Ok(bytes) => {
                     use base64::Engine;
@@ -411,7 +433,7 @@ pub async fn spreadsheet_export_cmd(
         _ => {
             // Default: xlsx
             let wb =
-                crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header);
+                crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header, &opts);
             match crate::spreadsheet::to_xlsx_bytes(&wb) {
                 Ok(bytes) => {
                     use base64::Engine;

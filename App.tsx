@@ -209,8 +209,11 @@ const App: React.FC = () => {
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   }, [projectSettings, currentProjectId]);
 
-  // Poll background service status from SQLite every 5s
-  // (background service doesn't emit Tauri events, so polling is required)
+  // Realtime background service status.
+  // The GUI process emits a `service-status:<id>` Tauri event on every SQLite
+  // read (the background service writes progress every ~1s while running), so we
+  // rely on the event subscription as the primary source. A slow poll remains
+  // as a fallback in case an event is missed.
   useEffect(() => {
     if (!currentProjectId) {
       setServiceStatus('stopped');
@@ -234,10 +237,9 @@ const App: React.FC = () => {
       } catch (_) { /* not in tauri */ }
     };
 
-    fetchStatus(); // immediate
-    const timer = setInterval(fetchStatus, 3000);
+    fetchStatus(); // immediate (also triggers an emit)
+    const timer = setInterval(fetchStatus, 15000); // fallback only
 
-    // Also keep Tauri event subscription for in-app executor (if ever used)
     let unlisten: (() => void) | null = null;
     const setupEvent = async () => {
       try {

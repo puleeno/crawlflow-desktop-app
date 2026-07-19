@@ -8,8 +8,6 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { PlayIcon, StopIcon } from './icons';
 import type { Node, Edge } from 'reactflow';
 
-const POLL_INTERVAL_MS = 4000;
-
 interface ServiceControlsProps {
   projectId: string;
   onOpenLogs: () => void;
@@ -55,11 +53,37 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({
     } catch (_) { /* not in tauri */ }
   }, [projectId, externalStatus]);
 
+  // Realtime: subscribe to the per-project status event emitted by the GUI
+  // process. Keeps ancillary info (lastRunAt/error/interval) fresh without
+  // relying solely on the slow poll fallback.
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    const setup = async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event');
+        unlisten = await listen<any>(`service-status:${projectId}`, (event) => {
+          const info = event.payload;
+          if (info) {
+            if (externalStatus === undefined) {
+              setLocalStatus(info.status ?? 'stopped');
+              setLocalCycleCount(info.cycle_count ?? 0);
+            }
+            setLastRunAt(info.last_run_at ?? '');
+            setLastError(info.last_error ?? null);
+            setIntervalSec(info.interval_seconds ?? 60);
+          }
+        });
+      } catch (_) { /* not in tauri */ }
+    };
+    setup();
+    return () => { if (unlisten) unlisten(); };
+  }, [projectId, externalStatus]);
+
   // When using external status, still poll for ancillary info (lastRunAt, error)
-  // When standalone, poll for everything
+  // When standalone, poll for everything. Slow interval — events are primary.
   useEffect(() => {
     poll(); // immediate
-    pollRef.current = setInterval(poll, POLL_INTERVAL_MS);
+    pollRef.current = setInterval(poll, 15000); // fallback only
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [poll]);
 
@@ -160,7 +184,7 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({
       )}
 
       <div className="mt-2 text-xs text-gray-400 text-center">
-        Run by background service · polls every {POLL_INTERVAL_MS / 1000}s
+        Run by background service · realtime status
       </div>
 
       <button
