@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:windows": "node scripts/build-windows.cjs"
   },
   "dependencies": {
     "@medv/finder": "3.1.0",

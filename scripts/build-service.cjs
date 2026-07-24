@@ -42,7 +42,8 @@ if (process.platform !== 'win32') {
 }
 
 console.log(`[build-service] Compiling crawlflow-service for target: ${target}`);
-let buildCmd = `cargo build --manifest-path "${path.join(srcTauriDir, 'Cargo.toml')}" --bin crawlflow-service --release`;
+const cargo = process.env.CARGO || 'cargo';
+let buildCmd = `${cargo} build --manifest-path "${path.join(srcTauriDir, 'Cargo.toml')}" --bin crawlflow-service --release`;
 let srcBinPath = '';
 
 if (target !== hostTarget) {
