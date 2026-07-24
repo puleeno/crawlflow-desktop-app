@@ -8,6 +8,31 @@ const srcTauriDir = path.join(projectDir, 'src-tauri');
 const libsDir = path.join(srcTauriDir, 'libs');
 const pythonWindowsDir = path.join(libsDir, 'python-windows');
 
+// Prepend Homebrew's LLVM path on macOS to ensure cargo-xwin can find llvm-lib/lld/clang-cl
+if (process.platform === 'darwin') {
+    let llvmBinPath = '';
+    try {
+        const brewPrefix = execSync('brew --prefix llvm').toString().trim();
+        llvmBinPath = path.join(brewPrefix, 'bin');
+    } catch (e) {
+        const siliconPath = '/opt/homebrew/opt/llvm/bin';
+        const intelPath = '/usr/local/opt/llvm/bin';
+        if (fs.existsSync(siliconPath)) {
+            llvmBinPath = siliconPath;
+        } else if (fs.existsSync(intelPath)) {
+            llvmBinPath = intelPath;
+        }
+    }
+
+    if (llvmBinPath && fs.existsSync(llvmBinPath)) {
+        console.log(`[build-windows] Found LLVM at: ${llvmBinPath}. Adding to PATH.`);
+        process.env.PATH = `${llvmBinPath}:${process.env.PATH}`;
+    } else {
+        console.warn('[build-windows] Warning: LLVM bin directory was not found.');
+        console.warn('[build-windows] If the build fails with missing "llvm-lib", please run: brew install llvm');
+    }
+}
+
 // 1. Ensure Rust target is installed
 console.log('[build-windows] Step 1/4: Checking Rust Windows target...');
 try {
