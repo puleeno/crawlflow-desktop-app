@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "bash scripts/build-service.sh && npm run build"
+    "beforeBuildCommand": "node scripts/build-service.cjs && npm run build"
   },
   "bundle": {
     "active": true,
