@@ -1230,3 +1230,47 @@ pub fn request_project_stop_cmd(project_id: String) -> Result<(), String> {
     log::info!("Requested stop for project {}", project_id);
     Ok(())
 }
+
+/// Delete a project and all its associated data (DB file, runtime, logs)
+#[tauri::command]
+pub fn delete_project_cmd(project_id: String) -> Result<(), String> {
+    let db_path = master_db_path();
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+
+    // 1. Delete project_runtime entry
+    let _ = conn.execute(
+        "DELETE FROM project_runtime WHERE project_id = ?1",
+        rusqlite::params![project_id],
+    );
+
+    // 2. Delete logs for this project
+    let _ = conn.execute(
+        "DELETE FROM logs WHERE project_id = ?1",
+        rusqlite::params![project_id],
+    );
+
+    // 3. Delete the project row
+    conn.execute(
+        "DELETE FROM projects WHERE id = ?1",
+        rusqlite::params![project_id],
+    ).map_err(|e| e.to_string())?;
+
+    // 4. Delete the project database file
+    let data_dir = dirs_next::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("com.CrawlFlow.desktop");
+    let project_db = data_dir.join(format!("project_{}.db", project_id));
+    if project_db.exists() {
+        std::fs::remove_file(&project_db).map_err(|e| {
+            let msg = format!("Deleted project record but failed to remove DB file {:?}: {}", project_db, e);
+            log::warn!("{}", msg);
+            msg
+        })?;
+    }
+
+    log::info!("Deleted project {} and all associated data", project_id);
+    Ok(())
+}

@@ -135,6 +135,7 @@ pub fn run() {
             commands::uninstall_system_service_cmd,
             commands::start_system_service_cmd,
             commands::stop_system_service_cmd,
+            commands::delete_project_cmd,
             // Settings engine
             commands::list_processor_settings_schemas,
             commands::get_processor_settings_schema,

@@ -253,8 +253,13 @@ export async function listProjects(): Promise<any[]> {
 }
 
 export async function deleteProject(id: string): Promise<void> {
-    const master = await getMasterDb();
-    await master.execute('DELETE FROM projects WHERE id = $1', [id]);
+    if (isTauri()) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('delete_project_cmd', { projectId: id });
+    } else {
+        const master = await getMasterDb();
+        await master.execute('DELETE FROM projects WHERE id = $1', [id]);
+    }
 }
 
 export async function saveProjectState(
