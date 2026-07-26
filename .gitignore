@@ -26,3 +26,7 @@ dist-ssr
 # Tauri
 /src-tauri/target/
 /src-tauri/gen/schemas
+
+# Bundled Python (build artifacts)
+/src-tauri/python/
+/src-tauri/libs/

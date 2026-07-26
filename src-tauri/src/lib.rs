@@ -173,6 +173,26 @@ pub fn run() {
             }
             log::info!("User plugin directory: {:?}", user_dir);
 
+            // Set PYTHONHOME/PYTHONPATH to bundled Python if present
+            if let Ok(resource_dir) = app.path().resource_dir() {
+                let bundled_python = resource_dir.join("python");
+                if bundled_python.is_dir() {
+                    let python_dll = bundled_python.join("python313.dll");
+                    if python_dll.exists() {
+                        std::env::set_var("PYTHONHOME", &bundled_python);
+                        let stdlib_zip = bundled_python.join("stdlib.zip");
+                        if stdlib_zip.exists() {
+                            std::env::set_var("PYTHONPATH", &stdlib_zip);
+                            log::info!("Using bundled Python at {:?} with stdlib.zip", bundled_python);
+                        } else {
+                            let python_path = bundled_python.join("Lib");
+                            std::env::set_var("PYTHONPATH", &python_path);
+                            log::info!("Using bundled Python at {:?}", bundled_python);
+                        }
+                    }
+                }
+            }
+
             let state: tauri::State<'_, AppState> = app.state();
 
             // Initialize plugin engine
