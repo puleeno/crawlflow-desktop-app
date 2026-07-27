@@ -1057,3 +1057,43 @@ fn py_spreadsheet_write(data: String, path: String) -> PyResult<bool> {
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(e))?;
     Ok(true)
 }
+
+pub fn resolve_python_path() -> Option<std::path::PathBuf> {
+    let db_path = crate::commands::master_db_path();
+    if db_path.exists() {
+        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+            if let Ok(mut stmt) =
+                conn.prepare("SELECT value FROM app_settings WHERE key = 'python_path'")
+            {
+                if let Ok(row) = stmt.query_row([], |r| r.get::<_, String>(0)) {
+                    let p = std::path::PathBuf::from(&row);
+                    if p.exists() {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+    }
+
+    let python_cmd = if cfg!(target_os = "windows") {
+        "python"
+    } else {
+        "python3"
+    };
+    if let Ok(output) = std::process::Command::new(python_cmd)
+        .args(["-c", "import sys; print(sys.prefix)"])
+        .output()
+    {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                let p = std::path::PathBuf::from(&path);
+                if p.exists() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+
+    None
+}

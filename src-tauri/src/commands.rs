@@ -1115,12 +1115,17 @@ pub fn get_raw_items_summary_cmd(
     repo.get_summary()
 }
 
-fn master_db_path() -> PathBuf {
+pub fn master_db_path() -> PathBuf {
     dirs_next::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("com.CrawlFlow.desktop")
         .join("crawlflow.db")
 }
+
+#[tauri::command]
+pub fn detect_python_cmd() -> Result<Option<String>, String> {
+    Ok(crate::python_plugins::resolve_python_path()
+        .map(|p| p.to_string_lossy().to_string()))}
 
 #[tauri::command]
 pub fn get_app_setting_cmd(key: String) -> Result<Option<String>, String> {

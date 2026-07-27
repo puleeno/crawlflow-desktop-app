@@ -32,6 +32,13 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
   const [exportLoading, setExportLoading] = useState(false);
   const [exportMessage, setExportMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const [pythonPath, setPythonPath] = useState('');
+  const [savedPythonPath, setSavedPythonPath] = useState('');
+  const [pythonLoading, setPythonLoading] = useState(false);
+  const [pythonMessage, setPythonMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const isWindows = navigator.platform?.toLowerCase().includes('win');
+
   const fetchInfo = useCallback(async () => {
     setLoading(true);
     try {
@@ -73,6 +80,56 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
       setSavedExportDir(dir);
     } catch (e) { /* ignore */ }
   }, []);
+
+  const fetchPythonPath = useCallback(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const val: string | null = await invoke('get_app_setting_cmd', { key: 'python_path' });
+      setPythonPath(val ?? '');
+      setSavedPythonPath(val ?? '');
+    } catch (e) { /* ignore */ }
+  }, []);
+
+  const handleDetectPython = async () => {
+    setPythonLoading(true);
+    setPythonMessage(null);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const detected: string | null = await invoke('detect_python_cmd');
+      if (detected) {
+        setPythonPath(detected);
+      } else {
+        setPythonMessage({ type: 'error', text: 'Could not detect Python on this system.' });
+      }
+    } catch (e: any) {
+      setPythonMessage({ type: 'error', text: e?.toString() || 'Detection failed' });
+    }
+    setPythonLoading(false);
+  };
+
+  const handleSavePythonPath = async () => {
+    setPythonLoading(true);
+    setPythonMessage(null);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_app_setting_cmd', { key: 'python_path', value: pythonPath });
+      setSavedPythonPath(pythonPath);
+      setPythonMessage({ type: 'success', text: 'Python path saved.' });
+    } catch (e: any) {
+      setPythonMessage({ type: 'error', text: e?.toString() || 'Failed to save' });
+    }
+    setPythonLoading(false);
+  };
+
+  const handleBrowsePythonDir = async () => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected: string | null = await open({ directory: true, multiple: false });
+      if (selected) {
+        setPythonPath(selected);
+      }
+    } catch { /* ignore */ }
+  };
 
   const handleSaveExportDir = async () => {
     setExportLoading(true);
@@ -133,7 +190,8 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
     fetchChromePath();
     fetchHeadless();
     fetchExportDir();
-  }, [fetchInfo, fetchChromePath, fetchHeadless, fetchExportDir]);
+    fetchPythonPath();
+  }, [fetchInfo, fetchChromePath, fetchHeadless, fetchExportDir, fetchPythonPath]);
 
   const showMsg = (type: 'success' | 'error', text: string) => {
     setMessage({ type, text });
@@ -364,7 +422,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
                 type="text"
                 value={chromePath}
                 onChange={e => setChromePath(e.target.value)}
-                placeholder="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+                placeholder={isWindows ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" : "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}
                 className="flex-1 p-2.5 text-sm border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
               />
               <button
@@ -399,6 +457,51 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
               />
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
             </label>
+          </div>
+        </div>
+
+        {/* Python Path */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+          <h3 className="text-base font-bold text-gray-800 mb-4">Python</h3>
+          <div className="space-y-3">
+            <label className="text-sm font-semibold text-gray-700">Python Installation Path</label>
+            <p className="text-xs text-gray-500">
+              Path to the Python interpreter prefix directory. Leave empty to auto-detect. Click "Detect" to find Python on your system.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={pythonPath}
+                onChange={e => setPythonPath(e.target.value)}
+                placeholder={isWindows ? "C:\\Python313" : "/usr/local"}
+                className="flex-1 p-2.5 text-sm border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
+              <button
+                onClick={handleDetectPython}
+                disabled={pythonLoading}
+                className="px-4 py-2.5 text-sm font-bold text-white bg-slate-600 hover:bg-slate-700 disabled:opacity-50 rounded-xl transition-colors"
+              >
+                Detect
+              </button>
+              <button
+                onClick={handleBrowsePythonDir}
+                className="px-4 py-2.5 text-sm font-bold text-white bg-slate-600 hover:bg-slate-700 rounded-xl transition-colors"
+              >
+                Browse
+              </button>
+              <button
+                onClick={handleSavePythonPath}
+                disabled={pythonPath === savedPythonPath || pythonLoading}
+                className="px-4 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-xl transition-colors"
+              >
+                Save
+              </button>
+            </div>
+            {pythonMessage && (
+              <p className={`text-xs font-medium ${pythonMessage.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                {pythonMessage.text}
+              </p>
+            )}
           </div>
         </div>
 

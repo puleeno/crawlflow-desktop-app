@@ -21,11 +21,7 @@
     ],
     "resources": [
       "../plugins/*/plugin.json",
-      "../plugins/*/main.py",
-      "python/*.dll",
-      "python/DLLs/*.pyd",
-      "python/DLLs/*.dll",
-      "python/python313.zip"
+      "../plugins/*/main.py"
     ],
     "externalBin": [
       "binaries/crawlflow-service"

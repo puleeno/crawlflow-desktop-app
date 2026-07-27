@@ -103,6 +103,15 @@ fn get_builtin_plugins_dir() -> Option<PathBuf> {
     dev_dir.filter(|path| path.is_dir())
 }
 
+fn resolve_python_path_for_service() {
+    if let Some(python_path) = crawlflow_lib::python_plugins::resolve_python_path() {
+        std::env::set_var("PYTHONHOME", &python_path);
+        println!("[SERVICE] Using Python at {:?}", python_path);
+    } else {
+        println!("[SERVICE] Warning: No Python installation found. Python plugins will not work.");
+    }
+}
+
 fn get_enabled_python_plugin_ids() -> Result<std::collections::HashSet<String>, String> {
     let connection = open_db(&master_db_path())?;
     let mut statement = connection
@@ -931,6 +940,8 @@ async fn main() {
     println!("[SERVICE] Data dir : {:?}", get_app_data_dir());
     println!("[SERVICE] Master DB: {:?}", master_db_path());
     println!("[SERVICE] Interval : {}s", interval_secs);
+
+    resolve_python_path_for_service();
 
     let shutdown = Arc::new(AtomicBool::new(false));
     {

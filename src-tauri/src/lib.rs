@@ -147,6 +147,7 @@ pub fn run() {
             // App settings
             commands::get_app_setting_cmd,
             commands::set_app_setting_cmd,
+            commands::detect_python_cmd,
             commands::lock_project_edit_cmd,
             commands::unlock_project_edit_cmd,
             commands::request_project_run_cmd,
@@ -174,21 +175,12 @@ pub fn run() {
             }
             log::info!("User plugin directory: {:?}", user_dir);
 
-            // Set PYTHONHOME/PYTHONPATH to bundled Python if present
-            if let Ok(resource_dir) = app.path().resource_dir() {
-                let bundled_python = resource_dir.join("python");
-                if bundled_python.is_dir() {
-                    let python_dll = bundled_python.join("python313.dll");
-                    if python_dll.exists() {
-                        std::env::set_var("PYTHONHOME", &bundled_python);
-                        let pylib_zip = bundled_python.join("python313.zip");
-                        if pylib_zip.exists() {
-                            log::info!("Using bundled Python at {:?}", bundled_python);
-                        } else {
-                            log::warn!("Bundled Python found at {:?} but python313.zip is missing", bundled_python);
-                        }
-                    }
-                }
+            // Resolve Python path and set PYTHONHOME
+            if let Some(python_path) = crate::python_plugins::resolve_python_path() {
+                std::env::set_var("PYTHONHOME", &python_path);
+                log::info!("Using Python at {:?}", python_path);
+            } else {
+                log::warn!("No Python installation found. Python plugins will not work.");
             }
 
             let state: tauri::State<'_, AppState> = app.state();
