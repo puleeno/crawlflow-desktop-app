@@ -181,14 +181,11 @@ pub fn run() {
                     let python_dll = bundled_python.join("python313.dll");
                     if python_dll.exists() {
                         std::env::set_var("PYTHONHOME", &bundled_python);
-                        let stdlib_zip = bundled_python.join("stdlib.zip");
-                        if stdlib_zip.exists() {
-                            std::env::set_var("PYTHONPATH", &stdlib_zip);
-                            log::info!("Using bundled Python at {:?} with stdlib.zip", bundled_python);
-                        } else {
-                            let python_path = bundled_python.join("Lib");
-                            std::env::set_var("PYTHONPATH", &python_path);
+                        let pylib_zip = bundled_python.join("python313.zip");
+                        if pylib_zip.exists() {
                             log::info!("Using bundled Python at {:?}", bundled_python);
+                        } else {
+                            log::warn!("Bundled Python found at {:?} but python313.zip is missing", bundled_python);
                         }
                     }
                 }

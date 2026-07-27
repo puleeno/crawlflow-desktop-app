@@ -25,7 +25,7 @@
       "python/*.dll",
       "python/DLLs/*.pyd",
       "python/DLLs/*.dll",
-      "python/stdlib.zip"
+      "python/python313.zip"
     ],
     "externalBin": [
       "binaries/crawlflow-service"
