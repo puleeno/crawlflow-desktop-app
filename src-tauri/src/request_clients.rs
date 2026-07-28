@@ -106,7 +106,30 @@ fn find_chrome() -> Option<PathBuf> {
         }
     }
 
-    let candidates: Vec<PathBuf> = if cfg!(target_os = "macos") {
+    // First check exact paths
+    for c in chrome_candidate_paths() {
+        if c.exists() {
+            return Some(c);
+        }
+    }
+
+    // Fall back to PATH lookup via Command
+    for name in chrome_path_names() {
+        if let Ok(output) = std::process::Command::new("which").arg(name).output() {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path.is_empty() {
+                    return Some(PathBuf::from(path));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn chrome_candidate_paths() -> Vec<PathBuf> {
+    if cfg!(target_os = "macos") {
         vec![
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".into(),
             "/Applications/Chromium.app/Contents/MacOS/Chromium".into(),
@@ -128,34 +151,17 @@ fn find_chrome() -> Option<PathBuf> {
         ]
     } else {
         vec![]
-    };
-
-    // First check exact paths
-    for c in &candidates {
-        if c.exists() {
-            return Some(c.clone());
-        }
     }
+}
 
-    // Fall back to PATH lookup via Command
-    for name in &[
+fn chrome_path_names() -> Vec<&'static str> {
+    vec![
         "google-chrome",
         "google-chrome-stable",
         "chromium",
         "chromium-browser",
         "chrome",
-    ] {
-        if let Ok(output) = std::process::Command::new("which").arg(name).output() {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Some(PathBuf::from(path));
-                }
-            }
-        }
-    }
-
-    None
+    ]
 }
 
 fn is_global_headless_enabled() -> bool {
@@ -1144,6 +1150,46 @@ mod tests {
         assert_eq!(p.timeout_secs.unwrap(), 30);
         assert!(p.proxy_url.is_none());
         assert!(p.chrome_args.is_none());
+    }
+
+    #[test]
+    fn test_chrome_candidate_paths_not_empty() {
+        let paths = chrome_candidate_paths();
+        assert!(!paths.is_empty(), "Each platform must define at least one Chrome candidate path");
+    }
+
+    #[test]
+    fn test_chrome_candidate_paths_platform_specific() {
+        let paths = chrome_candidate_paths();
+        #[cfg(target_os = "macos")]
+        {
+            assert!(paths.iter().any(|p| p.to_string_lossy().contains(".app")),
+                "macOS paths must point to .app bundles");
+            assert!(paths.iter().any(|p| p.to_string_lossy().contains("Google Chrome")),
+                "macOS must include Google Chrome path");
+        }
+        #[cfg(target_os = "linux")]
+        {
+            assert!(paths.iter().all(|p| p.starts_with("/usr/bin/")),
+                "Linux paths must be under /usr/bin/");
+            assert!(paths.iter().any(|p| p.to_string_lossy().contains("google-chrome")),
+                "Linux must include google-chrome path");
+        }
+        #[cfg(target_os = "windows")]
+        {
+            assert!(paths.iter().all(|p| p.to_string_lossy().contains("chrome.exe")),
+                "Windows paths must end with chrome.exe");
+            assert!(paths.iter().any(|p| p.to_string_lossy().contains("Program Files")),
+                "Windows must include Program Files path");
+        }
+    }
+
+    #[test]
+    fn test_chrome_path_names_contains_binaries() {
+        let names = chrome_path_names();
+        assert!(names.contains(&"google-chrome"));
+        assert!(names.contains(&"chromium-browser"));
+        assert!(names.contains(&"chrome"));
     }
 
     #[test]

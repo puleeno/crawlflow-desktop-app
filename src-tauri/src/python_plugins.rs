@@ -1075,25 +1075,68 @@ pub fn resolve_python_path() -> Option<std::path::PathBuf> {
         }
     }
 
-    let python_cmd = if cfg!(target_os = "windows") {
+    detect_python_via_cli()
+}
+
+fn python_cli_command() -> &'static str {
+    if cfg!(target_os = "windows") {
         "python"
     } else {
         "python3"
-    };
-    if let Ok(output) = std::process::Command::new(python_cmd)
+    }
+}
+
+fn detect_python_via_cli() -> Option<std::path::PathBuf> {
+    let output = std::process::Command::new(python_cli_command())
         .args(["-c", "import sys; print(sys.prefix)"])
         .output()
-    {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                let p = std::path::PathBuf::from(&path);
-                if p.exists() {
-                    return Some(p);
-                }
-            }
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        return None;
+    }
+    let p = std::path::PathBuf::from(&path);
+    if p.exists() { Some(p) } else { None }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_python_cli_command_platform() {
+        let cmd = python_cli_command();
+        #[cfg(target_os = "windows")]
+        assert_eq!(cmd, "python", "On Windows, Python CLI must be 'python'");
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(cmd, "python3", "On non-Windows, Python CLI must be 'python3'");
+    }
+
+    #[test]
+    fn test_detect_python_via_cli() {
+        let result = detect_python_via_cli();
+        if result.is_some() {
+            let path = result.unwrap();
+            assert!(path.exists(), "Detected Python path must exist on disk");
+            assert!(path.is_dir(), "Detected Python path must be a directory (sys.prefix)");
+            // Verify it's actually a Python installation
+            let python = path.join(if cfg!(target_os = "windows") { "python.exe" } else { "bin/python3" });
+            assert!(python.exists() || path.join("bin").join("python3").exists() || path.join("bin").join("python").exists(),
+                "Python directory must contain python3 or python binary");
         }
     }
 
-    None
+    #[test]
+    fn test_detect_python_via_cli_valid_prefix() {
+        // Verify that sys.prefix output is a stable path without trailing whitespace
+        let result = detect_python_via_cli();
+        if let Some(ref path) = result {
+            let path_str = path.to_string_lossy();
+            assert_eq!(path_str, path_str.trim(), "Python path must not have trailing whitespace");
+            assert!(!path_str.is_empty(), "Python path must not be empty");
+        }
+    }
 }

@@ -695,6 +695,7 @@ pub fn run_demo_cmd() -> Result<serde_json::Value, String> {
         version: "1.0.0".into(),
         description: "".into(),
         capabilities: vec![],
+        presets: vec![],
         execute: plugins::deduplicate_plugin,
     };
     let dedup_result = (dedup_plugin.execute)(data, dedup_config).map_err(|e| e)?;
@@ -713,6 +714,7 @@ pub fn run_demo_cmd() -> Result<serde_json::Value, String> {
         version: "1.0.0".into(),
         description: "".into(),
         capabilities: vec![],
+        presets: vec![],
         execute: plugins::filter_plugin,
     };
     let filter_result = (filter_plugin.execute)(dedup_result, filter_config).map_err(|e| e)?;
@@ -730,6 +732,7 @@ pub fn run_demo_cmd() -> Result<serde_json::Value, String> {
         version: "1.0.0".into(),
         description: "".into(),
         capabilities: vec![],
+        presets: vec![],
         execute: plugins::sort_plugin,
     };
     let sort_result = (sort_plugin.execute)(filter_result, sort_config).map_err(|e| e)?;
@@ -747,6 +750,7 @@ pub fn run_demo_cmd() -> Result<serde_json::Value, String> {
         version: "1.0.0".into(),
         description: "".into(),
         capabilities: vec![],
+        presets: vec![],
         execute: plugins::limit_plugin,
     };
     let limit_result = (limit_plugin.execute)(sort_result, limit_config).map_err(|e| e)?;

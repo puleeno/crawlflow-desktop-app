@@ -193,14 +193,7 @@ pub struct ProcessorStep {
 pub struct WorkerEngine;
 
 fn is_export_processor(kind: &str) -> bool {
-    matches!(
-        kind,
-        "generate-excel-file"
-            | "generate-csv-file"
-            | "excel-export"
-            | "rust-excel-export"
-            | "csv-export"
-    )
+    crate::plugins::is_export_processor(kind)
 }
 
 impl WorkerEngine {
@@ -1064,16 +1057,9 @@ pub(crate) fn extract_workers(config: &PipelineConfig) -> Vec<WorkerDef> {
 
         // Inject `extractFields` into the config of every Excel/CSV export step
         // so the export plugin knows which fields belong to the extractor output.
-        let export_types = [
-            "generate-excel-file",
-            "generate-csv-file",
-            "excel-export",
-            "rust-excel-export",
-            "csv-export",
-        ];
         let mut processor_chain = processor_chain;
         for step in processor_chain.iter_mut() {
-            if export_types.contains(&step.processor_type.as_str()) {
+            if crate::plugins::is_export_processor(&step.processor_type) {
                 let mut cfg = if step.config.is_object() {
                     step.config.as_object().cloned().unwrap()
                 } else {
