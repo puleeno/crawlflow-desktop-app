@@ -576,13 +576,23 @@ async fn run_project_loop(
     }
 
     println!("[SERVICE] Creating LogManager for project '{}' ...", proj.name);
-    let lm = Arc::new(SimpleLogger::as_log_manager(master_db_path()));
-    // Attach the realtime WS hub to this logger so log entries are pushed live
-    // to the GUI. (set_master_db_path already installed the service handler
-    // stack; set_ws_hub re-installs it WITH the WsLogHandler attached.)
-    if let Some(hub) = ws::global_hub() {
-        lm.set_ws_hub(hub);
-    }
+    println!("[SERVICE-DEBUG-1] Starting LogManager creation...");
+    let lm = {
+        let db = master_db_path();
+        println!("[SERVICE-DEBUG-2] DB path: {:?}", db);
+        let mgr = SimpleLogger::as_log_manager(db);
+        println!("[SERVICE-DEBUG-3] LogManager created, calling ws::global_hub()...");
+        let hub = ws::global_hub();
+        println!("[SERVICE-DEBUG-4] ws::global_hub() returned: {:?}", hub.as_ref().map(|_| "Some"));
+        if let Some(ref hub) = hub {
+            println!("[SERVICE-DEBUG-5] Calling set_ws_hub...");
+            mgr.set_ws_hub(hub.clone());
+            println!("[SERVICE-DEBUG-6] WS hub attached");
+        }
+        println!("[SERVICE-DEBUG-7] Wrapping in Arc...");
+        Arc::new(mgr)
+    };
+    println!("[SERVICE-DEBUG-8] LogManager fully initialized");
 
     // Start (or reuse) this project's realtime WebSocket server and remember
     // its port so logs / progress / per-item events can be pushed live.

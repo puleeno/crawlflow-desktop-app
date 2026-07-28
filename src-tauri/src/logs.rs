@@ -272,7 +272,8 @@ impl LogManager {
     pub fn set_ws_hub(&self, hub: Arc<WsHub>) {
         *self.ws_hub.write().unwrap() = Some(hub.clone());
         // (Re)install service handlers if DB path is already known.
-        if let Some(db) = self.master_db_path.lock().unwrap().clone() {
+        let db = self.master_db_path.lock().unwrap().clone();
+        if let Some(db) = db {
             self.install_service_handlers(db);
         }
     }

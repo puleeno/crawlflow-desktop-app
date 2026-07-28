@@ -54,23 +54,66 @@ fn master_db_path() -> std::path::PathBuf {
         .join("crawlflow.db")
 }
 
-/// Read the global `export_dir` from `app_settings`, falling back to None
-/// (the export plugin then defaults to the OS Downloads folder).
+/// Read the global `export_dir` from `app_settings`. If empty and not yet
+/// scanned, auto-detect the OS Downloads folder, save it, and set the
+/// scanned flag so the slow scan runs only once.
 fn read_global_export_dir() -> Option<String> {
     let conn = rusqlite::Connection::open(master_db_path()).ok()?;
-    let val: Option<String> = conn
+
+    // 1. Check if already set by user
+    let existing: Option<String> = conn
         .query_row(
             "SELECT value FROM app_settings WHERE key = 'export_dir'",
             [],
             |row| row.get(0),
         )
-        .ok();
-    let val = val?;
-    if val.trim().is_empty() {
-        None
-    } else {
-        Some(val)
+        .ok()
+        .and_then(|v: String| {
+            let trimmed = v.trim().to_string();
+            if trimmed.is_empty() { None } else { Some(trimmed) }
+        });
+
+    if existing.is_some() {
+        return existing;
     }
+
+    // 2. Check if already scanned (skip if we already tried once)
+    let already_scanned: bool = conn
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = 'export_dir_scanned'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .map(|v| v == "1")
+        .unwrap_or(false);
+
+    if already_scanned {
+        return None;
+    }
+
+    // 3. First scan: auto-detect Downloads folder
+    let detected = dirs_next::download_dir()
+        .or_else(|| dirs_next::data_dir())
+        .and_then(|p| {
+            let s = p.to_string_lossy().to_string();
+            if s.is_empty() { None } else { Some(s) }
+        });
+
+    // 4. Save result and scanned flag
+    if let Some(ref path) = detected {
+        let _ = conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES ('export_dir', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
+            rusqlite::params![path],
+        );
+        println!("[Export] Auto-detected Downloads folder: {}", path);
+    }
+    let _ = conn.execute(
+        "INSERT INTO app_settings (key, value) VALUES ('export_dir_scanned', '1') ON CONFLICT(key) DO UPDATE SET value = '1'",
+        [],
+    );
+
+    detected
 }
 
 /// Read `group_export` / `group_format` from the per-project `project_settings`
