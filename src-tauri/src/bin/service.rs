@@ -3,9 +3,9 @@
 //! Usage:
 //!   crawlflow-service --project <PROJECT_ID> [--interval <SECONDS>]
 //!   crawlflow-service --all [--interval <SECONDS>]
+//!   crawlflow-service --service --all               (Windows Service mode)
 //!
-//! Runs as a plain background process. On macOS there is no Dock icon.
-//! On Windows, built with windows_subsystem = "windows" so no console window appears.
+//! Runs as a plain background process or as a proper Windows Service.
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
@@ -35,6 +35,8 @@ fn now_iso() -> String {
 
 // ── Minimal inline log manager (avoids importing Tauri-coupled crawlflow_lib::logs) ──
 
+use std::io::Write;
+
 struct SimpleLogger;
 
 impl SimpleLogger {
@@ -44,6 +46,71 @@ impl SimpleLogger {
         lm.set_master_db_path(db_path);
         lm
     }
+}
+
+// ── File logger for Windows Service mode ─────────────────────────────────────────
+
+static mut SERVICE_LOG_FILE: Option<std::fs::File> = None;
+
+fn service_log_dir() -> PathBuf {
+    dirs_next::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("com.CrawlFlow.desktop")
+        .join("logs")
+}
+
+fn init_file_logger() {
+    let log_dir = service_log_dir();
+    let _ = std::fs::create_dir_all(&log_dir);
+
+    let timestamp = {
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        format!("{}", secs)
+    };
+    let log_path = log_dir.join(format!("service-{}.log", timestamp));
+
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        Ok(f) => {
+            unsafe { SERVICE_LOG_FILE = Some(f); }
+            println!("[SERVICE] Log file: {:?}", log_path);
+        }
+        Err(e) => {
+            eprintln!("[SERVICE] Failed to open log file {:?}: {}", log_path, e);
+        }
+    }
+}
+
+fn log_to_file(msg: &str) {
+    let timestamp = {
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let (h, m, s) = ((secs % 86400) / 3600, (secs % 3600) / 60, secs % 60);
+        format!("{:02}:{:02}:{:02}", h, m, s)
+    };
+    let line = format!("[{}] {}\n", timestamp, msg);
+    if let Some(f) = unsafe { SERVICE_LOG_FILE.as_mut() } {
+        let _ = f.write_all(line.as_bytes());
+        let _ = f.flush();
+    }
+    // Also write to stderr for when running in console
+    let _ = std::io::stderr().write_all(line.as_bytes());
+}
+
+macro_rules! svc_log {
+    ($($arg:tt)*) => {
+        let msg = format!($($arg)*);
+        log_to_file(&msg);
+        println!("{}", msg);
+    };
 }
 
 // ── SQLite access (rusqlite, no async needed) ──────────────────────────────────────
@@ -104,11 +171,69 @@ fn get_builtin_plugins_dir() -> Option<PathBuf> {
 }
 
 fn resolve_python_path_for_service() {
-    if let Some(python_path) = crawlflow_lib::python_plugins::resolve_python_path() {
-        std::env::set_var("PYTHONHOME", &python_path);
-        println!("[SERVICE] Using Python at {:?}", python_path);
+    let db_path = master_db_path();
+
+    // 1. Check app_settings first
+    let from_db = || -> Option<std::path::PathBuf> {
+        let conn = rusqlite::Connection::open(&db_path).ok()?;
+        let mut stmt = conn.prepare("SELECT value FROM app_settings WHERE key = 'python_path'").ok()?;
+        let path: String = stmt.query_row([], |r| r.get(0)).ok()?;
+        let p = std::path::PathBuf::from(&path);
+        if p.exists() { Some(p) } else { None }
+    };
+
+    if let Some(ref path) = from_db() {
+        std::env::set_var("PYTHONHOME", path);
+        println!("[SERVICE] Using Python at {:?} (from app_settings)", path);
+        return;
+    }
+
+    // 2. Check if already scanned
+    let set_flag = |key: &str, value: &str| {
+        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+            let _ = conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
+                rusqlite::params![key, value],
+            );
+        }
+    };
+
+    let already_scanned = rusqlite::Connection::open(&db_path).ok().and_then(|conn| {
+        conn.prepare("SELECT value FROM app_settings WHERE key = 'python_scanned'")
+            .ok()
+            .and_then(|mut stmt| stmt.query_row([], |r| r.get::<_, String>(0)).ok())
+    }).is_some();
+
+    if already_scanned {
+        println!("[SERVICE] Python already scanned and not found. Please install Python or set python_path in settings.");
+        return;
+    }
+
+    // 3. First scan: try to detect Python from PATH
+    println!("[SERVICE] Scanning Python from PATH (first run)...");
+    let python_cmd = if cfg!(target_os = "windows") { "python" } else { "python3" };
+    let detected = match std::process::Command::new(python_cmd)
+        .args(["-c", "import sys; print(sys.prefix)"])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                let p = std::path::PathBuf::from(&path);
+                if p.exists() { Some(p) } else { None }
+            } else { None }
+        }
+        _ => None,
+    };
+
+    if let Some(ref path) = detected {
+        set_flag("python_path", &path.to_string_lossy());
+        set_flag("python_scanned", "1");
+        std::env::set_var("PYTHONHOME", path);
+        println!("[SERVICE] Found Python at {:?} — saved to settings", path);
     } else {
-        println!("[SERVICE] Warning: No Python installation found. Python plugins will not work.");
+        set_flag("python_scanned", "1");
+        println!("[SERVICE] Python not found on PATH. Please install Python or set python_path in settings.");
     }
 }
 
@@ -432,6 +557,8 @@ async fn run_project_loop(
     let db_path = project_db_path(&proj.db_path);
     let master_db = master_db_path();
 
+    println!("[SERVICE] Initializing project '{}' ...", proj.name);
+
     // Ensure project_runtime table exists
     if let Ok(conn) = rusqlite::Connection::open(&master_db) {
         ensure_runtime_table(&conn);
@@ -444,8 +571,11 @@ async fn run_project_loop(
             "UPDATE project_runtime SET edit_pid = NULL, updated_at = datetime('now') WHERE project_id = ?1",
             rusqlite::params![&project_id],
         );
+    } else {
+        eprintln!("[SERVICE] WARNING: Cannot open master DB at {:?}", master_db);
     }
 
+    println!("[SERVICE] Creating LogManager for project '{}' ...", proj.name);
     let lm = Arc::new(SimpleLogger::as_log_manager(master_db_path()));
     // Attach the realtime WS hub to this logger so log entries are pushed live
     // to the GUI. (set_master_db_path already installed the service handler
@@ -456,7 +586,9 @@ async fn run_project_loop(
 
     // Start (or reuse) this project's realtime WebSocket server and remember
     // its port so logs / progress / per-item events can be pushed live.
+    println!("[SERVICE] Starting WebSocket server for project '{}'...", proj.name);
     let ws_port = ws_hub.start_for_project(&project_id).await;
+    println!("[SERVICE] WebSocket listening on port {}", ws_port);
     lm.info(
         &project_id,
         "service",
@@ -465,8 +597,10 @@ async fn run_project_loop(
 
     // Resolve export settings (global export folder + per-project grouping)
     // once per project loop so the export plugin places files correctly.
+    println!("[SERVICE] Resolving export settings for project '{}'...", proj.name);
     let export_settings = get_export_settings(&project_id, &db_path);
 
+    println!("[SERVICE] Loading enabled plugins...");
     let enabled_plugin_ids = match get_enabled_python_plugin_ids() {
         Ok(plugin_ids) => plugin_ids,
         Err(error) => {
@@ -478,6 +612,7 @@ async fn run_project_loop(
             return;
         }
     };
+    println!("[SERVICE] Initializing Python plugin engine...");
     let mut python_engine = match create_python_plugin_engine(&enabled_plugin_ids) {
         Ok(engine) => engine,
         Err(error) => {
@@ -519,17 +654,11 @@ async fn run_project_loop(
         }
     });
 
-    lm.info(
-        &project_id,
-        "service",
-        &format!(
-            "Loop started for '{}' (every {}s)",
-            proj.name, interval_secs
-        ),
-    );
+    println!("[SERVICE] Loop started for '{}' (every {}s)", proj.name, interval_secs);
 
     while !shutdown.load(Ordering::Relaxed) {
         cycle += 1;
+        println!("[SERVICE] --- Cycle #{} for '{}' ---", cycle, proj.name);
         lm.info(&project_id, "service", &format!("--- Cycle #{} ---", cycle));
 
         // Check if desktop app has this project open for editing
@@ -560,6 +689,7 @@ async fn run_project_loop(
             } else {
                 "stopped by user"
             };
+            println!("[SERVICE] Skipping: project '{}' is {}", proj.name, reason);
             lm.info(
                 &project_id,
                 "service",
@@ -596,8 +726,10 @@ async fn run_project_loop(
             );
         }
 
+        println!("[SERVICE] Loading pipeline from {:?}...", db_path);
         match load_pipeline(&db_path) {
             Ok((nodes, edges)) => {
+                println!("[SERVICE] Pipeline loaded: {} nodes, {} edges. Executing...", nodes.len(), edges.len());
                 let config = crawlflow_lib::pipeline::PipelineConfig {
                     nodes,
                     edges,
@@ -637,6 +769,13 @@ async fn run_project_loop(
                 .await;
                 pipeline_running.store(false, Ordering::Relaxed);
                 let now = now_iso();
+                println!(
+                    "[SERVICE] Cycle #{} result: success={} ingested={} matched={} processed={} failed={} phase={}",
+                    cycle, result.success, result.ingested, result.matched, result.processed, result.failed, result.phase
+                );
+                if let Some(ref err) = result.error {
+                    eprintln!("[SERVICE] Cycle #{} error detail: {}", cycle, err);
+                }
                 if let Ok(conn) = rusqlite::Connection::open(&master_db) {
                     if result.success {
                         set_runner_status(
@@ -864,6 +1003,7 @@ async fn run_project_loop(
                 report_progress(&project_id, &db_path, &result, &now);
             }
             Err(e) => {
+                eprintln!("[SERVICE] ERROR: Load pipeline failed: {}", e);
                 if let Ok(conn) = rusqlite::Connection::open(&master_db) {
                     set_runner_status(
                         &conn,
@@ -901,10 +1041,25 @@ async fn run_project_loop(
 
 // ── Entry point ───────────────────────────────────────────────────────────────────
 
-#[tokio::main]
-async fn main() {
+#[cfg(target_os = "windows")]
+fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--service") {
+        run_as_windows_service();
+    } else {
+        run_as_console(&args);
+    }
+}
 
+#[cfg(not(target_os = "windows"))]
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    run_as_console(&args);
+}
+
+// ── Console mode (manual launch / dev) ───────────────────────────────────────────
+
+fn run_as_console(args: &[String]) {
     let mut target_project: Option<String> = None;
     let mut run_all = false;
     let mut interval_secs: u64 = 60;
@@ -912,17 +1067,10 @@ async fn main() {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--project" => {
-                i += 1;
-                target_project = args.get(i).cloned();
-            }
-            "--all" => {
-                run_all = true;
-            }
-            "--interval" => {
-                i += 1;
-                interval_secs = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(60);
-            }
+            "--project" => { i += 1; target_project = args.get(i).cloned(); }
+            "--all" => { run_all = true; }
+            "--interval" => { i += 1; interval_secs = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(60); }
+            "--service" => {}
             _ => {}
         }
         i += 1;
@@ -936,7 +1084,7 @@ async fn main() {
         std::process::exit(1);
     }
 
-    println!("[SERVICE] CrawlFlow background service starting");
+    println!("[SERVICE] CrawlFlow background service starting (console mode)");
     println!("[SERVICE] Data dir : {:?}", get_app_data_dir());
     println!("[SERVICE] Master DB: {:?}", master_db_path());
     println!("[SERVICE] Interval : {}s", interval_secs);
@@ -953,9 +1101,6 @@ async fn main() {
         .ok();
     }
 
-    // ── Realtime WebSocket hub ──────────────────────────────────────
-    // Each project gets its own WS server so the GUI can subscribe to live
-    // progress / logs / per-item events with zero polling delay.
     let ws_hub = WsHub::new();
     {
         let master = master_db_path();
@@ -972,13 +1117,9 @@ async fn main() {
     }
     ws::set_global_hub(ws_hub.clone());
 
-    // Resolve project list
     let all_projects = match list_enabled_projects() {
         Ok(p) => p,
-        Err(e) => {
-            eprintln!("[SERVICE] DB error: {}", e);
-            std::process::exit(1);
-        }
+        Err(e) => { eprintln!("[SERVICE] DB error: {}", e); std::process::exit(1); }
     };
 
     let projects: Vec<ProjectRow> = if run_all {
@@ -999,16 +1140,208 @@ async fn main() {
         return;
     }
 
-    let mut handles = Vec::new();
-    for proj in projects {
-        let sd = shutdown.clone();
-        let hub = ws_hub.clone();
-        handles.push(tokio::spawn(run_project_loop(proj, interval_secs, sd, hub)));
-    }
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    rt.block_on(async {
+        let mut handles = Vec::new();
+        for proj in projects {
+            let sd = shutdown.clone();
+            let hub = ws_hub.clone();
+            handles.push(tokio::spawn(run_project_loop(proj, interval_secs, sd, hub)));
+        }
+        while !shutdown.load(Ordering::Relaxed) {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        println!("[SERVICE] Shutting down project loops...");
+        for h in handles { let _ = h.await; }
+    });
 
-    for h in handles {
-        let _ = h.await;
-    }
     crawlflow_lib::request_clients::shutdown_global_chrome();
     println!("[SERVICE] All stopped. Goodbye.");
+}
+
+// ── Windows Service mode (launched by SCM) ───────────────────────────────────────
+
+#[cfg(target_os = "windows")]
+const SERVICE_NAME: &str = "CrawlFlowService";
+
+#[cfg(target_os = "windows")]
+fn run_as_windows_service() {
+    use windows_service::define_windows_service;
+    use windows_service::service_dispatcher;
+
+    define_windows_service!(ffi_service_main, service_main_entry);
+
+    if let Err(e) = service_dispatcher::start(SERVICE_NAME, ffi_service_main) {
+        eprintln!("[SERVICE] Failed to connect to SCM: {:?}", e);
+        eprintln!("[SERVICE] Falling back to console mode.");
+        let args: Vec<String> = std::env::args().collect();
+        let filtered: Vec<String> = args.into_iter().filter(|a| a != "--service").collect();
+        run_as_console(&filtered);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn service_main_entry(_arguments: Vec<std::ffi::OsString>) {
+    use windows_service::service::{
+        ServiceStatus, ServiceType, ServiceState, ServiceControlAccept,
+    };
+    use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
+
+    // Initialize file logger first — all svc_log! calls write here
+    init_file_logger();
+
+    // Catch panics so we always write to the log file
+    std::panic::set_hook(Box::new(|info| {
+        let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            format!("PANIC: {}", s)
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            format!("PANIC: {}", s)
+        } else {
+            format!("PANIC: {:?}", info)
+        };
+        if let Some(loc) = info.location() {
+            log_to_file(&format!("{} at {}:{}", msg, loc.file(), loc.line()));
+        } else {
+            log_to_file(&msg);
+        }
+    }));
+
+    svc_log!("[SERVICE] CrawlFlow Windows Service starting");
+    svc_log!("[SERVICE] Data dir : {:?}", get_app_data_dir());
+    svc_log!("[SERVICE] Master DB: {:?}", master_db_path());
+    svc_log!("[SERVICE] Log dir  : {:?}", service_log_dir());
+
+    resolve_python_path_for_service();
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+
+    // Register control handler via closure
+    let shutdown_for_handler = shutdown.clone();
+    let event_handler = move |control_event| -> ServiceControlHandlerResult {
+        match control_event {
+            windows_service::service::ServiceControl::Stop => {
+                svc_log!("[SERVICE] SCM stop signal received");
+                shutdown_for_handler.store(true, Ordering::Relaxed);
+                ServiceControlHandlerResult::NoError
+            }
+            windows_service::service::ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+            _ => ServiceControlHandlerResult::NotImplemented,
+        }
+    };
+    let status_handle = match service_control_handler::register(SERVICE_NAME, event_handler) {
+        Ok(h) => h,
+        Err(e) => {
+            svc_log!("[SERVICE] FATAL: Failed to register handler: {:?}", e);
+            return;
+        }
+    };
+
+    // Report start pending
+    let _ = status_handle.set_service_status(ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: ServiceState::StartPending,
+        controls_accepted: ServiceControlAccept::empty(),
+        exit_code: windows_service::service::ServiceExitCode::ServiceSpecific(0),
+        checkpoint: 0,
+        wait_hint: std::time::Duration::from_secs(10),
+        process_id: None,
+    });
+
+    svc_log!("[SERVICE] Initializing WebSocket hub...");
+    let ws_hub = WsHub::new();
+    {
+        let master = master_db_path();
+        ws_hub.set_port_persister(Box::new(move |project_id, port| {
+            if let Ok(conn) = rusqlite::Connection::open(&master) {
+                let _ = conn.execute(
+                    "INSERT INTO project_runtime (project_id, ws_port, updated_at)
+                     VALUES (?1, ?2, datetime('now'))
+                     ON CONFLICT(project_id) DO UPDATE SET ws_port = ?2, updated_at = datetime('now')",
+                    rusqlite::params![project_id, port as i64],
+                );
+            }
+        }));
+    }
+    ws::set_global_hub(ws_hub.clone());
+
+    svc_log!("[SERVICE] Querying enabled projects...");
+    let all_projects = match list_enabled_projects() {
+        Ok(p) => p,
+        Err(e) => {
+            svc_log!("[SERVICE] FATAL: DB error: {}", e);
+            let _ = status_handle.set_service_status(ServiceStatus {
+                service_type: ServiceType::OWN_PROCESS,
+                current_state: ServiceState::Stopped,
+                controls_accepted: ServiceControlAccept::empty(),
+                exit_code: windows_service::service::ServiceExitCode::ServiceSpecific(1),
+                checkpoint: 0,
+                wait_hint: std::time::Duration::ZERO,
+                process_id: None,
+            });
+            return;
+        }
+    };
+
+    if all_projects.is_empty() {
+        svc_log!("[SERVICE] No enabled projects found. Stopping.");
+        let _ = status_handle.set_service_status(ServiceStatus {
+            service_type: ServiceType::OWN_PROCESS,
+            current_state: ServiceState::Stopped,
+            controls_accepted: ServiceControlAccept::empty(),
+            exit_code: windows_service::service::ServiceExitCode::ServiceSpecific(0),
+            checkpoint: 0,
+            wait_hint: std::time::Duration::ZERO,
+            process_id: None,
+        });
+        return;
+    }
+
+    svc_log!("[SERVICE] Starting {} enabled project(s)", all_projects.len());
+
+    // Report running
+    let _ = status_handle.set_service_status(ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: ServiceState::Running,
+        controls_accepted: ServiceControlAccept::STOP,
+        exit_code: windows_service::service::ServiceExitCode::ServiceSpecific(0),
+        checkpoint: 0,
+        wait_hint: std::time::Duration::ZERO,
+        process_id: None,
+    });
+
+    let interval_secs: u64 = 60;
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(r) => r,
+        Err(e) => {
+            svc_log!("[SERVICE] FATAL: Failed to create tokio runtime: {}", e);
+            return;
+        }
+    };
+    rt.block_on(async {
+        let mut handles = Vec::new();
+        for proj in all_projects {
+            svc_log!("[SERVICE] Spawning loop for project '{}' ({})", proj.name, proj.id);
+            let sd = shutdown.clone();
+            let hub = ws_hub.clone();
+            handles.push(tokio::spawn(run_project_loop(proj, interval_secs, sd, hub)));
+        }
+        while !shutdown.load(Ordering::Relaxed) {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        svc_log!("[SERVICE] Stop signal received. Shutting down project loops...");
+        for h in handles { let _ = h.await; }
+    });
+
+    crawlflow_lib::request_clients::shutdown_global_chrome();
+
+    let _ = status_handle.set_service_status(ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: ServiceState::Stopped,
+        controls_accepted: ServiceControlAccept::empty(),
+        exit_code: windows_service::service::ServiceExitCode::ServiceSpecific(0),
+        checkpoint: 0,
+        wait_hint: std::time::Duration::ZERO,
+        process_id: None,
+    });
+    svc_log!("[SERVICE] All stopped. Goodbye.");
 }

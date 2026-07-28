@@ -205,7 +205,7 @@ WantedBy=default.target
             Platform::Linux => Self::systemd_path().to_string_lossy().to_string(),
             Platform::Windows => {
                 if installed {
-                    "Task Scheduler: CrawlFlowService".to_string()
+                    "Windows Service: CrawlFlowService".to_string()
                 } else {
                     String::new()
                 }
@@ -230,8 +230,8 @@ WantedBy=default.target
             Platform::Macos => Self::plist_path().exists(),
             Platform::Linux => Self::systemd_path().exists(),
             Platform::Windows => {
-                let output = std::process::Command::new("schtasks")
-                    .args(["/QUERY", "/TN", "CrawlFlowService"])
+                let output = std::process::Command::new("sc")
+                    .args(["query", "CrawlFlowService"])
                     .output();
                 match output {
                     Ok(out) => out.status.success(),
@@ -266,26 +266,15 @@ WantedBy=default.target
                 }
             }
             Platform::Windows => {
-                let tasklist = std::process::Command::new("tasklist")
-                    .args(["/FI", "IMAGENAME eq crawlflow-service.exe", "/FO", "CSV"])
-                    .output();
-                if let Ok(out) = tasklist {
-                    if out.status.success() {
-                        let text = String::from_utf8_lossy(&out.stdout);
-                        if text.contains("crawlflow-service.exe") {
-                            return true;
-                        }
-                    }
-                }
-                let output = std::process::Command::new("schtasks")
-                    .args(["/QUERY", "/TN", "CrawlFlowService", "/FO", "CSV", "/V"])
+                // Check Windows service state via `sc query`
+                let output = std::process::Command::new("sc")
+                    .args(["query", "CrawlFlowService"])
                     .output();
                 if let Ok(out) = output {
                     if out.status.success() {
                         let text = String::from_utf8_lossy(&out.stdout);
-                        if text.to_lowercase().contains("\"running\"") {
-                            return true;
-                        }
+                        // STATE              : 4  RUNNING
+                        return text.contains("RUNNING");
                     }
                 }
                 false
@@ -344,33 +333,35 @@ WantedBy=default.target
                 Ok(format!("Service installed at {:?}", unit_path))
             }
             Platform::Windows => {
-                let tr_val = format!("\"{}\" --all", exe_str);
-                let output = std::process::Command::new("cmd")
+                let output = std::process::Command::new("sc")
                     .args([
-                        "/C",
-                        &format!(
-                            r#"schtasks /CREATE /SC ONLOGON /TN CrawlFlowService /TR "{}" /F"#,
-                            tr_val.replace('"', "\\\"")
-                        ),
+                        "create",
+                        "CrawlFlowService",
+                        "binPath=",
+                        &format!("\"{}\" --service --all", exe_str),
+                        "start=",
+                        "auto",
+                        "DisplayName=",
+                        "CrawlFlow Background Service",
                     ])
                     .output()
-                    .map_err(|e| format!("Failed to execute schtasks command: {}", e))?;
+                    .map_err(|e| format!("Failed to execute sc create: {}", e))?;
 
                 if !output.status.success() {
                     let err = String::from_utf8_lossy(&output.stderr);
                     let err_out = String::from_utf8_lossy(&output.stdout);
                     let combined = format!("{} {}", err.trim(), err_out.trim()).trim().to_string();
                     return Err(format!(
-                        "Windows Task Scheduler installation failed: {}",
+                        "Windows Service installation failed: {}",
                         if combined.is_empty() {
-                            "Unknown error creating scheduled task".into()
+                            "Unknown error creating service".into()
                         } else {
                             combined
                         }
                     ));
                 }
 
-                Ok("Service installed (Windows Task Scheduler)".to_string())
+                Ok("Windows Service installed (CrawlFlowService)".to_string())
             }
             Platform::Unknown => Err("Unsupported platform for service installation".to_string()),
         }
@@ -405,26 +396,26 @@ WantedBy=default.target
                 Ok("Service uninstalled".to_string())
             }
             Platform::Windows => {
-                let output = std::process::Command::new("schtasks")
-                    .args(["/DELETE", "/TN", "CrawlFlowService", "/F"])
+                let output = std::process::Command::new("sc")
+                    .args(["delete", "CrawlFlowService"])
                     .output()
-                    .map_err(|e| format!("Failed to execute schtasks command: {}", e))?;
+                    .map_err(|e| format!("Failed to execute sc delete: {}", e))?;
 
                 if !output.status.success() {
                     let err = String::from_utf8_lossy(&output.stderr);
                     let err_out = String::from_utf8_lossy(&output.stdout);
                     let combined = format!("{} {}", err.trim(), err_out.trim()).trim().to_string();
                     return Err(format!(
-                        "Windows Task Scheduler deletion failed: {}",
+                        "Windows Service deletion failed: {}",
                         if combined.is_empty() {
-                            "Unknown error deleting scheduled task".into()
+                            "Unknown error deleting service".into()
                         } else {
                             combined
                         }
                     ));
                 }
 
-                Ok("Service uninstalled".to_string())
+                Ok("Windows Service uninstalled".to_string())
             }
             Platform::Unknown => Err("Unsupported platform".to_string()),
         }
@@ -463,10 +454,10 @@ WantedBy=default.target
                 if !Self::is_installed() {
                     return Err("Service not installed".to_string());
                 }
-                let output = std::process::Command::new("schtasks")
-                    .args(["/RUN", "/TN", "CrawlFlowService"])
+                let output = std::process::Command::new("sc")
+                    .args(["start", "CrawlFlowService"])
                     .output()
-                    .map_err(|e| format!("Failed to execute schtasks command: {}", e))?;
+                    .map_err(|e| format!("Failed to execute sc start: {}", e))?;
 
                 if !output.status.success() {
                     let err = String::from_utf8_lossy(&output.stderr);
@@ -475,14 +466,14 @@ WantedBy=default.target
                     return Err(format!(
                         "Failed to start Windows service: {}",
                         if combined.is_empty() {
-                            "Unknown error running scheduled task".into()
+                            "Unknown error starting service".into()
                         } else {
                             combined
                         }
                     ));
                 }
 
-                Ok("Service started".to_string())
+                Ok("Windows Service started".to_string())
             }
             Platform::Unknown => Err("Unsupported platform".to_string()),
         }
@@ -513,22 +504,21 @@ WantedBy=default.target
                 }
             }
             Platform::Windows => {
-                let _ = std::process::Command::new("schtasks")
-                    .args(["/END", "/TN", "CrawlFlowService"])
-                    .output();
-                let output = std::process::Command::new("taskkill")
-                    .args(["/F", "/IM", "crawlflow-service.exe", "/T"])
+                let output = std::process::Command::new("sc")
+                    .args(["stop", "CrawlFlowService"])
                     .output()
-                    .map_err(|e| format!("Failed to execute taskkill: {}", e))?;
+                    .map_err(|e| format!("Failed to execute sc stop: {}", e))?;
 
                 if output.status.success() {
-                    Ok("Service stopped".to_string())
+                    Ok("Windows Service stopped".to_string())
                 } else {
                     let err = String::from_utf8_lossy(&output.stderr);
-                    if err.contains("not found") || err.contains("not running") {
-                        Ok("Service stopped (was not running)".to_string())
+                    let err_out = String::from_utf8_lossy(&output.stdout);
+                    let combined = format!("{} {}", err.trim(), err_out.trim()).trim().to_string();
+                    if combined.contains("has not been started") || combined.contains("is not running") || combined.contains("1062") {
+                        Ok("Windows Service stopped (was not running)".to_string())
                     } else {
-                        Err(format!("Failed to stop service: {}", err.trim()))
+                        Err(format!("Failed to stop Windows service: {}", combined))
                     }
                 }
             }

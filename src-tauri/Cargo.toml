@@ -55,3 +55,6 @@ url = "2.5"
 # Used by the headless service binary only
 rusqlite = { version = "0.31", features = ["bundled"] }
 ctrlc = { version = "3", features = ["termination"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-service = "0.7"

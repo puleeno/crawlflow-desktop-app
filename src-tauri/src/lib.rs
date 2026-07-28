@@ -175,12 +175,29 @@ pub fn run() {
             }
             log::info!("User plugin directory: {:?}", user_dir);
 
-            // Resolve Python path and set PYTHONHOME
-            if let Some(python_path) = crate::python_plugins::resolve_python_path() {
-                std::env::set_var("PYTHONHOME", &python_path);
-                log::info!("Using Python at {:?}", python_path);
+            // Resolve Python path from app_settings and set PYTHONHOME
+            let db_path = dirs_next::data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("com.CrawlFlow.desktop")
+                .join("crawlflow.db");
+            let python_path = if db_path.exists() {
+                rusqlite::Connection::open(&db_path).ok().and_then(|conn| {
+                    conn.prepare("SELECT value FROM app_settings WHERE key = 'python_path'")
+                        .ok()
+                        .and_then(|mut stmt| {
+                            stmt.query_row([], |r| r.get::<_, String>(0))
+                                .ok()
+                                .filter(|p| std::path::Path::new(p).exists())
+                        })
+                })
             } else {
-                log::warn!("No Python installation found. Python plugins will not work.");
+                None
+            };
+            if let Some(ref path) = python_path {
+                std::env::set_var("PYTHONHOME", path);
+                log::info!("Using Python at {:?} (from app_settings)", path);
+            } else {
+                log::warn!("Python path not set in app_settings. Python plugins will not work.");
             }
 
             let state: tauri::State<'_, AppState> = app.state();
