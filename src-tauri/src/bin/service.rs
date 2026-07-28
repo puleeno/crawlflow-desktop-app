@@ -877,10 +877,7 @@ async fn run_project_loop(
                                         .get("processorType")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("");
-                                    if ptype != "generate-excel-file"
-                                        && ptype != "excel-export"
-                                        && ptype != "rust-excel-export"
-                                    {
+                                    if !crawlflow_lib::plugins::is_export_processor(ptype) {
                                         continue;
                                     }
                                     let mut pconfig = node

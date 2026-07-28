@@ -511,60 +511,43 @@ fn process_node(
             }
             let processor_config = serde_json::Value::Object(processor_config_obj);
 
-            let result = match processor_type {
-                "rust-deduplicate" => {
-                    let cfg = processor_config;
-                    plugins::deduplicate_plugin(input, cfg)
-                }
-                "rust-filter" => {
-                    let cfg = processor_config;
-                    plugins::filter_plugin(input, cfg)
-                }
-                "rust-sort" => {
-                    let cfg = processor_config;
-                    plugins::sort_plugin(input, cfg)
-                }
-                "rust-limit" => {
-                    let cfg = processor_config;
-                    plugins::limit_plugin(input, cfg)
-                }
-                "rust-excel-export" | "excel-export" => {
+            let result = {
+                let mut cfg = processor_config.clone();
+                if crate::plugins::is_export_processor(processor_type) {
                     log_manager.info(
                         project_id,
                         node_id,
                         &format!(
-                            "[{}] Excel export starting: {} items, config={}",
+                            "[{}] Export starting: {} items, config={}",
                             label_of(node),
                             input_count,
                             processor_config
                         ),
                     );
-                    let mut cfg = processor_config.clone();
                     inject_export_settings(&mut cfg, project_id);
-                    match plugins::excel_export_plugin(input.clone(), cfg) {
-                        Ok(output) => {
-                            let file = output
-                                .first()
-                                .and_then(|v| v.get("file"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("<unknown>");
-                            log_manager.info(
-                                project_id,
-                                node_id,
-                                &format!("[{}] Excel export wrote file: {}", label_of(node), file),
-                            );
-                            Ok(output)
-                        }
-                        Err(e) => Err(e),
-                    }
                 }
-                _ => {
-                    log_manager.warn(
-                        project_id,
-                        node_id,
-                        &format!("Unknown processor type: {}", processor_type),
-                    );
-                    Ok(input)
+                let pr = crate::plugins::execute_processor_simple(
+                    processor_type,
+                    input,
+                    cfg,
+                );
+                if pr.success {
+                    if crate::plugins::is_export_processor(processor_type) {
+                        let file = pr
+                            .data
+                            .first()
+                            .and_then(|v| v.get("file"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("<unknown>");
+                        log_manager.info(
+                            project_id,
+                            node_id,
+                            &format!("[{}] Export wrote file: {}", label_of(node), file),
+                        );
+                    }
+                    Ok(pr.data)
+                } else {
+                    Err(pr.error.unwrap_or_else(|| "Processor failed".to_string()))
                 }
             };
 
@@ -1829,7 +1812,7 @@ pub async fn execute_repository_pipeline(
      -> Result<serde_json::Value, String> {
         let config_json = _cfg.clone();
         let result =
-            plugins::execute_processor_static(processor_type, vec![data.clone()], config_json);
+            crate::plugins::execute_processor_simple(processor_type, vec![data.clone()], config_json);
         if result.success {
             Ok(serde_json::Value::Array(result.data))
         } else {

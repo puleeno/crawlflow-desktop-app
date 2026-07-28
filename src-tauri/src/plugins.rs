@@ -9,6 +9,7 @@ pub struct RustPlugin {
     pub version: String,
     pub description: String,
     pub capabilities: Vec<String>,
+    pub presets: Vec<serde_json::Value>,
     pub execute: fn(
         data: Vec<serde_json::Value>,
         config: serde_json::Value,
@@ -17,6 +18,7 @@ pub struct RustPlugin {
 
 pub struct PluginEngine {
     plugins: HashMap<String, RustPlugin>,
+    aliases: HashMap<String, String>,
     python_engine: PythonPluginEngine,
 }
 
@@ -24,12 +26,18 @@ impl PluginEngine {
     pub fn new(builtin_dir: Option<PathBuf>, user_dir: PathBuf) -> Self {
         Self {
             plugins: HashMap::new(),
+            aliases: HashMap::new(),
             python_engine: PythonPluginEngine::new(builtin_dir, user_dir),
         }
     }
 
     pub fn register(&mut self, plugin: RustPlugin) {
-        self.plugins.insert(plugin.id.clone(), plugin);
+        let id = plugin.id.clone();
+        self.plugins.insert(id.clone(), plugin);
+    }
+
+    pub fn register_alias(&mut self, alias: &str, target_id: &str) {
+        self.aliases.insert(alias.to_string(), target_id.to_string());
     }
 
     #[allow(dead_code)]
@@ -70,8 +78,16 @@ impl PluginEngine {
         data: Vec<serde_json::Value>,
         config: serde_json::Value,
     ) -> ProcessResult {
+        // Resolve alias
+        let resolved = self
+            .aliases
+            .get(processor_type)
+            .map(|s| s.as_str())
+            .unwrap_or(processor_type)
+            .to_string();
+
         // Try Python plugin (prefixed with "py-")
-        if let Some(py_id) = processor_type.strip_prefix("py-") {
+        if let Some(py_id) = resolved.strip_prefix("py-") {
             if self.python_engine.get_plugin(py_id).is_some() {
                 return match self
                     .python_engine
@@ -91,25 +107,8 @@ impl PluginEngine {
             }
         }
 
-        // Direct dispatch for built-in processor types that are not
-        // registered under a py- prefix or self.plugins key.
-        if processor_type == "generate-excel-file" {
-            return match excel_export_plugin(data, config) {
-                Ok(result_data) => ProcessResult {
-                    success: true,
-                    data: result_data,
-                    error: None,
-                },
-                Err(e) => ProcessResult {
-                    success: false,
-                    data: vec![],
-                    error: Some(e),
-                },
-            };
-        }
-
-        // Fall back to Rust built-in plugin
-        if let Some(plugin) = self.plugins.get(processor_type) {
+        // Dispatch to registered Rust plugin
+        if let Some(plugin) = self.plugins.get(&resolved) {
             return match (plugin.execute)(data, config) {
                 Ok(result_data) => ProcessResult {
                     success: true,
@@ -228,487 +227,90 @@ impl PluginEngine {
     }
 }
 
-/// Static processor dispatch for use outside PluginEngine
-/// (used by the new repository-based pipeline)
-/// Static processor dispatch — wraps Result<Vec<Value>, String> into ProcessResult
-pub fn execute_processor_static(
-    processor_type: &str,
-    data: Vec<serde_json::Value>,
-    config: serde_json::Value,
-) -> ProcessResult {
-    let result = match processor_type {
-        "deduplicate" | "rust-deduplicate" => deduplicate_plugin(data, config),
-        "filter" | "rust-filter" => filter_plugin(data, config),
-        "sort" | "rust-sort" => sort_plugin(data, config),
-        "limit" | "rust-limit" => limit_plugin(data, config),
-        "excel-export" | "rust-excel-export" | "generate-excel-file" => {
-            excel_export_plugin(data, config)
-        }
-        _ => return ProcessResult { success: true, data, error: None },
-    };
-    match result {
-        Ok(data) => ProcessResult { success: true, data, error: None },
-        Err(e) => ProcessResult { success: false, data: vec![], error: Some(e) },
-    }
-}
+
 
 impl PluginEngine {
     // ── Presets ───────────────────────────────────────────────────
-    // FLOW RULES (all presets must obey):
-    //  1. start           → repository-node   (singleton; auto-created by UI)
-    //  2. repository-node → worker            (only valid repository target)
-    //  3. extractor       → worker            (feeds INTO worker, not the other way)
-    //  4. worker          → processor         (pipeline output)
-    //  5. processor       → processor         (vertical chain)
-    // The "completion" node is AUTO-MANAGED by the UI — never include it in presets.
-    // Repository node id MUST be "repository-node" (matches REPOSITORY_NODE_ID in App.tsx).
 
     pub fn list_presets(&mut self) -> Vec<serde_json::Value> {
         let mut presets = Vec::new();
 
-        presets.push(serde_json::json!({
-            "id": "demo-project",
-            "name": "Demo Project",
-            "description": "A fully self-contained demo showcasing the CrawlFlow pipeline. No network, no Python — just built-in sample data and processors. Click Run Demo to see results.",
-            "icon": "PlayIcon",
-            "icon_color": "#22c55e",
-            "source": "builtin",
-            "plugin_id": null,
-            "is_demo": true,
-            "project_settings": {
-                "name": "CrawlFlow Demo",
-                "description": "Self-contained demo — works offline with sample data.",
-                "crawlDelay": 0,
-                "userAgent": "CrawlFlow/1.0",
-                "concurrency": 1,
-                "isDemo": "true"
-            },
-            "nodes": [
-                {
-                    "id": "ds-1",
-                    "type": "start",
-                    "label": "Sample Data",
-                    "position": {"x": 50, "y": 250},
-                    "data": {
-                        "sourceType": "url",
-                        "sourceValue": "demo://internal/sample",
-                        "demoSource": true,
-                        "urlSettings": {
-                            "scope": "current-url",
-                            "excludeExtensions": [],
-                            "excludePatterns": [],
-                            "whitelistPatterns": [],
-                            "domainPolicy": "all",
-                            "domainWhitelist": []
-                        }
-                    }
-                },
-                {
-                    "id": "repository-node",
-                    "type": "repository",
-                    "label": "Raw Data (5 sample items)",
-                    "position": {"x": 50, "y": 300},
-                    "data": {}
-                },
-                {
-                    "id": "worker-1",
-                    "type": "worker",
-                    "label": "Pipeline Worker",
-                    "position": {"x": 50, "y": 550},
-                    "data": {}
-                },
-                {
-                    "id": "proc-0",
-                    "type": "processor",
-                    "label": "Deduplicate",
-                    "position": {"x": 50, "y": 800},
-                    "data": {
-                        "processorType": "rust-deduplicate",
-                        "processorConfig": {"field": "id"}
-                    }
-                },
-                {
-                    "id": "proc-1",
-                    "type": "processor",
-                    "label": "Filter (views > 500)",
-                    "position": {"x": 50, "y": 1050},
-                    "data": {
-                        "processorType": "rust-filter",
-                        "processorConfig": {"field": "views", "operator": "greater_than", "value": "500"}
-                    }
-                },
-                {
-                    "id": "proc-2",
-                    "type": "processor",
-                    "label": "Sort (by views ↓)",
-                    "position": {"x": 50, "y": 1300},
-                    "data": {
-                        "processorType": "rust-sort",
-                        "processorConfig": {"field": "views", "descending": true}
-                    }
-                },
-                {
-                    "id": "proc-3",
-                    "type": "processor",
-                    "label": "Limit (top 3)",
-                    "position": {"x": 50, "y": 1550},
-                    "data": {
-                        "processorType": "rust-limit",
-                        "processorConfig": {"count": 3, "offset": 0}
-                    }
-                },
-                {
-                    "id": "proc-4",
-                    "type": "processor",
-                    "label": "CSV Export",
-                    "position": {"x": 50, "y": 1800},
-                    "data": {
-                        "processorType": "generate-csv-file",
-                        "processorConfig": {"delimiter": ",", "includeHeader": true}
-                    }
-                }
-            ],
-            "edges": [
-                {"id": "e-ds-repo",      "source": "ds-1",            "target": "repository-node"},
-                {"id": "e-repo-worker",  "source": "repository-node", "target": "worker-1"},
-                {"id": "e-worker-proc0", "source": "worker-1",        "target": "proc-0"},
-                {"id": "e-proc0-proc1",  "source": "proc-0",          "target": "proc-1"},
-                {"id": "e-proc1-proc2",  "source": "proc-1",          "target": "proc-2"},
-                {"id": "e-proc2-proc3",  "source": "proc-2",          "target": "proc-3"},
-                {"id": "e-proc3-proc4",  "source": "proc-3",          "target": "proc-4"}
-            ]
-        }));
+        // Collect presets from registered Rust plugins
+        for plugin in self.plugins.values() {
+            for preset in &plugin.presets {
+                presets.push(preset.clone());
+            }
+        }
 
-        presets.push(serde_json::json!({
-            "id": "web-page-scraper",
-            "name": "Web Page Scraper",
-            "description": "Fetch a web page, extract content, and export to CSV.",
-            "icon": "GlobeAltIcon",
-            "icon_color": "#22c55e",
-            "source": "builtin",
-            "plugin_id": null,
-            "project_settings": {
-                "name": "Web Scraper - {url}",
-                "description": "Scrape web pages for structured data.",
-                "crawlDelay": 1000,
-                "userAgent": "CrawlFlow/1.0",
-                "concurrency": 5
-            },
-            "nodes": [
-                {
-                    "id": "ds-1",
-                    "type": "start",
-                    "label": "From URL",
-                    "position": {"x": 50, "y": 50},
-                    "data": {
-                        "sourceType": "url",
-                        "sourceValue": "",
-                        "urlSettings": {
-                            "scope": "current-url",
-                            "excludeExtensions": ["pdf","jpg","png","zip","mp4","svg"],
-                            "excludePatterns": [],
-                            "whitelistPatterns": [],
-                            "domainPolicy": "all",
-                            "domainWhitelist": []
-                        }
-                    }
-                },
-                {
-                    "id": "repository-node",
-                    "type": "repository",
-                    "label": "Raw Data Repository",
-                    "position": {"x": 50, "y": 300},
-                    "data": {}
-                },
-                {
-                    "id": "worker-1",
-                    "type": "worker",
-                    "label": "Data Router",
-                    "position": {"x": 50, "y": 550},
-                    "data": {}
-                },
-                {
-                    "id": "ext-1",
-                    "type": "html-data-extractor",
-                    "label": "Extract Data",
-                    "position": {"x": -40, "y": 425},
-                    "data": {
-                        "presets": [],
-                        "customRules": []
-                    }
-                },
-                {
-                    "id": "proc-1",
-                    "type": "processor",
-                    "label": "CSV Export",
-                    "position": {"x": 50, "y": 800},
-                    "data": {
-                        "processorType": "generate-csv-file",
-                        "processorConfig": {"delimiter": ",", "includeHeader": true}
-                    }
-                }
-            ],
-            "edges": [
-                {"id": "e-ds-repo",     "source": "ds-1",            "target": "repository-node"},
-                {"id": "e-repo-worker", "source": "repository-node", "target": "worker-1"},
-                {"id": "e-ext-worker",  "source": "ext-1",           "target": "worker-1"},
-                {"id": "e-worker-proc", "source": "worker-1",        "target": "proc-1"}
-            ]
-        }));
-
-        presets.push(serde_json::json!({
-            "id": "rss-monitor",
-            "name": "RSS Feed Monitor",
-            "description": "Monitor an RSS feed, filter items, and save to database.",
-            "icon": "RssIcon",
-            "icon_color": "#f97316",
-            "source": "builtin",
-            "plugin_id": null,
-            "project_settings": {
-                "name": "RSS Monitor - {url}",
-                "description": "Monitor RSS feeds for new content.",
-                "crawlDelay": 3600000,
-                "userAgent": "CrawlFlow/1.0",
-                "concurrency": 2
-            },
-            "nodes": [
-                {
-                    "id": "ds-1",
-                    "type": "start",
-                    "label": "RSS Feed",
-                    "position": {"x": 50, "y": 50},
-                    "data": {
-                        "sourceType": "url",
-                        "sourceValue": "",
-                        "pluginSourceType": "py-rss",
-                        "pluginConfig": {}
-                    }
-                },
-                {
-                    "id": "repository-node",
-                    "type": "repository",
-                    "label": "Raw Data Repository",
-                    "position": {"x": 50, "y": 300},
-                    "data": {}
-                },
-                {
-                    "id": "worker-1",
-                    "type": "worker",
-                    "label": "Data Router",
-                    "position": {"x": 50, "y": 550},
-                    "data": {}
-                },
-                {
-                    "id": "proc-1",
-                    "type": "processor",
-                    "label": "Filter (non-empty title)",
-                    "position": {"x": 50, "y": 800},
-                    "data": {
-                        "processorType": "rust-filter",
-                        "processorConfig": {
-                            "field": "title",
-                            "operator": "not_empty",
-                            "value": ""
-                        }
-                    }
-                },
-                {
-                    "id": "proc-2",
-                    "type": "processor",
-                    "label": "Save to DB",
-                    "position": {"x": 50, "y": 1050},
-                    "data": {
-                        "processorType": "save-to-database",
-                        "processorConfig": {
-                            "strategy": "upsert"
-                        }
-                    }
-                }
-            ],
-            "edges": [
-                {"id": "e-ds-repo",      "source": "ds-1",            "target": "repository-node"},
-                {"id": "e-repo-worker",  "source": "repository-node", "target": "worker-1"},
-                {"id": "e-worker-proc1", "source": "worker-1",        "target": "proc-1"},
-                {"id": "e-proc1-proc2",  "source": "proc-1",          "target": "proc-2"}
-            ]
-        }));
-
-        presets.push(serde_json::json!({
-            "id": "web-page-to-excel",
-            "name": "Web Page to Excel",
-            "description": "Fetch a web page, extract content, and export to Excel (.xlsx).",
-            "icon": "TableCellsIcon",
-            "icon_color": "#059669",
-            "source": "builtin",
-            "plugin_id": null,
-            "project_settings": {
-                "name": "Web to Excel - {url}",
-                "description": "Scrape web pages to Excel spreadsheets.",
-                "crawlDelay": 1000,
-                "userAgent": "CrawlFlow/1.0",
-                "concurrency": 5
-            },
-            "nodes": [
-                {
-                    "id": "ds-1",
-                    "type": "start",
-                    "label": "From URL",
-                    "position": {"x": 50, "y": 50},
-                    "data": {
-                        "sourceType": "url",
-                        "sourceValue": "",
-                        "urlSettings": {
-                            "scope": "current-url",
-                            "excludeExtensions": ["pdf","jpg","png","zip","mp4","svg"],
-                            "excludePatterns": [],
-                            "whitelistPatterns": [],
-                            "domainPolicy": "all",
-                            "domainWhitelist": []
-                        }
-                    }
-                },
-                {
-                    "id": "repository-node",
-                    "type": "repository",
-                    "label": "Raw Data Repository",
-                    "position": {"x": 50, "y": 300},
-                    "data": {}
-                },
-                {
-                    "id": "worker-1",
-                    "type": "worker",
-                    "label": "Data Router",
-                    "position": {"x": 50, "y": 550},
-                    "data": {}
-                },
-                {
-                    "id": "ext-1",
-                    "type": "html-data-extractor",
-                    "label": "Extract Data",
-                    "position": {"x": -40, "y": 425},
-                    "data": {
-                        "presets": [],
-                        "customRules": []
-                    }
-                },
-                {
-                    "id": "proc-1",
-                    "type": "processor",
-                    "label": "Excel Export",
-                    "position": {"x": 50, "y": 800},
-                    "data": {
-                        "processorType": "generate-excel-file",
-                        "processorConfig": {"sheetName": "Sheet1", "includeHeader": true}
-                    }
-                }
-            ],
-            "edges": [
-                {"id": "e-ds-repo",     "source": "ds-1",            "target": "repository-node"},
-                {"id": "e-repo-worker", "source": "repository-node", "target": "worker-1"},
-                {"id": "e-ext-worker",  "source": "ext-1",           "target": "worker-1"},
-                {"id": "e-worker-proc", "source": "worker-1",        "target": "proc-1"}
-            ]
-        }));
-
-        presets.push(serde_json::json!({
-            "id": "ecommerce-tracker",
-            "name": "E-commerce Tracker",
-            "description": "Track product prices and availability from e-commerce sites.",
-            "icon": "ShoppingCartIcon",
-            "icon_color": "#6366f1",
-            "source": "builtin",
-            "plugin_id": null,
-            "project_settings": {
-                "name": "Price Tracker - {url}",
-                "description": "Track e-commerce product prices.",
-                "crawlDelay": 86400000,
-                "userAgent": "CrawlFlow/1.0",
-                "concurrency": 3
-            },
-            "nodes": [
-                {
-                    "id": "ds-1",
-                    "type": "start",
-                    "label": "Product URL",
-                    "position": {"x": 50, "y": 50},
-                    "data": {
-                        "sourceType": "url",
-                        "sourceValue": "",
-                        "urlSettings": {
-                            "scope": "current-url",
-                            "excludeExtensions": [],
-                            "excludePatterns": [],
-                            "whitelistPatterns": [],
-                            "domainPolicy": "all",
-                            "domainWhitelist": []
-                        }
-                    }
-                },
-                {
-                    "id": "repository-node",
-                    "type": "repository",
-                    "label": "Raw Data Repository",
-                    "position": {"x": 50, "y": 300},
-                    "data": {}
-                },
-                {
-                    "id": "worker-1",
-                    "type": "worker",
-                    "label": "Data Router",
-                    "position": {"x": 50, "y": 550},
-                    "data": {}
-                },
-                {
-                    "id": "ext-1",
-                    "type": "html-data-extractor",
-                    "label": "Extract Product Info",
-                    "position": {"x": -40, "y": 425},
-                    "data": {
-                        "presets": ["ecommerce-product"],
-                        "customRules": [
-                            {"id": "r1", "name": "Title",        "extractFrom": "html-element", "selector": "h1",                  "extract": "text"},
-                            {"id": "r2", "name": "Price",        "extractFrom": "html-element", "selector": ".price",              "extract": "text"},
-                            {"id": "r3", "name": "Availability", "extractFrom": "html-element", "selector": ".stock",              "extract": "text"},
-                            {"id": "r4", "name": "Image",        "extractFrom": "html-element", "selector": ".product-image img", "extract": "attribute", "attribute": "src"}
-                        ]
-                    }
-                },
-                {
-                    "id": "proc-1",
-                    "type": "processor",
-                    "label": "Deduplicate",
-                    "position": {"x": 50, "y": 800},
-                    "data": {
-                        "processorType": "rust-deduplicate",
-                        "processorConfig": {"field": "Title"}
-                    }
-                },
-                {
-                    "id": "proc-2",
-                    "type": "processor",
-                    "label": "CSV Export",
-                    "position": {"x": 50, "y": 1050},
-                    "data": {
-                        "processorType": "generate-csv-file",
-                        "processorConfig": {"delimiter": ",", "includeHeader": true}
-                    }
-                }
-            ],
-            "edges": [
-                {"id": "e-ds-repo",      "source": "ds-1",            "target": "repository-node"},
-                {"id": "e-repo-worker",  "source": "repository-node", "target": "worker-1"},
-                {"id": "e-ext-worker",   "source": "ext-1",           "target": "worker-1"},
-                {"id": "e-worker-proc1", "source": "worker-1",        "target": "proc-1"},
-                {"id": "e-proc1-proc2",  "source": "proc-1",          "target": "proc-2"}
-            ]
-        }));
-
-        // Plugin presets
+        // Collect presets from Python plugins
         for p in self.python_engine.collect_presets() {
             presets.push(p);
         }
 
         presets
+    }
+}
+
+// ── Centralized alias resolution ──────────────────────────
+/// Resolve a processor-type alias to its canonical plugin ID.
+/// This is the single source of truth for all alias mappings.
+/// Returns the input unchanged if no alias is registered.
+pub fn resolve_processor_alias(processor_type: &str) -> &str {
+    match processor_type {
+        "deduplicate" => "rust-deduplicate",
+        "filter" => "rust-filter",
+        "sort" => "rust-sort",
+        "limit" => "rust-limit",
+        "excel-export" | "generate-excel-file" => "rust-excel-export",
+        _ => processor_type,
+    }
+}
+
+/// Check whether a processor type is an export-oriented plugin
+/// (one that writes output files rather than transforming data).
+pub fn is_export_processor(processor_type: &str) -> bool {
+    matches!(
+        resolve_processor_alias(processor_type),
+        "rust-excel-export"
+    )
+}
+
+/// Execute a processor by type, resolving aliases and dispatching to
+/// the correct built-in implementation. Used from contexts that do not
+/// hold a `PluginEngine` reference (e.g. the repository pipeline).
+pub fn execute_processor_simple(
+    processor_type: &str,
+    data: Vec<serde_json::Value>,
+    config: serde_json::Value,
+) -> ProcessResult {
+    let resolved = resolve_processor_alias(processor_type);
+    let result = match resolved {
+        "rust-deduplicate" => deduplicate_plugin(data, config),
+        "rust-filter" => filter_plugin(data, config),
+        "rust-sort" => sort_plugin(data, config),
+        "rust-limit" => limit_plugin(data, config),
+        "rust-excel-export" => excel_export_plugin(data, config),
+        other => {
+            // Unknown type – pass data through (legacy behaviour for
+            // frontend-side types like generate-csv-file, save-to-database).
+            return ProcessResult {
+                success: true,
+                data,
+                error: Some(format!("Unknown processor type '{}' – passed through", other)),
+            };
+        }
+    };
+    match result {
+        Ok(data) => ProcessResult {
+            success: true,
+            data,
+            error: None,
+        },
+        Err(e) => ProcessResult {
+            success: false,
+            data: vec![],
+            error: Some(e),
+        },
     }
 }
 
@@ -1024,6 +626,7 @@ pub fn register_builtin_plugins(engine: &mut PluginEngine) {
         version: "1.0.0".to_string(),
         description: "Remove duplicate items based on a field".to_string(),
         capabilities: vec!["processor".to_string()],
+        presets: vec![],
         execute: deduplicate_plugin,
     });
 
@@ -1033,6 +636,7 @@ pub fn register_builtin_plugins(engine: &mut PluginEngine) {
         version: "1.0.0".to_string(),
         description: "Filter data by field conditions".to_string(),
         capabilities: vec!["processor".to_string()],
+        presets: vec![],
         execute: filter_plugin,
     });
 
@@ -1042,6 +646,7 @@ pub fn register_builtin_plugins(engine: &mut PluginEngine) {
         version: "1.0.0".to_string(),
         description: "Sort data by a field".to_string(),
         capabilities: vec!["processor".to_string()],
+        presets: vec![],
         execute: sort_plugin,
     });
 
@@ -1051,6 +656,7 @@ pub fn register_builtin_plugins(engine: &mut PluginEngine) {
         version: "1.0.0".to_string(),
         description: "Limit and offset data rows".to_string(),
         capabilities: vec!["processor".to_string()],
+        presets: vec![],
         execute: limit_plugin,
     });
 
@@ -1060,8 +666,16 @@ pub fn register_builtin_plugins(engine: &mut PluginEngine) {
         version: "1.0.0".to_string(),
         description: "Export data to Excel (.xlsx) format".to_string(),
         capabilities: vec!["processor".to_string(), "export".to_string()],
+        presets: vec![],
         execute: excel_export_plugin,
     });
+
+    engine.register_alias("deduplicate", "rust-deduplicate");
+    engine.register_alias("filter", "rust-filter");
+    engine.register_alias("sort", "rust-sort");
+    engine.register_alias("limit", "rust-limit");
+    engine.register_alias("excel-export", "rust-excel-export");
+    engine.register_alias("generate-excel-file", "rust-excel-export");
 }
 
 pub fn excel_export_plugin(

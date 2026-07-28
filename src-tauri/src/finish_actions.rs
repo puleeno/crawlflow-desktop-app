@@ -561,12 +561,12 @@ pub(crate) fn extract_finish_actions(
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 match processor_type {
-                    // Excel/CSV export is handled per-item inside the worker's
+                    // Export processors are handled per-item inside the worker's
                     // processor chain (see `excel_export_plugin` which accumulates
                     // rows across calls). A terminal FinishAction export here
                     // would write a SECOND file for the same data, so we only
                     // log and let the worker-chain export be the single source.
-                    "generate-excel-file" | "generate-csv-file" => {
+                    _ if crate::plugins::is_export_processor(processor_type) => {
                         log::info!(
                             "[extract_finish_actions] processor '{}' ({}) is exported per-item by the worker chain; skipping terminal export to avoid a duplicate file",
                             node.id,
