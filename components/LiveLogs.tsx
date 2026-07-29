@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { XMarkIcon, ChevronDownIcon, ChevronUpIcon } from './icons';
-import { ProjectWsClient } from '@/wsClient';
 
 interface LogEntry {
   id: number;
@@ -44,6 +43,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
   // cycle, so WebSocket log frames would otherwise arrive with ids lower than
   // the DB-fetched history and be mistaken for duplicates and dropped.
   const seenRef = useRef<Set<string>>(new Set());
+  const pollLastIdRef = useRef(0);
 
   // Fetch existing logs from DB on mount (captures background service logs)
   useEffect(() => {
@@ -60,6 +60,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
         if (existing.length > 0) {
           for (const l of existing) seenRef.current.add(`${l.timestamp}|${l.message}`);
           setLogs(existing);
+          pollLastIdRef.current = existing.reduce((max, l) => Math.max(max, l.id), 0);
         }
       } catch (e) {
         // Not in Tauri or DB not available
@@ -119,59 +120,41 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
     };
   }, [projectId]);
 
-  // Realtime logs over WebSocket (the headless service cannot emit Tauri
-  // events, so its logs only arrived via DB polling before). The WS server
-  // pushes every log frame live. We poll `get_service_status_cmd` for the
-  // ws_port and (re)connect as soon as it is available — the service may
-  // start its WS server after the GUI opens this panel, so we retry.
+  // Poll for new logs from DB every 2s (reliable for headless service mode)
   useEffect(() => {
-    let client: ProjectWsClient | null = null;
     let cancelled = false;
-    let connectedPort = 0;
 
-    const ensureConnected = (port: number) => {
-      if (port === 0 || cancelled) return;
-      if (connectedPort === port && client) return; // already connected
-      client?.disconnect();
-      connectedPort = port;
-      client = new ProjectWsClient(projectId, {
-        onLog: (payload) => {
-          if (!payload || typeof payload.message !== 'string') return;
-          const key = `${payload.timestamp}|${payload.message}`;
-          if (seenRef.current.has(key)) return;
-          seenRef.current.add(key);
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const { invoke } = await import('../lib/platform');
+        const newLogs = await invoke<LogEntry[]>('get_project_logs_cmd', {
+          projectId,
+          sinceId: pollLastIdRef.current || null,
+          levelFilter: null,
+          limit: 100,
+        });
+        if (newLogs.length > 0) {
+          for (const l of newLogs) {
+            if (l.id > pollLastIdRef.current) pollLastIdRef.current = l.id;
+          }
           setLogs(prev => {
-            const next = [...prev, payload as LogEntry];
+            const next = [...prev];
+            for (const l of newLogs) {
+              const key = `${l.timestamp}|${l.message}`;
+              if (seenRef.current.has(key)) continue;
+              seenRef.current.add(key);
+              next.push(l);
+            }
             if (next.length > 500) next.splice(0, next.length - 500);
             return next;
           });
-        },
-        onStatus: (payload) => {
-          if (payload?.status) setServiceStatus(payload.status);
-          if (payload) setServiceInfo(payload);
-        },
-        onClose: () => { connectedPort = 0; },
-      });
-      client.connect(port);
+        }
+      } catch { /* DB not available */ }
     };
 
-    const pollPort = async () => {
-      try {
-        const { invoke } = await import('../lib/platform');
-        const info: any = await invoke('get_service_status_cmd', { projectId });
-        ensureConnected(info?.ws_port || 0);
-      } catch { /* ignore */ }
-    };
-
-    pollPort();
-    const timer = setInterval(pollPort, 2000); // retry until WS port is up
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-      client?.disconnect();
-      client = null;
-    };
+    const timer = setInterval(poll, 2000);
+    return () => { cancelled = true; clearInterval(timer); };
   }, [projectId]);
 
   // Auto-scroll
