@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crawlflow_lib::services::get_export_settings;
+use crawlflow_lib::services::{get_export_settings, read_project_refresh_strategy};
 use crawlflow_lib::ws::{self, WsHub};
 
 /// Current UTC timestamp as an ISO-8601-ish string for progress/status stamps.
@@ -612,6 +612,14 @@ async fn run_project_loop(
     println!("[SERVICE] Resolving export settings for project '{}'...", proj.name);
     let export_settings = get_export_settings(&project_id, &db_path);
 
+    // Resolve refresh strategy (update interval etc.)
+    let (refresh_strategy, update_method, refresh_interval) =
+        read_project_refresh_strategy(&db_path);
+    println!(
+        "[SERVICE] Refresh strategy: {} / method: {} / interval: {}s",
+        refresh_strategy, update_method, refresh_interval
+    );
+
     println!("[SERVICE] Loading enabled plugins...");
     let enabled_plugin_ids = match get_enabled_python_plugin_ids() {
         Ok(plugin_ids) => plugin_ids,
@@ -693,8 +701,23 @@ async fn run_project_loop(
             })
             .unwrap_or_else(|_| "run".to_string());
 
-        if is_editing || service_control == "paused" || service_control == "stop" {
-            let reason = if is_editing {
+        // Check if project has been disabled while the service was running
+        let project_enabled = conn_result
+            .as_ref()
+            .map(|conn| {
+                conn.query_row(
+                    "SELECT status = 'enabled' FROM projects WHERE id = ?1",
+                    rusqlite::params![&project_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
+        if is_editing || service_control == "paused" || service_control == "stop" || !project_enabled {
+            let reason = if !project_enabled {
+                "disabled by user"
+            } else if is_editing {
                 "open in desktop app"
             } else if service_control == "paused" {
                 "paused by user"
@@ -707,8 +730,8 @@ async fn run_project_loop(
                 "service",
                 &format!("Project '{}' is {}. Skipping cycle.", proj.name, reason),
             );
-            // If stopped, exit the loop entirely
-            if service_control == "stop" {
+            // If stopped or disabled, exit the loop entirely
+            if service_control == "stop" || !project_enabled {
                 break;
             }
             for _ in 0..interval_secs {
@@ -745,7 +768,11 @@ async fn run_project_loop(
                 let config = crawlflow_lib::pipeline::PipelineConfig {
                     nodes,
                     edges,
-                    settings: serde_json::json!({}),
+                    settings: serde_json::json!({
+                        "refresh_strategy": refresh_strategy,
+                        "update_method": update_method,
+                        "refresh_interval": refresh_interval,
+                    }),
                 };
                 // Reset cancellation before execution
                 cancellation.store(false, Ordering::Relaxed);
@@ -990,6 +1017,15 @@ async fn run_project_loop(
                                         }
                                     }
                                 }
+                            }
+
+                            // For 'update_only' strategy: stop after 1 successful cycle.
+                            // For 'refresh' / 'refresh_update': keep looping.
+                            if refresh_strategy == "update_only" {
+                                let _ = conn.execute(
+                                    "UPDATE project_runtime SET service_control = 'stop' WHERE project_id = ?1",
+                                    rusqlite::params![&project_id],
+                                );
                             }
                         } else {
                         let err = result.error.clone().unwrap_or_default();

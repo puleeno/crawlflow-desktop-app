@@ -1900,6 +1900,81 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                 </div>
             </CollapsibleSection>
 
+            <CollapsibleSection title="Refresh">
+                <div className="mb-4">
+                    <label className={commonLabelClasses}>Strategy</label>
+                    <div className="flex flex-col gap-2">
+                        {([
+                            { value: 'refresh', label: 'Refresh', desc: 'Re-crawl everything every cycle' },
+                            { value: 'refresh_update', label: 'Refresh + Update', desc: 'Re-crawl, process only new items' },
+                            { value: 'update_only', label: 'Update Only', desc: 'Check for new data, then stop' },
+                        ] as const).map((opt) => (
+                            <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => onUpdateProjectSettings({ refreshStrategy: opt.value })}
+                                disabled={isRunning}
+                                className={`text-left p-3 rounded-md border transition-colors disabled:opacity-50 ${
+                                    (projectSettings.refreshStrategy || 'refresh') === opt.value
+                                        ? 'bg-blue-600 text-white border-blue-600'
+                                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                }`}
+                            >
+                                <div className="font-semibold text-sm">{opt.label}</div>
+                                <div className="text-xs mt-0.5 opacity-80">{opt.desc}</div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {(projectSettings.refreshStrategy || 'refresh') === 'update_only' && (
+                    <div className="mb-4">
+                        <label className={commonLabelClasses}>Update Method</label>
+                        <div className="flex gap-2">
+                            {([
+                                { value: 'check_first_page_until_duplicate', label: 'From page 1', desc: 'Scan from page 1 until hitting duplicates' },
+                                { value: 'check_last_page', label: 'From last page', desc: 'Continue from last crawled page' },
+                            ] as const).map((opt) => (
+                                <button
+                                    key={opt.value}
+                                    type="button"
+                                    onClick={() => onUpdateProjectSettings({ updateMethod: opt.value })}
+                                    disabled={isRunning}
+                                    className={`flex-1 p-2 rounded-md text-sm font-semibold border transition-colors disabled:opacity-50 ${
+                                        (projectSettings.updateMethod || 'check_first_page_until_duplicate') === opt.value
+                                            ? 'bg-blue-600 text-white border-blue-600'
+                                            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    {opt.label}
+                                </button>
+                            ))}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                            {(projectSettings.updateMethod || 'check_first_page_until_duplicate') === 'check_last_page'
+                                ? 'Start from the last page + 1 and go forward.'
+                                : 'Scan from page 1, stop when all URLs on a page already exist in DB.'}
+                        </p>
+                    </div>
+                )}
+
+                {(projectSettings.refreshStrategy || 'refresh') !== 'update_only' && (
+                    <div>
+                        <label className={commonLabelClasses}>Refresh Interval (seconds)</label>
+                        <input
+                            type="number"
+                            min="60"
+                            step="60"
+                            value={projectSettings.refreshInterval ?? 3600}
+                            onChange={e => onUpdateProjectSettings({ refreshInterval: parseInt(e.target.value) || 3600 })}
+                            className={commonInputClasses}
+                            disabled={isRunning}
+                        />
+                        <p className="text-xs text-gray-500 mt-1">How often the service re-runs this project.</p>
+                    </div>
+                )}
+            </CollapsibleSection>
+
             <CollapsibleSection title="Actions">
                 <div className="flex gap-2">
                     <button onClick={onExport} className={`${commonButtonClasses} bg-indigo-600 hover:bg-indigo-700 flex items-center justify-center gap-2`}>

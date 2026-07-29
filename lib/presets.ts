@@ -50,6 +50,9 @@ function getDefaultPresets(): Preset[] {
                 userAgent: 'CrawlFlow/1.0',
                 concurrency: 5,
                 executionMode: 'queue',
+                refreshStrategy: 'refresh',
+                updateMethod: 'check_first_page_until_duplicate',
+                refreshInterval: 3600,
             },
             nodes: [
                 {
@@ -128,6 +131,9 @@ function getDefaultPresets(): Preset[] {
                 userAgent: 'CrawlFlow/1.0',
                 concurrency: 2,
                 executionMode: 'queue',
+                refreshStrategy: 'refresh_update',
+                updateMethod: 'check_first_page_until_duplicate',
+                refreshInterval: 3600,
             },
             nodes: [
                 {
@@ -200,6 +206,9 @@ function getDefaultPresets(): Preset[] {
                 userAgent: 'CrawlFlow/1.0',
                 concurrency: 5,
                 executionMode: 'queue',
+                refreshStrategy: 'refresh',
+                updateMethod: 'check_first_page_until_duplicate',
+                refreshInterval: 3600,
             },
             nodes: [
                 {
@@ -275,6 +284,9 @@ function getDefaultPresets(): Preset[] {
                 userAgent: 'CrawlFlow/1.0',
                 concurrency: 3,
                 executionMode: 'queue',
+                refreshStrategy: 'refresh_update',
+                updateMethod: 'check_last_page',
+                refreshInterval: 86400,
             },
             nodes: [
                 {

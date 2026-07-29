@@ -151,6 +151,9 @@ const App: React.FC = () => {
     executionMode: 'queue',
     groupExport: true,
     groupFormat: 'name',
+    refreshStrategy: 'refresh',
+    updateMethod: 'check_first_page_until_duplicate',
+    refreshInterval: 3600,
   });
 
   // State for UI panels

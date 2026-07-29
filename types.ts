@@ -51,6 +51,10 @@ export interface ProjectSettings {
     // Per-project export grouping (global export folder is configured in App Settings)
     groupExport?: boolean;
     groupFormat?: 'id' | 'name' | 'both';
+    // Refresh strategy
+    refreshStrategy?: 'refresh' | 'refresh_update' | 'update_only';
+    updateMethod?: 'check_last_page' | 'check_first_page_until_duplicate';
+    refreshInterval?: number; // seconds between cycles
 }
 
 

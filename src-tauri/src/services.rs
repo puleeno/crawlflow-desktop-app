@@ -144,6 +144,34 @@ fn read_project_export_settings(project_db_path: &Path) -> (bool, String) {
     (group_export, group_format)
 }
 
+/// Read refresh strategy from the per-project `project_settings`.
+/// Returns the strategy string and optional update method / interval.
+pub fn read_project_refresh_strategy(project_db_path: &Path) -> (String, String, u64) {
+    let conn = match rusqlite::Connection::open(project_db_path).ok() {
+        Some(c) => c,
+        None => return ("refresh".into(), "check_first_page_until_duplicate".into(), 3600),
+    };
+    let get = |key: &str| -> Option<String> {
+        conn.query_row(
+            "SELECT value FROM project_settings WHERE key = ?1",
+            [key],
+            |row| row.get(0),
+        )
+        .ok()
+    };
+    let strategy = get("refresh_strategy")
+        .filter(|s| matches!(s.as_str(), "refresh" | "refresh_update" | "update_only"))
+        .unwrap_or_else(|| "refresh".into());
+    let update_method = get("update_method")
+        .filter(|s| matches!(s.as_str(), "check_last_page" | "check_first_page_until_duplicate"))
+        .unwrap_or_else(|| "check_first_page_until_duplicate".into());
+    let interval = get("refresh_interval")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(3600)
+        .max(60);
+    (strategy, update_method, interval)
+}
+
 /// Resolve the full export settings for a project run.
 pub fn get_export_settings(project_id: &str, project_db_path: &Path) -> ExportSettings {
     let export_dir = read_global_export_dir();

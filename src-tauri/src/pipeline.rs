@@ -749,16 +749,25 @@ pub async fn execute_repository_pipeline(
             }
             // If there are 'done' URL items but no 'pending' items, reset them so the
             // pipeline can re-fetch detail pages (e.g. after extract_rules were added).
-            let pending_count = r.count_by_status("pending").unwrap_or(0);
-            let done_url_count = r.count_done_url_items().unwrap_or(0);
-            if pending_count == 0 && done_url_count > 0 {
-                if let Ok(n) = r.reset_done_url_items_to_pending() {
-                    if n > 0 {
-                        log_manager.info(
-                            project_id,
-                            "pipeline",
-                            &format!("Reset {} done URL items -> pending for re-processing", n),
-                        );
+            // Skip this for 'update_only' and 'refresh_update' strategies to avoid
+            // re-processing already-done items on every cycle.
+            let refresh_strategy = config
+                .settings
+                .get("refresh_strategy")
+                .and_then(|v| v.as_str())
+                .unwrap_or("refresh");
+            if refresh_strategy == "refresh" {
+                let pending_count = r.count_by_status("pending").unwrap_or(0);
+                let done_url_count = r.count_done_url_items().unwrap_or(0);
+                if pending_count == 0 && done_url_count > 0 {
+                    if let Ok(n) = r.reset_done_url_items_to_pending() {
+                        if n > 0 {
+                            log_manager.info(
+                                project_id,
+                                "pipeline",
+                                &format!("Reset {} done URL items -> pending for re-processing", n),
+                            );
+                        }
                     }
                 }
             }
@@ -892,12 +901,29 @@ pub async fn execute_repository_pipeline(
             if let Some(ref pst) = plugin_source_type {
                 if let Some(engine) = python_engine.as_deref_mut() {
                     let plugin_id = pst.strip_prefix("py-").unwrap_or(pst);
-                    let call_config = crate::pipeline_config::build_plugin_config(
+                    let mut call_config = crate::pipeline_config::build_plugin_config(
                         &node.data,
                         &source_value,
                         project_id,
                         db_path.to_str().unwrap_or(""),
                     );
+
+                    // Inject refresh strategy so Python plugins know how to
+                    // paginate (full re-crawl vs update-only, etc.).
+                    if let Some(obj) = call_config.as_object_mut() {
+                        let refresh_strategy = config
+                            .settings
+                            .get("refresh_strategy")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("refresh");
+                        let update_method = config
+                            .settings
+                            .get("update_method")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("check_first_page_until_duplicate");
+                        obj.insert("refresh_strategy".into(), serde_json::json!(refresh_strategy));
+                        obj.insert("update_method".into(), serde_json::json!(update_method));
+                    }
 
                     // Warn if shop_url is missing from pluginConfig and source_value is empty
                     let plugin_config_has_shop_url = node
