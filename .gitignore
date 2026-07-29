@@ -30,3 +30,4 @@ dist-ssr
 # Bundled Python (build artifacts)
 /src-tauri/python/
 /src-tauri/libs/
+__pycache__

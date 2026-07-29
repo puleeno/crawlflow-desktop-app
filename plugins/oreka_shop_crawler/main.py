@@ -1004,12 +1004,16 @@ def on_load(config=None):
         crawlflow.log(f"[OrekaShop] register_filter failed: {e}", "warn")
 
 
-def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headless=None, project_id=None, db_path=None):
+def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headless=None, project_id=None, db_path=None, refresh_strategy="refresh", update_method="check_first_page_until_duplicate"):
     """Tu crawl toan bo san pham cua shop (phan trang + trich product URL + parse).
 
-    Tra ve danh sach cac dict san pham (da duoc parse day du). Logic phan trang
-    hoan toan nam trong Python plugin (linh dong, khong phu thuoc Rust Stage B).
-    client_type: 'reqwest' (mac dinh) hoac 'chrome' — su dung 2 kenh fetch.
+    refresh_strategy:
+        'refresh'           — crawl lai hoan toan tu trang 1
+        'refresh_update'    — crawl lai hoan toan (pipeline skip re-process)
+        'update_only'       — chi quet data moi, dung theo update_method
+    update_method (cho update_only):
+        'check_first_page_until_duplicate' — quet tu trang 1, dung khi phat hien duplicate
+        'check_last_page'                  — quet tu trang cuoi cung, dung khi het san pham
     """
     def _fetch(url):
         # Goi Python SDK fetch_url voi kem client_type de chon kenh reqwest/chrome.
@@ -1080,8 +1084,14 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
             "info",
         )
 
+        # Neu khong tim thay URL nao => het san pham
+        if not product_urls and refresh_strategy != "refresh":
+            crawlflow.log(f"[OrekaShop] Khong con san pham, dung tai trang {page_num}", "info")
+            break
+
         # Luu tung luot product URL vao DB NGAY de progress bar (pending)
         # cap nhat realtime thay vi chi nhay 1 lan sau khi xong het.
+        saved = 0
         if product_urls and project_id and db_path:
             raw_items = []
             for p_url in product_urls:
@@ -1099,6 +1109,11 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
                 )
             except Exception as e:
                 crawlflow.log(f"[OrekaShop] Loi save_raw_items: {e}", "warn")
+
+        # Voi chien luoc update_only: dung neu khong co URL moi nao duoc insert
+        if refresh_strategy == "update_only" and saved == 0 and product_urls:
+            crawlflow.log(f"[OrekaShop] Khong con URL moi, dung tai trang {page_num}", "info")
+            break
 
         # Danh dau page nay da hoan thanh de ho tro resume.
         if project_id:
@@ -1182,7 +1197,14 @@ def fetch_data(config_json):
         "info",
     )
 
-    products = _crawl_all_products(shop_url, max_pages, delay_ms, client_type, headless, config.get("project_id"), config.get("db_path"))
+    refresh_strategy = config.get("refresh_strategy") or "refresh"
+    update_method = config.get("update_method") or "check_first_page_until_duplicate"
+    crawlflow.log(
+        f"[OrekaShop][fetch_data] refresh_strategy={refresh_strategy}, update_method={update_method}",
+        "info",
+    )
+
+    products = _crawl_all_products(shop_url, max_pages, delay_ms, client_type, headless, config.get("project_id"), config.get("db_path"), refresh_strategy, update_method)
 
     # Dung dinh dang item ma Rust/worker hieu: item_type='url'.
     items = []
