@@ -1082,6 +1082,7 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
 
         # Luu tung luot product URL vao DB NGAY de progress bar (pending)
         # cap nhat realtime thay vi chi nhay 1 lan sau khi xong het.
+        saved = 0
         if product_urls and project_id and db_path:
             raw_items = []
             for p_url in product_urls:
@@ -1099,6 +1100,11 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
                 )
             except Exception as e:
                 crawlflow.log(f"[OrekaShop] Loi save_raw_items: {e}", "warn")
+
+        # Neu khong co URL moi nao duoc insert => het san pham, dung phan trang
+        if saved == 0 and product_urls:
+            crawlflow.log(f"[OrekaShop] Khong con URL moi, dung tai trang {page_num}", "info")
+            break
 
         # Danh dau page nay da hoan thanh de ho tro resume.
         if project_id:
