@@ -58,7 +58,7 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
 
         const fetchServices = async () => {
             try {
-                const { invoke } = await import('@tauri-apps/api/core');
+                const { invoke } = await import('../lib/platform');
                 const infos = await invoke<ServiceInfo[]>('list_project_services_cmd');
                 if (cancelled) return;
                 const map: Record<string, ServiceInfo> = {};
@@ -73,7 +73,7 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
 
         const setupEvent = async () => {
             try {
-                const { listen } = await import('@tauri-apps/api/event');
+                const { listen } = await import('../lib/platform');
                 await listen<any>('service-status-update', (event) => {
                     const payload = event.payload;
                     if (payload && payload.project_id && payload.info) {
@@ -184,8 +184,8 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
         let confirmed = false;
         if (isTauriEnv()) {
             try {
-                const { ask } = await import('@tauri-apps/plugin-dialog');
-                confirmed = await ask(`Delete "${name}"?`, { title: 'CrawlFlow', kind: 'warning' });
+                const { askDialog } = await import('../lib/platform');
+                confirmed = await askDialog(`Delete "${name}"?`, { title: 'CrawlFlow', kind: 'warning' });
             } catch { }
         }
         if (!confirmed) {

@@ -297,6 +297,19 @@ impl LogManager {
         self.install_gui_handlers(handle, db);
     }
 
+    /// Return the most recent non-debug log message, for use as a live
+    /// progress message on the project card (e.g. "Processing item X…").
+    pub fn latest_activity(&self) -> Option<String> {
+        let buf = self.buffer.read().ok()?;
+        // Walk backwards to find the newest info/warn/error entry
+        for entry in buf.iter().rev() {
+            if entry.level != "debug" {
+                return Some(entry.message.clone());
+            }
+        }
+        None
+    }
+
     fn ensure_logs_table(&self, path: &PathBuf) {
         if let Ok(conn) = rusqlite::Connection::open(path) {
             let _ = conn.execute_batch(

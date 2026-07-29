@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { fetchItems, resolveDownload, type MarketplaceItem } from '../lib/marketplace';
 import { XMarkIcon, SearchIcon } from './icons';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/platform';
 
 interface MarketplacePanelProps {
     isOpen: boolean;

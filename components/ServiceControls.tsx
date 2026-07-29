@@ -39,7 +39,7 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({
 
   const poll = useCallback(async () => {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       const info: any = await invoke('get_service_status_cmd', { projectId });
       if (info) {
         if (externalStatus === undefined) {
@@ -60,7 +60,7 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({
     let unlisten: (() => void) | null = null;
     const setup = async () => {
       try {
-        const { listen } = await import('@tauri-apps/api/event');
+        const { listen } = await import('../lib/platform');
         unlisten = await listen<any>(`service-status:${projectId}`, (event) => {
           const info = event.payload;
           if (info) {
@@ -90,7 +90,7 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({
   const requestStart = useCallback(async () => {
     setBusy(true);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       await invoke('request_project_run_cmd', { projectId });
       // Optimistically show pending while we wait for background service first cycle
       if (externalStatus === undefined) setLocalStatus('idle');
@@ -103,7 +103,7 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({
   const requestStop = useCallback(async () => {
     setBusy(true);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       await invoke('request_project_stop_cmd', { projectId });
       if (externalStatus === undefined) setLocalStatus('stopped');
       setTimeout(poll, 500);

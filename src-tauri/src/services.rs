@@ -197,15 +197,17 @@ fn is_process_running(pid: u32) -> bool {
     }
     #[cfg(windows)]
     {
-        if let Ok(output) = std::process::Command::new("tasklist")
-            .arg("/FI")
-            .arg(format!("PID eq {}", pid))
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            return stdout.contains(&pid.to_string());
+        extern "system" {
+            fn OpenProcess(dwDesiredAccess: u32, bInheritHandle: i32, dwProcessId: u32) -> isize;
+            fn CloseHandle(hObject: isize) -> i32;
+        }
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle != 0 {
+                CloseHandle(handle);
+                return true;
+            }
         }
     }
     false

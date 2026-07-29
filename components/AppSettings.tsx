@@ -42,7 +42,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
   const fetchInfo = useCallback(async () => {
     setLoading(true);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       const info: ServiceInstallInfo = await invoke('get_service_install_info_cmd');
       setServiceInfo(info);
     } catch (e) {
@@ -53,7 +53,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
 
   const fetchChromePath = useCallback(async () => {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       const path: string | null = await invoke('get_app_setting_cmd', { key: 'chrome_path' });
       const val = path ?? '';
       setChromePath(val);
@@ -63,7 +63,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
 
   const fetchHeadless = useCallback(async () => {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       const val: string | null = await invoke('get_app_setting_cmd', { key: 'chrome_headless' });
       const isHeadless = val === null ? true : val === 'true';
       setHeadless(isHeadless);
@@ -73,7 +73,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
 
   const fetchExportDir = useCallback(async () => {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       const val: string | null = await invoke('get_app_setting_cmd', { key: 'export_dir' });
       const dir = val ?? '';
       setExportDir(dir);
@@ -83,7 +83,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
 
   const fetchPythonPath = useCallback(async () => {
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       const val: string | null = await invoke('get_app_setting_cmd', { key: 'python_path' });
       setPythonPath(val ?? '');
       setSavedPythonPath(val ?? '');
@@ -94,7 +94,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
     setPythonLoading(true);
     setPythonMessage(null);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       const detected: string | null = await invoke('detect_python_cmd');
       if (detected) {
         setPythonPath(detected);
@@ -111,7 +111,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
     setPythonLoading(true);
     setPythonMessage(null);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       await invoke('set_app_setting_cmd', { key: 'python_path', value: pythonPath });
       setSavedPythonPath(pythonPath);
       setPythonMessage({ type: 'success', text: 'Python path saved.' });
@@ -123,8 +123,8 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
 
   const handleBrowsePythonDir = async () => {
     try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const selected: string | null = await open({ directory: true, multiple: false });
+      const { openDialog } = await import('../lib/platform');
+      const selected: string | null = await openDialog({ directory: true, multiple: false });
       if (selected) {
         setPythonPath(selected);
       }
@@ -135,7 +135,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
     setExportLoading(true);
     setExportMessage(null);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       await invoke('set_app_setting_cmd', { key: 'export_dir', value: exportDir });
       setSavedExportDir(exportDir);
       setExportMessage({ type: 'success', text: 'Export folder saved.' });
@@ -147,8 +147,8 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
 
   const handleBrowseExportDir = async () => {
     try {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const selected: string | null = await open({ directory: true, multiple: false });
+      const { openDialog } = await import('../lib/platform');
+      const selected: string | null = await openDialog({ directory: true, multiple: false });
       if (selected) {
         setExportDir(selected);
       }
@@ -159,7 +159,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
     setChromeLoading(true);
     setChromeMessage(null);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       await invoke('set_app_setting_cmd', { key: 'chrome_path', value: chromePath });
       setSavedChromePath(chromePath);
       setChromeMessage({ type: 'success', text: 'Chrome path saved.' });
@@ -174,7 +174,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
     setChromeLoading(true);
     setChromeMessage(null);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       await invoke('set_app_setting_cmd', { key: 'chrome_headless', value: checked ? 'true' : 'false' });
       setSavedHeadless(checked);
       setChromeMessage({ type: 'success', text: 'Headless preference saved.' });
@@ -201,7 +201,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
   const handleInstall = async () => {
     setOperating(true);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       const result: string = await invoke('install_system_service_cmd');
       showMsg('success', result);
       await fetchInfo();
@@ -214,7 +214,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
   const handleUninstall = async () => {
     setOperating(true);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       const result: string = await invoke('uninstall_system_service_cmd');
       showMsg('success', result);
       await fetchInfo();
@@ -227,7 +227,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
   const handleStart = async () => {
     setOperating(true);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       const result: string = await invoke('start_system_service_cmd');
       showMsg('success', result);
       await fetchInfo();
@@ -240,7 +240,7 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
   const handleStop = async () => {
     setOperating(true);
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
       const result: string = await invoke('stop_system_service_cmd');
       showMsg('success', result);
       await fetchInfo();

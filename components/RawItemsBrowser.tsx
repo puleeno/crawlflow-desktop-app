@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../lib/platform';
 import type { RawItem, ItemsSummary } from '../types';
 
 const STATUS_TABS = ['all', 'pending', 'processing', 'done', 'error', 'ignored', 'crawled'] as const;

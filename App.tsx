@@ -226,7 +226,7 @@ const App: React.FC = () => {
 
     const fetchStatus = async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('./lib/platform');
         const info: any = await invoke('get_service_status_cmd', { projectId: currentProjectId });
         if (info) {
           setServiceStatus(info.status || 'stopped');
@@ -246,7 +246,7 @@ const App: React.FC = () => {
     // service brings it up (it may start after the GUI opens this project).
     const pollPort = async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('./lib/platform');
         const info: any = await invoke('get_service_status_cmd', { projectId: currentProjectId });
         wsRef.current?.connect(info?.ws_port || 0);
       } catch { /* ignore */ }
@@ -259,7 +259,7 @@ const App: React.FC = () => {
     let unlisten: (() => void) | null = null;
     const setupEvent = async () => {
       try {
-        const { listen } = await import('@tauri-apps/api/event');
+        const { listen } = await import('./lib/platform');
         unlisten = await listen<any>(`service-status:${currentProjectId}`, (event) => {
           const p = event.payload;
           setServiceStatus(p.status || 'stopped');
@@ -311,7 +311,7 @@ const App: React.FC = () => {
 
     const manageLock = async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('./lib/platform');
         const isServiceRunning = serviceStatus === 'running' || serviceStatus === 'idle';
         if (!isServiceRunning) {
           await invoke('lock_project_edit_cmd', { projectId: currentProjectId });
@@ -328,7 +328,7 @@ const App: React.FC = () => {
     return () => {
       const cleanupLock = async () => {
         try {
-          const { invoke } = await import('@tauri-apps/api/core');
+          const { invoke } = await import('./lib/platform');
           await invoke('unlock_project_edit_cmd', { projectId: currentProjectId });
         } catch (_) { /* ignore */ }
       };

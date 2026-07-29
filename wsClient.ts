@@ -131,7 +131,7 @@ export class ProjectWsClient {
  */
 export async function getProjectWsPort(projectId: string): Promise<number> {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
+    const { invoke } = await import('./lib/platform');
     const info: any = await invoke('get_service_status_cmd', { projectId });
     return info?.ws_port || 0;
   } catch {

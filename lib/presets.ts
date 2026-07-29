@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from './platform';
 import type { Preset } from '../types';
 
 // This ID must match REPOSITORY_NODE_ID in App.tsx

@@ -50,7 +50,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
     seenRef.current = new Set();
     (async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
         const existing = await invoke<LogEntry[]>('get_project_logs_cmd', {
           projectId,
           sinceId: null,
@@ -78,7 +78,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
 
     const setup = async () => {
       try {
-        const { listen } = await import('@tauri-apps/api/event');
+        const { listen } = await import('../lib/platform');
 
         const unsub1 = await listen<LogEntry>(logEvent, (event) => {
           const l = event.payload;
@@ -157,7 +157,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
 
     const pollPort = async () => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
+        const { invoke } = await import('../lib/platform');
         const info: any = await invoke('get_service_status_cmd', { projectId });
         ensureConnected(info?.ws_port || 0);
       } catch { /* ignore */ }
@@ -192,7 +192,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
     setLogs([]);
     seenRef.current = new Set();
     try {
-      const { invoke } = await import('@tauri-apps/api/core');
+      const { invoke } = await import('../lib/platform');
       await invoke('clear_project_logs_cmd', { projectId });
     } catch (e) { /* ignore */ }
   }, [projectId]);

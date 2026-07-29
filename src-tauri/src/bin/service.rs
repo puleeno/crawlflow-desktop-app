@@ -408,15 +408,17 @@ fn is_pid_alive(pid: u32) -> bool {
     }
     #[cfg(windows)]
     {
-        if let Ok(output) = std::process::Command::new("tasklist")
-            .arg("/FI")
-            .arg(format!("PID eq {}", pid))
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            return stdout.contains(&pid.to_string());
+        extern "system" {
+            fn OpenProcess(dwDesiredAccess: u32, bInheritHandle: i32, dwProcessId: u32) -> isize;
+            fn CloseHandle(hObject: isize) -> i32;
+        }
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle != 0 {
+                CloseHandle(handle);
+                return true;
+            }
         }
     }
     false
@@ -756,12 +758,14 @@ async fn run_project_loop(
                 let ticker_running = pipeline_running.clone();
                 let ticker_pid = project_id.clone();
                 let ticker_db = db_path.clone();
+                let ticker_lm = lm.clone();
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
                     while ticker_running.load(Ordering::Relaxed) {
                         interval.tick().await;
                         let now = now_iso();
-                        let progress = build_progress(&ticker_pid, &ticker_db, None, None, &now);
+                        let activity = ticker_lm.latest_activity();
+                        let progress = build_progress(&ticker_pid, &ticker_db, None, activity.as_deref(), &now);
                         crawlflow_lib::services::ServiceManager::write_progress_json(&ticker_pid, &progress);
                         // Push live over WebSocket (no polling delay).
                         crawlflow_lib::ws::publish_progress(&ticker_pid, serde_json::to_value(&progress).unwrap_or_default());
