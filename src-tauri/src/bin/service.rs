@@ -676,6 +676,8 @@ async fn run_project_loop(
 
     println!("[SERVICE] Loop started for '{}' (every {}s)", proj.name, interval_secs);
 
+    let mut exit_status = "stopped";
+
     while !shutdown.load(Ordering::Relaxed) {
         cycle += 1;
         println!("[SERVICE] --- Cycle #{} for '{}' ---", cycle, proj.name);
@@ -732,6 +734,7 @@ async fn run_project_loop(
             );
             // If stopped or disabled, exit the loop entirely
             if service_control == "stop" || !project_enabled {
+                exit_status = if !project_enabled { "disabled" } else { "stopped" };
                 break;
             }
             for _ in 0..interval_secs {
@@ -1022,6 +1025,7 @@ async fn run_project_loop(
                             // For 'update_only' strategy: stop after 1 successful cycle.
                             // For 'refresh' / 'refresh_update': keep looping.
                             if refresh_strategy == "update_only" {
+                                exit_status = "completed";
                                 let _ = conn.execute(
                                     "UPDATE project_runtime SET service_control = 'stop' WHERE project_id = ?1",
                                     rusqlite::params![&project_id],
@@ -1079,11 +1083,11 @@ async fn run_project_loop(
         }
     }
 
-    // Mark stopped on exit
+    // Mark status on exit
     if let Ok(conn) = rusqlite::Connection::open(&master_db) {
-        set_runner_status(&conn, &project_id, "stopped", None, None, None, None);
+        set_runner_status(&conn, &project_id, exit_status, None, None, None, None);
     }
-    lm.info(&project_id, "service", "Loop stopped.");
+    lm.info(&project_id, "service", &format!("Loop stopped (status={}).", exit_status));
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────────
