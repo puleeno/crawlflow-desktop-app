@@ -63,8 +63,63 @@ fn is_service_mode() -> bool {
     std::env::args().any(|a| a == "--service")
 }
 
+/// Minimal file logger that writes all `log` crate output to
+/// `<data_dir>/logs/app-<unix>.log`. Always installed (debug + release) so
+/// failures like service spawn errors are diagnosable after a crash.
+struct FileLogger {
+    file: std::sync::Mutex<std::fs::File>,
+}
+
+impl log::Log for FileLogger {
+    fn enabled(&self, _metadata: &log::Metadata) -> bool {
+        true
+    }
+    fn log(&self, record: &log::Record) {
+        if let Ok(mut f) = self.file.lock() {
+            use std::io::Write;
+            let _ = writeln!(
+                f,
+                "[{}] [{}] {}",
+                record.level(),
+                record.module_path().unwrap_or("-"),
+                record.args()
+            );
+        }
+    }
+    fn flush(&self) {}
+}
+
+fn init_file_logger() {
+    let log_dir = dirs_next::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("com.CrawlFlow.desktop")
+        .join("logs");
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        eprintln!("[FileLogger] Cannot create log dir {:?}: {}", log_dir, e);
+        return;
+    }
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let log_path = log_dir.join(format!("app-{}.log", secs));
+    match std::fs::File::create(&log_path) {
+        Ok(f) => {
+            let logger = FileLogger { file: std::sync::Mutex::new(f) };
+            if log::set_boxed_logger(Box::new(logger)).is_ok() {
+                log::set_max_level(log::LevelFilter::Info);
+                log::info!("File logger initialized at {:?}", log_path);
+            }
+        }
+        Err(e) => {
+            eprintln!("[FileLogger] Cannot open {:?}: {}", log_path, e);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    init_file_logger();
     let log_manager = Arc::new(LogManager::new());
     let _initial_plugin_engine = {
         let mut e = PluginEngine::new(None, get_user_plugins_dir());

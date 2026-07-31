@@ -30,6 +30,7 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({
   const [lastError, setLastError] = useState<string | null>(null);
   const [intervalSec, setIntervalSec] = useState<number>(60);
   const [busy, setBusy] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
   // Use external status when provided (App.tsx polls), otherwise manage locally
   const status = externalStatus ?? localStatus;
@@ -89,6 +90,7 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({
 
   const requestStart = useCallback(async () => {
     setBusy(true);
+    setStartError(null);
     try {
         const { invoke } = await import('../lib/platform');
       await invoke('request_project_run_cmd', { projectId });
@@ -96,7 +98,10 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({
       if (externalStatus === undefined) setLocalStatus('idle');
       // Force an immediate poll after a short delay
       setTimeout(poll, 500);
-    } catch (e: any) { console.error(e); }
+    } catch (e: any) {
+      console.error(e);
+      setStartError(e?.message || String(e));
+    }
     finally { setBusy(false); }
   }, [projectId, externalStatus, poll]);
 
@@ -180,6 +185,12 @@ const ServiceControls: React.FC<ServiceControlsProps> = ({
       {isError && lastError && (
         <div className="mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2">
           {lastError}
+        </div>
+      )}
+
+      {startError && (
+        <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-300 rounded-lg p-2">
+          <span className="font-bold">Start failed:</span> {startError}
         </div>
       )}
 

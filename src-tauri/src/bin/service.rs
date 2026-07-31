@@ -99,10 +99,28 @@ fn log_to_file(msg: &str) {
     let line = format!("[{}] {}\n", timestamp, msg);
     if let Some(f) = unsafe { SERVICE_LOG_FILE.as_mut() } {
         let _ = f.write_all(line.as_bytes());
-        let _ = f.flush();
     }
-    // Also write to stderr for when running in console
-    let _ = std::io::stderr().write_all(line.as_bytes());
+    // Also mirror to stderr so manual/console launches show the same line
+    eprintln!("{}", line.trim_end());
+}
+
+/// Install a panic hook that writes panic details to the service log file,
+/// so a startup/loop crash is diagnosable even with no console attached.
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            format!("PANIC: {}", s)
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            format!("PANIC: {}", s)
+        } else {
+            format!("PANIC: {:?}", info)
+        };
+        if let Some(loc) = info.location() {
+            log_to_file(&format!("{} at {}:{}", msg, loc.file(), loc.line()));
+        } else {
+            log_to_file(&msg);
+        }
+    }));
 }
 
 macro_rules! svc_log {
@@ -1094,6 +1112,10 @@ async fn run_project_loop(
 
 #[cfg(target_os = "windows")]
 fn main() {
+    // Initialize file logger + panic hook FIRST so every mode (console AND
+    // Windows Service) writes diagnostics to the log dir on failure.
+    init_file_logger();
+    install_panic_hook();
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--service") {
         run_as_windows_service();
@@ -1104,6 +1126,8 @@ fn main() {
 
 #[cfg(not(target_os = "windows"))]
 fn main() {
+    init_file_logger();
+    install_panic_hook();
     let args: Vec<String> = std::env::args().collect();
     run_as_console(&args);
 }
@@ -1170,24 +1194,33 @@ fn run_as_console(args: &[String]) {
 
     let all_projects = match list_enabled_projects() {
         Ok(p) => p,
-        Err(e) => { eprintln!("[SERVICE] DB error: {}", e); std::process::exit(1); }
+        Err(e) => {
+            let msg = format!("[SERVICE] DB error: {}", e);
+            eprintln!("{}", msg);
+            log_to_file(&msg);
+            std::process::exit(1);
+        }
     };
 
     let projects: Vec<ProjectRow> = if run_all {
-        println!("[SERVICE] Running {} enabled projects", all_projects.len());
+        let msg = format!("[SERVICE] Running {} enabled projects", all_projects.len());
+        println!("{}", msg);
+        log_to_file(&msg);
         all_projects
     } else {
         let pid = target_project.as_deref().unwrap_or("");
         let found: Vec<_> = all_projects.into_iter().filter(|p| p.id == pid).collect();
         if found.is_empty() {
-            eprintln!("[SERVICE] Project '{}' not found or not enabled", pid);
+            let msg = format!("[SERVICE] Project '{}' not found or not enabled", pid);
+            eprintln!("{}", msg);
+            log_to_file(&msg);
             std::process::exit(1);
         }
         found
     };
 
     if projects.is_empty() {
-        println!("[SERVICE] No enabled projects. Exiting.");
+        log_to_file("[SERVICE] No enabled projects. Exiting.");
         return;
     }
 
@@ -1238,24 +1271,7 @@ fn service_main_entry(_arguments: Vec<std::ffi::OsString>) {
     };
     use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
 
-    // Initialize file logger first — all svc_log! calls write here
-    init_file_logger();
-
-    // Catch panics so we always write to the log file
-    std::panic::set_hook(Box::new(|info| {
-        let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
-            format!("PANIC: {}", s)
-        } else if let Some(s) = info.payload().downcast_ref::<String>() {
-            format!("PANIC: {}", s)
-        } else {
-            format!("PANIC: {:?}", info)
-        };
-        if let Some(loc) = info.location() {
-            log_to_file(&format!("{} at {}:{}", msg, loc.file(), loc.line()));
-        } else {
-            log_to_file(&msg);
-        }
-    }));
+    // File logger + panic hook are initialized in main() before branching.
 
     svc_log!("[SERVICE] CrawlFlow Windows Service starting");
     svc_log!("[SERVICE] Data dir : {:?}", get_app_data_dir());

@@ -10,7 +10,7 @@ fn app_exe_path() -> Option<PathBuf> {
     std::env::current_exe().ok()
 }
 
-fn service_exe_str() -> String {
+pub(crate) fn service_exe_str() -> String {
     if let Some(mut p) = app_exe_path() {
         let is_windows = cfg!(target_os = "windows");
         let name = if is_windows {

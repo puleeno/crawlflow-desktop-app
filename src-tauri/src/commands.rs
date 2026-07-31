@@ -771,6 +771,96 @@ pub fn run_demo_cmd() -> Result<serde_json::Value, String> {
 
 // ── Service commands ───────────────────────────────────────────────────
 
+fn is_service_process_running() -> bool {
+    let db_path = dirs_next::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("com.CrawlFlow.desktop")
+        .join("crawlflow.db");
+    if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+        if let Ok(mut stmt) =
+            conn.prepare("SELECT runner_pid FROM project_runtime WHERE runner_pid IS NOT NULL AND runner_pid > 0")
+        {
+            if let Ok(rows) = stmt.query_map([], |row| row.get::<_, i64>(0)) {
+                for row in rows.flatten() {
+                    #[cfg(unix)]
+                    {
+                        if let Ok(mut child) = std::process::Command::new("kill")
+                            .arg("-0")
+                            .arg(row.to_string())
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .spawn()
+                        {
+                            if let Ok(status) = child.wait() {
+                                if status.success() {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    #[cfg(windows)]
+                    {
+                        extern "system" {
+                            fn OpenProcess(dwDesiredAccess: u32, bInheritHandle: i32, dwProcessId: u32) -> isize;
+                            fn CloseHandle(hObject: isize) -> i32;
+                        }
+                        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+                        unsafe {
+                            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, row as u32);
+                            if handle != 0 {
+                                CloseHandle(handle);
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+fn spawn_service_process(project_id: &str) -> Result<(), String> {
+    let exe_path = crate::system_service::service_exe_str();
+    if exe_path.is_empty() {
+        log::warn!("Cannot spawn service: could not resolve service binary path");
+        return Err("Cannot resolve service binary path".into());
+    }
+    let exe_path = std::path::PathBuf::from(&exe_path);
+    if !exe_path.exists() {
+        log::warn!("Cannot spawn service: binary not found at {:?}", exe_path);
+        return Err(format!("Service binary not found at {:?}", exe_path));
+    }
+    match std::process::Command::new(&exe_path)
+        .args(["--project", project_id])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(child) => {
+            log::info!("Spawned service process (PID {})", child.id());
+            Ok(())
+        }
+        Err(e) => {
+            let msg = format!("Failed to spawn service process {}: {}", exe_path.display(), e);
+            log::error!("{}", msg);
+            Err(msg)
+        }
+    }
+}
+
+/// Ensure a live background service process exists for `project_id`, spawning
+/// it if none is running. Returns an error string if the spawn failed so the
+/// frontend can display it.
+fn ensure_service_running(project_id: &str) -> Result<(), String> {
+    if is_service_process_running() {
+        log::info!("Background service already running; skipping spawn");
+        return Ok(());
+    }
+    spawn_service_process(project_id)
+}
+
 #[tauri::command]
 pub fn start_project_service_cmd(
     state: State<'_, AppState>,
@@ -792,8 +882,12 @@ pub fn start_project_service_cmd(
     }
     state
         .service_manager
-        .start_service(&project_id, nodes, edges, settings)
-        .map(|_| format!("Service started for project {}", project_id))
+        .start_service(&project_id, nodes, edges, settings)?;
+
+    // Auto-spawn the background service process if not already running
+    ensure_service_running(&project_id)?;
+
+    Ok(format!("Service started for project {}", project_id))
 }
 
 #[tauri::command]
@@ -1208,7 +1302,10 @@ pub fn unlock_project_edit_cmd(project_id: String) -> Result<(), String> {
 
 /// Tell the background service to run this project (service_control = 'run')
 #[tauri::command]
-pub fn request_project_run_cmd(project_id: String) -> Result<(), String> {
+pub fn request_project_run_cmd(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<(), String> {
     let db_path = master_db_path();
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -1222,7 +1319,18 @@ pub fn request_project_run_cmd(project_id: String) -> Result<(), String> {
         rusqlite::params![project_id],
     ).map_err(|e| e.to_string())?;
     log::info!("Requested run for project {}", project_id);
-    Ok(())
+    state.log_manager.info(&project_id, "system", "Run requested");
+
+    // Auto-spawn the background service process if not already running
+    match ensure_service_running(&project_id) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            state
+                .log_manager
+                .error(&project_id, "system", &format!("Failed to start service: {}", e));
+            Err(e)
+        }
+    }
 }
 
 /// Tell the background service to pause/skip this project (service_control = 'paused')
