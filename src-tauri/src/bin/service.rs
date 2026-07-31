@@ -52,11 +52,26 @@ impl SimpleLogger {
 
 static mut SERVICE_LOG_FILE: Option<std::fs::File> = None;
 
+/// Data dir override passed via `--data-dir <path>` (set by the GUI at service
+/// install time so the LocalSystem-launched service reads the user's DB).
+static DATA_DIR_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Parse `--data-dir <path>` from argv and store the override if present.
+fn parse_data_dir_override(args: &[String]) {
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--data-dir" {
+            if let Some(dir) = args.get(i + 1) {
+                let _ = DATA_DIR_OVERRIDE.set(PathBuf::from(dir));
+                let _ = std::fs::create_dir_all(dir);
+            }
+        }
+        i += 1;
+    }
+}
+
 fn service_log_dir() -> PathBuf {
-    dirs_next::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.CrawlFlow.desktop")
-        .join("logs")
+    get_app_data_dir().join("logs")
 }
 
 fn init_file_logger() {
@@ -141,7 +156,13 @@ struct ProjectRow {
 }
 
 fn get_app_data_dir() -> PathBuf {
-    // Mirrors Tauri v2 data directory logic
+    // Mirrors Tauri v2 data directory logic. When the process is launched by
+    // the Service Control Manager it runs as LocalSystem, so `dirs_next` would
+    // resolve to the systemprofile — the GUI passes its own data dir via
+    // `--data-dir` at install time to override that.
+    if let Some(dir) = DATA_DIR_OVERRIDE.get() {
+        return dir.clone();
+    }
     dirs_next::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("com.CrawlFlow.desktop")
@@ -156,10 +177,7 @@ fn project_db_path(db_filename: &str) -> PathBuf {
 }
 
 fn get_user_plugins_dir() -> PathBuf {
-    dirs_next::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("com.CrawlFlow.desktop")
-        .join("plugins")
+    get_app_data_dir().join("plugins")
 }
 
 fn get_builtin_plugins_dir() -> Option<PathBuf> {
@@ -1112,11 +1130,13 @@ async fn run_project_loop(
 
 #[cfg(target_os = "windows")]
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    // Parse --data-dir BEFORE init_file_logger so the log lands in the right place.
+    parse_data_dir_override(&args);
     // Initialize file logger + panic hook FIRST so every mode (console AND
     // Windows Service) writes diagnostics to the log dir on failure.
     init_file_logger();
     install_panic_hook();
-    let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--service") {
         run_as_windows_service();
     } else {
@@ -1126,9 +1146,10 @@ fn main() {
 
 #[cfg(not(target_os = "windows"))]
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    parse_data_dir_override(&args);
     init_file_logger();
     install_panic_hook();
-    let args: Vec<String> = std::env::args().collect();
     run_as_console(&args);
 }
 

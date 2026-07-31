@@ -983,23 +983,53 @@ pub fn get_service_install_info_cmd() -> crate::system_service::ServiceInstallIn
 }
 
 #[tauri::command]
-pub fn install_system_service_cmd() -> Result<String, String> {
-    crate::system_service::SystemServiceManager::install()
+pub fn install_system_service_cmd(state: State<'_, AppState>) -> Result<String, String> {
+    let result = crate::system_service::SystemServiceManager::install();
+    match &result {
+        Ok(msg) => {
+            log::info!("install_system_service_cmd: {}", msg);
+            state
+                .log_manager
+                .info("system", "system", &format!("Windows Service install: {}", msg));
+        }
+        Err(e) => {
+            log::error!("install_system_service_cmd failed: {}", e);
+            state
+                .log_manager
+                .error("system", "system", &format!("Windows Service install failed: {}", e));
+        }
+    }
+    result
 }
 
 #[tauri::command]
 pub fn uninstall_system_service_cmd() -> Result<String, String> {
-    crate::system_service::SystemServiceManager::uninstall()
+    let result = crate::system_service::SystemServiceManager::uninstall();
+    match &result {
+        Ok(msg) => log::info!("uninstall_system_service_cmd: {}", msg),
+        Err(e) => log::error!("uninstall_system_service_cmd failed: {}", e),
+    }
+    result
 }
 
 #[tauri::command]
 pub fn start_system_service_cmd() -> Result<String, String> {
-    crate::system_service::SystemServiceManager::start()
+    let result = crate::system_service::SystemServiceManager::start();
+    match &result {
+        Ok(msg) => log::info!("start_system_service_cmd: {}", msg),
+        Err(e) => log::error!("start_system_service_cmd failed: {}", e),
+    }
+    result
 }
 
 #[tauri::command]
 pub fn stop_system_service_cmd() -> Result<String, String> {
-    crate::system_service::SystemServiceManager::stop()
+    let result = crate::system_service::SystemServiceManager::stop();
+    match &result {
+        Ok(msg) => log::info!("stop_system_service_cmd: {}", msg),
+        Err(e) => log::error!("stop_system_service_cmd failed: {}", e),
+    }
+    result
 }
 
 // ── Marketplace installation ─────────────────────────────────────────

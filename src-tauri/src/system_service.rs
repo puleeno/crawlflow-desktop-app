@@ -333,12 +333,18 @@ WantedBy=default.target
                 Ok(format!("Service installed at {:?}", unit_path))
             }
             Platform::Windows => {
+                // Pass the GUI's data dir to the service via --data-dir so that
+                // even when SCM launches it as LocalSystem it reads the same DB
+                // as the desktop app instead of the empty systemprofile DB.
+                let data_dir_override = data_dir().to_string_lossy().to_string();
+                let bin_path =
+                    format!("\"{}\" --service --all --data-dir \"{}\"", exe_str, data_dir_override);
                 let output = std::process::Command::new("sc")
                     .args([
                         "create",
                         "CrawlFlowService",
                         "binPath=",
-                        &format!("\"{}\" --service --all", exe_str),
+                        &bin_path,
                         "start=",
                         "auto",
                         "DisplayName=",
