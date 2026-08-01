@@ -34,6 +34,10 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
     const [browseRawProjectId, setBrowseRawProjectId] = useState<string | null>(null);
     const [viewLogsProjectId, setViewLogsProjectId] = useState<string | null>(null);
 
+    // Tracks which project IDs have received at least one WS progress frame.
+    // Used to prevent SQLite/Tauri snapshots from overwriting live WS progress.
+    const wsProgressReceived = React.useRef<Set<string>>(new Set());
+
     const loadProjects = useCallback(async () => {
         setLoading(true);
         try {
@@ -61,11 +65,20 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
                 const { invoke } = await import('../lib/platform');
                 const infos = await invoke<ServiceInfo[]>('list_project_services_cmd');
                 if (cancelled) return;
-                const map: Record<string, ServiceInfo> = {};
-                for (const info of infos) {
-                    map[info.project_id] = info;
-                }
-                setServiceInfos(map);
+                // Merge: never overwrite WS-supplied progress with a SQLite snapshot.
+                setServiceInfos((prev) => {
+                    const next: Record<string, ServiceInfo> = {};
+                    for (const info of infos) {
+                        const existing = prev[info.project_id];
+                        next[info.project_id] = {
+                            ...info,
+                            progress: wsProgressReceived.current.has(info.project_id) && existing?.progress
+                                ? existing.progress
+                                : info.progress,
+                        };
+                    }
+                    return next;
+                });
             } catch (_) {
                 // Not in Tauri env or command unavailable
             }
@@ -80,14 +93,13 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
                         setServiceInfos((prev) => {
                             const existing = prev[payload.project_id];
                             const newInfo = payload.info as ServiceInfo;
-                            // Preserve WebSocket progress if it exists, as it's more up-to-date
-                            const shouldPreserveProgress = existing && existing.progress && 
-                                (existing.progress.items_total > 0 || existing.progress.items_processed > 0);
+                            // Never override WS-delivered progress with a Tauri/SQLite snapshot.
+                            const preserveProgress = wsProgressReceived.current.has(payload.project_id) && existing?.progress;
                             return {
                                 ...prev,
                                 [payload.project_id]: {
                                     ...newInfo,
-                                    progress: shouldPreserveProgress ? existing.progress : newInfo.progress,
+                                    progress: preserveProgress ? existing!.progress : newInfo.progress,
                                 },
                             };
                         });
@@ -124,6 +136,9 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
             const client = new ProjectWsClient(info.project_id, {
                 onProgress: (payload) => {
                     if (!payload) return;
+                    // Mark that this project has live WS progress — SQLite snapshots
+                    // must not overwrite it from here on.
+                    wsProgressReceived.current.add(info.project_id);
                     setServiceInfos((prev) => {
                         const existing = prev[info.project_id];
                         if (!existing) return prev;
@@ -136,6 +151,13 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
                             },
                         };
                     });
+                },
+                onStatus: (payload) => {
+                    // When the service stops, clear the WS-received flag so the
+                    // next run can bootstrap progress from the SQLite snapshot again.
+                    if (payload?.status && payload.status !== 'running' && payload.status !== 'idle') {
+                        wsProgressReceived.current.delete(info.project_id);
+                    }
                 },
             });
             client.connect(port);

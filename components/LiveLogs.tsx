@@ -153,7 +153,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
       } catch { /* DB not available */ }
     };
 
-    const timer = setInterval(poll, 2000);
+    const timer = setInterval(poll, 500);
     return () => { cancelled = true; clearInterval(timer); };
   }, [projectId]);
 

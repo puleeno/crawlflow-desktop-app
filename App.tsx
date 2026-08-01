@@ -227,6 +227,10 @@ const App: React.FC = () => {
       return;
     }
 
+    // Track whether WebSocket has delivered at least one progress frame this
+    // session so we can avoid overwriting it with stale SQLite snapshots.
+    const wsProgressReceivedRef = { current: false };
+
     const fetchStatus = async () => {
       try {
         const { invoke } = await import('./lib/platform');
@@ -234,13 +238,18 @@ const App: React.FC = () => {
         if (info) {
           setServiceStatus(info.status || 'stopped');
           setServiceCycleCount(info.cycle_count || 0);
-          setServiceProgress(info.progress || null);
+          // Only apply SQLite progress when WS has not yet delivered anything —
+          // avoids the "flash to 0%" that happens when a new cycle snapshot
+          // arrives from the DB and overwrites the live WebSocket stream.
+          if (!wsProgressReceivedRef.current) {
+            setServiceProgress(info.progress || null);
+          }
           // Discover / maintain the realtime WS connection.
           wsRef.current?.connect(info.ws_port || 0);
         } else {
           setServiceStatus('stopped');
           setServiceCycleCount(0);
-          setServiceProgress(null);
+          if (!wsProgressReceivedRef.current) setServiceProgress(null);
         }
       } catch (_) { /* not in tauri */ }
     };
@@ -267,9 +276,8 @@ const App: React.FC = () => {
           const p = event.payload;
           setServiceStatus(p.status || 'stopped');
           setServiceCycleCount(p.cycle_count || 0);
-          // Only update progress from Tauri event if WebSocket hasn't provided progress yet
-          // This prevents SQLite-poll progress from overriding more up-to-date WebSocket progress
-          if (p.progress && (!serviceProgress || serviceProgress.items_total === 0)) {
+          // Never override live WS progress with a Tauri/SQLite event snapshot.
+          if (!wsProgressReceivedRef.current && p.progress) {
             setServiceProgress(p.progress);
           }
           // Connect / re-connect to the live WS channel.
@@ -281,7 +289,10 @@ const App: React.FC = () => {
 
     // Realtime WebSocket client for this project.
     const ws = new ProjectWsClient(currentProjectId, {
-      onProgress: (payload) => setServiceProgress(payload),
+      onProgress: (payload) => {
+        wsProgressReceivedRef.current = true;
+        setServiceProgress(payload);
+      },
       onLog: (payload) => {
         if (!payload || !payload.message) return;
         setLastLog({
@@ -292,6 +303,11 @@ const App: React.FC = () => {
       },
       onStatus: (payload) => {
         if (payload?.status) setServiceStatus(payload.status);
+        // When service stops, clear the WS flag so the next run can
+        // bootstrap progress from the SQLite snapshot again.
+        if (payload?.status && payload.status !== 'running' && payload.status !== 'idle') {
+          wsProgressReceivedRef.current = false;
+        }
       },
       onClose: () => {
         // Fall back to a one-off status fetch so the UI recovers if the
