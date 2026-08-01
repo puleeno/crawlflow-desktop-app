@@ -1915,6 +1915,27 @@ pub async fn execute_repository_pipeline(
         );
 
         for chunk in &chunks {
+            // Log URLs trong chunk để user biết đang xử lý cái gì
+            log_manager.debug(
+                project_id,
+                "processing",
+                &format!(
+                    "Worker '{}': processing chunk of {} items — URLs: {}",
+                    worker.name,
+                    chunk.len(),
+                    chunk.iter()
+                        .map(|it| {
+                            if it.source_url.len() > 100 {
+                                format!("{}…", &it.source_url[..100])
+                            } else {
+                                it.source_url.clone()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+
             // Reusable "parsed_data" filter (declared by Python plugins via
             // crawlflow.register_filter). Rust invokes it on each item's parsed
             // data automatically; no hard-coded field mapping required.
@@ -1938,6 +1959,7 @@ pub async fn execute_repository_pipeline(
                 &process_fn,
                 Some(&mut filter_fn),
                 worker.max_retries,
+                Some((log_manager, project_id)),
             ) {
                 Ok(result) => {
                     total_processed += result.processed;

@@ -778,10 +778,12 @@ fn py_fetch_url(
         );
         let body = result.html.unwrap_or_default();
         let status = if result.status == 200 { 200 } else { 0 };
+        let final_url = result.final_url.unwrap_or_else(|| url.clone());
         let out = serde_json::json!({
             "status": status,
             "body": body,
             "url": url,
+            "final_url": final_url,
         });
         return serde_json::to_string(&out)
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()));
@@ -810,12 +812,14 @@ fn py_fetch_url(
                 .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
             let status = resp.status().as_u16();
+            let final_url = resp.url().as_str().to_string();
             let body = resp.text().await.unwrap_or_default();
 
             let result = serde_json::json!({
                 "status": status,
                 "body": body,
                 "url": url,
+                "final_url": final_url,
             });
 
             serde_json::to_string(&result)

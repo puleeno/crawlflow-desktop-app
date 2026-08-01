@@ -207,6 +207,7 @@ pub async fn fetch_reqwest(url: &str, profile: &ClientProfile) -> CrawlResult {
         Err(e) => {
             return CrawlResult {
                 url: url.to_string(),
+                final_url: None,
                 status: 0,
                 html: None,
                 text: None,
@@ -228,6 +229,7 @@ pub async fn fetch_reqwest(url: &str, profile: &ClientProfile) -> CrawlResult {
         Err(e) => {
             return CrawlResult {
                 url: url.to_string(),
+                final_url: None,
                 status: 0,
                 html: None,
                 text: None,
@@ -238,11 +240,13 @@ pub async fn fetch_reqwest(url: &str, profile: &ClientProfile) -> CrawlResult {
     };
 
     let status = response.status().as_u16();
+    let final_url = response.url().as_str().to_string();
     let html = match response.text().await {
         Ok(t) => t,
         Err(e) => {
             return CrawlResult {
                 url: url.to_string(),
+                final_url: None,
                 status,
                 html: None,
                 text: None,
@@ -256,6 +260,7 @@ pub async fn fetch_reqwest(url: &str, profile: &ClientProfile) -> CrawlResult {
 
     CrawlResult {
         url: url.to_string(),
+        final_url: Some(final_url),
         status,
         html: Some(html),
         text: Some(text),
@@ -295,6 +300,7 @@ pub fn fetch_chrome_sync(
         None => {
             return CrawlResult {
                 url: url.to_string(),
+                final_url: None,
                 status: 0,
                 html: None,
                 text: None,
@@ -430,6 +436,7 @@ const timeout = {};
                 let text = crate::crawler::strip_html_tags(&html);
                 return CrawlResult {
                     url: url.to_string(),
+                    final_url: None,
                     status: 200,
                     html: Some(html),
                     text: Some(text),
@@ -452,6 +459,7 @@ const timeout = {};
         Err(e) => {
             return CrawlResult {
                 url: url.to_string(),
+                final_url: None,
                 status: 0,
                 html: None,
                 text: None,
@@ -471,6 +479,7 @@ const timeout = {};
             kill_chrome_process(pid);
             return CrawlResult {
                 url: url.to_string(),
+                final_url: None,
                 status: 0,
                 html: None,
                 text: None,
@@ -482,6 +491,7 @@ const timeout = {};
             kill_chrome_process(pid);
             return CrawlResult {
                 url: url.to_string(),
+                final_url: None,
                 status: 0,
                 html: None,
                 text: None,
@@ -498,6 +508,7 @@ const timeout = {};
         let stderr = String::from_utf8_lossy(&output.stderr);
         return CrawlResult {
             url: url.to_string(),
+            final_url: None,
             status: 0,
             html: None,
             text: None,
@@ -511,6 +522,7 @@ const timeout = {};
 
     CrawlResult {
         url: url.to_string(),
+        final_url: None,
         status: 200,
         html: Some(html),
         text: Some(text),
@@ -810,6 +822,7 @@ pub fn fetch_via_cdp(
             return (
                 CrawlResult {
                     url: url.to_string(),
+                    final_url: None,
                     status: 0,
                     html: None,
                     text: None,
@@ -836,6 +849,7 @@ pub fn fetch_via_cdp(
             return (
                 CrawlResult {
                     url: url.to_string(),
+                    final_url: None,
                     status: 0,
                     html: None,
                     text: None,
@@ -858,6 +872,7 @@ pub fn fetch_via_cdp(
             return (
                 CrawlResult {
                     url: url.to_string(),
+                    final_url: None,
                     status: 0,
                     html: None,
                     text: None,
@@ -892,6 +907,7 @@ pub fn fetch_via_cdp(
             return (
                 CrawlResult {
                     url: url.to_string(),
+                    final_url: None,
                     status: 0,
                     html: None,
                     text: None,
@@ -915,6 +931,7 @@ pub fn fetch_via_cdp(
         return (
             CrawlResult {
                 url: url.to_string(),
+                final_url: None,
                 status: 0,
                 html: None,
                 text: None,
@@ -940,6 +957,7 @@ pub fn fetch_via_cdp(
         return (
             CrawlResult {
                 url: url.to_string(),
+                final_url: None,
                 status: 0,
                 html: None,
                 text: None,
@@ -1026,6 +1044,7 @@ pub fn fetch_via_cdp(
             return (
                 CrawlResult {
                     url: url.to_string(),
+                    final_url: None,
                     status: 0,
                     html: None,
                     text: None,
@@ -1084,6 +1103,7 @@ pub fn fetch_via_cdp(
     (
         CrawlResult {
             url: url.to_string(),
+            final_url: None,
             status: 200,
             html: Some(html),
             text: Some(text),
@@ -1392,6 +1412,7 @@ pub async fn fetch_with_client_cdp(
         (
             CrawlResult {
                 url: url.to_string(),
+                final_url: None,
                 status: 0,
                 html: None,
                 text: None,

@@ -405,6 +405,7 @@ def preprocess_data(data_json):
     source_url = payload.get("source_url", "https://www.oreka.vn")
     project_id = payload.get("project_id", "")
     db_path = payload.get("db_path", "")
+    config = payload.get("config", {})
     store_id = _extract_store_id_from_html(html) or _extract_store_id_from_html(source_url)
 
     if not store_id:
@@ -458,6 +459,20 @@ def preprocess_data(data_json):
                 f"[OrekaShop][preprocess] Loi fetch page {page_num}: {e}", "error"
             )
             break
+
+        # Detect redirect: neu final_url khac page_url va khong co page parameter => redirect ve trang 1
+        final_url = result.get("final_url", "") if isinstance(result, dict) else ""
+        if final_url and final_url != page_url:
+            parsed_final = urllib.parse.urlparse(final_url)
+            parsed_original = urllib.parse.urlparse(page_url)
+            final_params = urllib.parse.parse_qs(parsed_final.query)
+            original_params = urllib.parse.parse_qs(parsed_original.query)
+            
+            # Neu final_url khong co page parameter hoac page parameter khac => redirect
+            if "page" not in final_params or final_params.get("page", ["1"])[0] != original_params.get("page", ["1"])[0]:
+                crawlflow.log(f"[OrekaShop][preprocess] Phat hien redirect tu trang {page_num} ve trang khac (final_url={final_url})", "warn")
+                crawlflow.log(f"[OrekaShop][preprocess] Da het trang, dung tai trang {page_num}", "info")
+                break
 
         if not listing_html:
             crawlflow.log(
@@ -1072,6 +1087,20 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
             crawlflow.log(f"[OrekaShop] Loi fetch listing page {page_num}: {e}", "error")
             break
 
+        # Detect redirect: neu final_url khac page_url va khong co page parameter => redirect ve trang 1
+        final_url = listing_result.get("final_url", "") if isinstance(listing_result, dict) else ""
+        if final_url and final_url != page_url:
+            parsed_final = urllib.parse.urlparse(final_url)
+            parsed_original = urllib.parse.urlparse(page_url)
+            final_params = urllib.parse.parse_qs(parsed_final.query)
+            original_params = urllib.parse.parse_qs(parsed_original.query)
+            
+            # Neu final_url khong co page parameter hoac page parameter khac => redirect
+            if "page" not in final_params or final_params.get("page", ["1"])[0] != original_params.get("page", ["1"])[0]:
+                crawlflow.log(f"[OrekaShop] Phat hien redirect tu trang {page_num} ve trang khac (final_url={final_url})", "warn")
+                crawlflow.log(f"[OrekaShop] Da het trang, dung tai trang {page_num}", "info")
+                break
+
         listing_html = listing_result.get("body", "") if isinstance(listing_result, dict) else ""
         if not listing_html:
             crawlflow.log(f"[OrekaShop] Listing page {page_num} rong", "warn")
@@ -1124,17 +1153,30 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
 
         for p_url in product_urls:
             if p_url in seen_urls:
+                crawlflow.log(f"[OrekaShop] Bo qua URL trung lap: {p_url}", "debug")
                 continue
             seen_urls.add(p_url)
+            crawlflow.log(f"[OrekaShop] Fetch product ({len(seen_urls)}/{len(product_urls)} trang {page_num}): {p_url}", "info")
+            t0 = time.time()
             try:
                 praw = _fetch(p_url)
                 pres = json.loads(praw) if isinstance(praw, str) else praw
                 phtml = pres.get("body", "") if isinstance(pres, dict) else ""
+                elapsed_ms = int((time.time() - t0) * 1000)
                 if phtml:
                     prod = _parse_product_from_html(phtml, p_url)
                     products.append(prod)
+                    name = prod.get("name") or prod.get("title") or "(khong ten)"
+                    price = prod.get("price") or prod.get("current_price") or ""
+                    crawlflow.log(
+                        f"[OrekaShop] OK {elapsed_ms}ms — \"{name}\"" + (f" | gia: {price}" if price else "") + f" | {p_url}",
+                        "info",
+                    )
+                else:
+                    crawlflow.log(f"[OrekaShop] Canh bao: HTML rong sau {elapsed_ms}ms — {p_url}", "warn")
             except Exception as e:
-                crawlflow.log(f"[OrekaShop] Loi fetch product {p_url}: {e}", "warn")
+                elapsed_ms = int((time.time() - t0) * 1000)
+                crawlflow.log(f"[OrekaShop] Loi fetch product sau {elapsed_ms}ms — {p_url} — {e}", "warn")
 
         # Tiep tuc phan trang: reqwest da lay xong HTML listing, giao cho
         # Python tim nut "next page" trong chinh HTML do (khong fetch them).
@@ -1231,8 +1273,11 @@ def process_data(data_json, config_json):
     data = json.loads(data_json) if isinstance(data_json, str) else data_json
     config = json.loads(config_json) if isinstance(config_json, str) else config_json
 
+    total = len(data)
+    crawlflow.log(f"[OrekaShop][process] Bat dau chuan hoa {total} san pham", "info")
+
     normalized = []
-    for item in data:
+    for idx, item in enumerate(data, 1):
         norm = {
             "url": item.get("url", ""),
             "name": item.get("name", "").strip(),
@@ -1247,8 +1292,15 @@ def process_data(data_json, config_json):
             "crawled_at": item.get("crawled_at", datetime.now().strftime("%Y-%m-%dT%H:%M:%S")),
             "specs": item.get("specs", {}),
         }
+        name = norm["name"] or "(khong ten)"
+        price_str = f" | gia: {norm['price']}" if norm["price"] else ""
+        crawlflow.log(
+            f"[OrekaShop][process] [{idx}/{total}] \"{name}\"{price_str} | {norm['url']}",
+            "debug",
+        )
         normalized.append(norm)
 
+    crawlflow.log(f"[OrekaShop][process] Hoan tat chuan hoa {len(normalized)}/{total} san pham", "info")
     return json.dumps(normalized)
 
 

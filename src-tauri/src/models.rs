@@ -349,6 +349,7 @@ pub struct ExtractRule {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlResult {
     pub url: String,
+    pub final_url: Option<String>,
     pub status: u16,
     pub html: Option<String>,
     pub text: Option<String>,

@@ -443,43 +443,87 @@ impl WorkerEngine {
         ) -> Result<serde_json::Value, String>,
         mut filter_parsed: Option<&mut dyn FnMut(&serde_json::Value) -> serde_json::Value>,
         max_retries: u32,
+        log_manager: Option<(&std::sync::Arc<crate::logs::LogManager>, &str)>,
     ) -> Result<ProcessResult, String> {
         let mut processed = 0i64;
         let mut failed = 0i64;
         let mut results = Vec::new();
 
+        // Helper: emit to LogManager when available, fallback to Rust logger.
+        let log_info = |msg: &str| {
+            if let Some((lm, pid)) = log_manager {
+                lm.info(pid, "processing", msg);
+            } else {
+                log::info!("{}", msg);
+            }
+        };
+        let log_warn = |msg: &str| {
+            if let Some((lm, pid)) = log_manager {
+                lm.warn(pid, "processing", msg);
+            } else {
+                log::warn!("{}", msg);
+            }
+        };
+        let log_error = |msg: &str| {
+            if let Some((lm, pid)) = log_manager {
+                lm.error(pid, "processing", msg);
+            } else {
+                log::error!("{}", msg);
+            }
+        };
+
         for item in items {
             let mut retry_count = 0;
+
+            // Truncate long URLs for readable log lines.
+            let short_url = if item.source_url.len() > 120 {
+                format!("{}…", &item.source_url[..120])
+            } else {
+                item.source_url.clone()
+            };
 
             loop {
                 // Step 1 — mark as processing
                 let _ = repo.update_status(item.id, "processing");
 
+                if retry_count == 0 {
+                    log_info(&format!(
+                        "[worker={}] Fetching item #{} — {}",
+                        worker.name, item.id, short_url
+                    ));
+                } else {
+                    log_warn(&format!(
+                        "[worker={}] Retry {}/{} for item #{} — {}",
+                        worker.name, retry_count, max_retries, item.id, short_url
+                    ));
+                }
+
                 // Step 2 — fetch detail page + parse HTML
+                let fetch_start = std::time::Instant::now();
                 let parsed_data = match Self::fetch_and_parse_item(repo, item, worker) {
                     Ok(data) => {
+                        let elapsed_ms = fetch_start.elapsed().as_millis();
                         let filtered = if let Some(f) = filter_parsed.as_mut() {
                             f(&data)
                         } else {
                             data
                         };
-                        log::info!(
-                            "[worker::{}] Fetched+parsed item {} → {} (attempt {})",
-                            worker.name,
-                            item.id,
-                            item.source_url,
-                            retry_count + 1
-                        );
+                        // Count extracted fields for the log summary.
+                        let field_count = filtered.as_object().map(|o| o.len()).unwrap_or(0);
+                        log_info(&format!(
+                            "[worker={}] Fetched+parsed item #{} in {}ms — {} fields extracted — {}",
+                            worker.name, item.id, elapsed_ms, field_count, short_url
+                        ));
                         filtered
                     }
                     Err(e) => {
-                        log::error!(
-                            "[worker::{}] Fetch/parse failed for item {} (attempt {}): {}",
-                            worker.name,
-                            item.id,
-                            retry_count + 1,
-                            e
-                        );
+                        let elapsed_ms = fetch_start.elapsed().as_millis();
+                        log_error(&format!(
+                            "[worker={}] Fetch failed item #{} in {}ms (attempt {}/{}) — {} — error: {}",
+                            worker.name, item.id, elapsed_ms,
+                            retry_count + 1, max_retries + 1,
+                            short_url, e
+                        ));
                         if retry_count < max_retries {
                             retry_count += 1;
                             std::thread::sleep(std::time::Duration::from_millis(
@@ -527,6 +571,11 @@ impl WorkerEngine {
                         None,
                     );
 
+                    log_info(&format!(
+                        "[worker={}] item #{} — running processor '{}' (step {})",
+                        worker.name, item.id, step.processor_type, step_idx + 1
+                    ));
+
                     match execute_processor(&step.processor_type, &step.config, &current_data) {
                         Ok(output) => {
                             current_data = output;
@@ -557,14 +606,11 @@ impl WorkerEngine {
                                 None,
                                 Some(&e),
                             );
-                            log::error!(
-                                "[worker::{}] Processor '{}' failed on item {} (attempt {}): {}",
-                                worker.name,
-                                step.processor_type,
-                                item.id,
-                                retry_count + 1,
-                                e
-                            );
+                            log_error(&format!(
+                                "[worker={}] Processor '{}' failed on item #{} (attempt {}/{}) — error: {}",
+                                worker.name, step.processor_type, item.id,
+                                retry_count + 1, max_retries + 1, e
+                            ));
                             let _ = repo.update_status(item.id, "error");
                             failed += 1;
                             item_failed = true;
@@ -593,6 +639,10 @@ impl WorkerEngine {
                     );
                     let _ = repo.update_status(item.id, "done");
                     processed += 1;
+                    log_info(&format!(
+                        "[worker={}] Done item #{} — {} processor step(s) — {}",
+                        worker.name, item.id, step_index + 1, short_url
+                    ));
                     results.push(ProcessItemResult {
                         item_id: item.id,
                         source_url: item.source_url.clone(),
