@@ -1264,6 +1264,19 @@ pub fn get_app_setting_cmd(key: String) -> Result<Option<String>, String> {
         .prepare("SELECT value FROM app_settings WHERE key = ?1")
         .map_err(|e| format!("Failed to prepare: {}", e))?;
     let result: Option<String> = stmt.query_row([&key], |row| row.get(0)).ok();
+
+    // When the export dir is requested but never set, auto-detect the OS
+    // Downloads folder (saved to app_settings) and return it as the default.
+    if key == "export_dir" {
+        if let Some(ref v) = result {
+            if !v.trim().is_empty() {
+                return Ok(result);
+            }
+        }
+        let detected = crate::services::read_global_export_dir();
+        return Ok(detected);
+    }
+
     Ok(result)
 }
 

@@ -760,6 +760,31 @@ pub fn page_number_from_url(url: &str) -> Option<i64> {
     None
 }
 
+/// Ensure the `crawl_pages` tracking table exists in a connection opened
+/// directly by path (bypassing `RawItemRepository::init()`), so older project
+/// DBs created before the table was introduced don't error on upsert.
+fn ensure_crawl_pages_table(conn: &rusqlite::Connection) -> Result<(), String> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS crawl_pages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            page_url TEXT NOT NULL,
+            page_number INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            item_count INTEGER NOT NULL DEFAULT 0,
+            error TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )",
+        [],
+    )
+    .map_err(|e| format!("Failed to create crawl_pages table: {}", e))?;
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_crawl_pages_url ON crawl_pages(page_url)",
+        [],
+    )
+    .map_err(|e| format!("Failed to create crawl_pages index: {}", e))?;
+    Ok(())
+}
+
 /// Mark a listing page done directly from a project DB path (no live
 /// `RawItemRepository` needed). Used by callers that only hold the path.
 pub fn mark_page_done_by_path(
@@ -769,6 +794,7 @@ pub fn mark_page_done_by_path(
     item_count: i64,
 ) -> Result<(), String> {
     let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+    ensure_crawl_pages_table(&conn)?;
     conn.execute(
         "INSERT INTO crawl_pages (page_url, page_number, status, item_count, updated_at)
          VALUES (?1, ?2, 'done', ?3, datetime('now'))
@@ -789,6 +815,7 @@ pub fn get_done_pages(db_path: &std::path::Path) -> std::collections::HashSet<i6
         Ok(c) => c,
         Err(_) => return std::collections::HashSet::new(),
     };
+    let _ = ensure_crawl_pages_table(&conn);
     let mut set = std::collections::HashSet::new();
     let mut stmt = match conn.prepare("SELECT page_number FROM crawl_pages WHERE status = 'done'") {
         Ok(s) => s,

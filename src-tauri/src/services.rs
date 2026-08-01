@@ -57,7 +57,7 @@ fn master_db_path() -> std::path::PathBuf {
 /// Read the global `export_dir` from `app_settings`. If empty and not yet
 /// scanned, auto-detect the OS Downloads folder, save it, and set the
 /// scanned flag so the slow scan runs only once.
-fn read_global_export_dir() -> Option<String> {
+pub fn read_global_export_dir() -> Option<String> {
     let conn = rusqlite::Connection::open(master_db_path()).ok()?;
 
     // 1. Check if already set by user
