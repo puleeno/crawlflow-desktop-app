@@ -1318,7 +1318,10 @@ def export_data(data_json, config_json):
     config = json.loads(config_json) if isinstance(config_json, str) else config_json
 
     project_id = config.get("project_id", "default")
-    output_dir = config.get("output_dir", os.getcwd())
+    output_dir = config.get("output_dir")
+    if not output_dir:
+        # Mac dinh dung thu muc Downloads cua user hien tai
+        output_dir = os.path.join(os.path.expanduser("~"), "Downloads")
     os.makedirs(output_dir, exist_ok=True)
 
     # Lay ten shop tu URL
