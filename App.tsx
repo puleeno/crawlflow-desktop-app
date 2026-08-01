@@ -267,7 +267,11 @@ const App: React.FC = () => {
           const p = event.payload;
           setServiceStatus(p.status || 'stopped');
           setServiceCycleCount(p.cycle_count || 0);
-          if (p.progress) setServiceProgress(p.progress);
+          // Only update progress from Tauri event if WebSocket hasn't provided progress yet
+          // This prevents SQLite-poll progress from overriding more up-to-date WebSocket progress
+          if (p.progress && (!serviceProgress || serviceProgress.items_total === 0)) {
+            setServiceProgress(p.progress);
+          }
           // Connect / re-connect to the live WS channel.
           wsRef.current?.connect(p.ws_port || 0);
         });
