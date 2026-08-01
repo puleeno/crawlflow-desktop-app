@@ -77,10 +77,20 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
                 await listen<any>('service-status-update', (event) => {
                     const payload = event.payload;
                     if (payload && payload.project_id && payload.info) {
-                        setServiceInfos((prev) => ({
-                            ...prev,
-                            [payload.project_id]: payload.info as ServiceInfo,
-                        }));
+                        setServiceInfos((prev) => {
+                            const existing = prev[payload.project_id];
+                            const newInfo = payload.info as ServiceInfo;
+                            // Preserve WebSocket progress if it exists, as it's more up-to-date
+                            const shouldPreserveProgress = existing && existing.progress && 
+                                (existing.progress.items_total > 0 || existing.progress.items_processed > 0);
+                            return {
+                                ...prev,
+                                [payload.project_id]: {
+                                    ...newInfo,
+                                    progress: shouldPreserveProgress ? existing.progress : newInfo.progress,
+                                },
+                            };
+                        });
                     }
                 });
             } catch (_) { /* not in tauri */ }
