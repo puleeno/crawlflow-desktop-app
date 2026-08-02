@@ -173,7 +173,7 @@ def register_presets():
                             "extractFrom": "html-element",
                             "id": "preset-ecom-html-1",
                             "name": "product_name",
-                            "selector": "h1.styles_nameProduct__QSdsj.mt-2",
+                            "selector": "h1",
                         },
                         {
                             "extract": "text",
