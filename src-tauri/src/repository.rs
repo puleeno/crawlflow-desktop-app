@@ -196,12 +196,20 @@ impl RawItemRepository {
         let mut ids: Vec<i64> = Vec::new();
 
         for item in items {
-            // Check existing by hash
+            // Check existing by hash OR by the same (source_url, item_type).
+            // The `/OR` guard catches the case where a plugin persists raw items
+            // itself (e.g. sha256 of the URL) and later returns the very same
+            // products to the pipeline, which hashes the source_url differently.
+            // Without it the same product is stored twice with two different
+            // hashes, doubling the matched/processed item count.
             let existing: Option<i64> = self
                 .conn
                 .query_row(
-                    "SELECT id FROM raw_items WHERE item_hash = ?1",
-                    params![item.item_hash],
+                    "SELECT id FROM raw_items
+                     WHERE item_hash = ?1
+                        OR (source_url = ?2 AND item_type = ?3)
+                     ORDER BY id LIMIT 1",
+                    params![item.item_hash, item.source_url, item.item_type],
                     |row| row.get(0),
                 )
                 .ok();
