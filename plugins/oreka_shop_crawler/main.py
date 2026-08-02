@@ -226,7 +226,7 @@ def register_presets():
                                 " > div.styles_containerOutstanding__CHgHx:nth-of-type(2)"
                                 " > div > div.flex.styles_itemInfo__FFfqL:nth-of-type(1)"
                                 " > div.styles_customContainerBc__j_y_v"
-                                " > ul.flex.container.mx-auto.py-4.flex-wrap.styles_customUl__Z_Nd_ li"
+                                " > ul.flex.container.mx-auto.py-4.flex-wrap.styles_customUl__Z_Nd_ li a"
                             ),
                             "extract": "text",
                             "extractMultiple": True,
@@ -783,7 +783,7 @@ def _clean_category(value):
     """Chuan hoa chuoi category:
     - Loai bo dau '>' (va cac ky tu phan tach breadcrumb nhu ; | / › >>)
     - Bo 2 items dau tien (thuong la 'Oreka', 'Đồ cũ')
-    - Noi cac phan con lai bang '; '
+    - Noi cac phan con lai bang ';'
     """
     if value is None:
         return ""
@@ -803,7 +803,7 @@ def _clean_category(value):
     # Bo 2 phan dau tien
     if len(cleaned) > 2:
         cleaned = cleaned[2:]
-    return "; ".join(cleaned)
+    return ";".join(cleaned)
 
 
 # Kich thuoc anh lon nhat duoc ho tro boi static.oreka.vn CDN
