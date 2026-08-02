@@ -61,159 +61,203 @@ def register_presets():
         "project_settings": {
             "name": "Oreka Shop - {shop_name}",
             "description": "Crawl sản phẩm từ shop oreka.vn",
+            "enabled": True,
             "crawlDelay": 1500,
             "userAgent": "CrawlFlow/1.0",
             "concurrency": 1,
             "executionMode": "queue",
+            "groupExport": True,
+            "groupFormat": "name",
+            "refreshStrategy": "refresh",
+            "updateMethod": "check_first_page_until_duplicate",
+            "refreshInterval": 3600
         },
         "nodes": [
             {
                 "id": "ds-oreka",
                 "type": "start",
-                "label": "Oreka Shop Source",
-                "position": {"x": 50, "y": 50},
+                "position": {
+                    "x": 50,
+                    "y": 50
+                },
                 "data": {
-                    "pluginSourceType": "oreka-shop-crawler",
-                    "sourceType": "url",
-                    "sourceValue": "",
                     "pluginConfig": {
                         "shop_url": ""
                     },
+                    "pluginSourceType": "oreka-shop-crawler",
+                    "sourceType": "url",
+                    "sourceValue": "",
                     "urlSettings": {
                         "httpClient": {
                             "clientType": "reqwest",
-                            "headless": False,
-                        },
-                    },
+                            "headless": False
+                        }
+                    }
                 },
+                "deletable": True,
+                "draggable": True,
+                "width": 320,
+                "height": 127,
+                "zIndex": 0,
+                "parentNode": None
             },
             {
                 "id": "pre-1",
                 "type": "preprocessor",
-                "label": "Preprocess HTML",
-                "position": {"x": -568, "y": 38},
+                "position": {
+                    "x": -568,
+                    "y": 38
+                },
                 "data": {
-                    "inputType": "html",
-                    "itemSelector": ".mt-12.grid.grid-cols-5.gap-10",
                     "csvDelimiter": ",",
                     "csvHasHeader": True,
+                    "extractRules": [],
+                    "inputType": "html",
+                    "itemSelector": ".mt-12.grid.grid-cols-5.gap-10",
                     "jsonItemPath": "",
                     "urlPatterns": [
                         {
                             "enabled": True,
                             "type": "regex",
-                            "value": ".*-detail\\/[0-9]{1,}\\/?",
-                        },
-                    ],
-                    "extractRules": [],
+                            "value": ".*-detail\\/[0-9]{1,}\\/?"
+                        }
+                    ]
                 },
+                "deletable": True,
+                "draggable": True,
+                "width": 320,
+                "height": 316,
+                "zIndex": 0,
+                "selected": False,
+                "dragging": False
             },
             {
                 "id": "repository-node",
                 "type": "repository",
-                "label": "Raw Data Repository",
-                "position": {"x": 50, "y": 329},
+                "position": {
+                    "x": 50,
+                    "y": 329
+                },
                 "data": {},
+                "deletable": True,
+                "draggable": True,
+                "width": 320,
+                "height": 183,
+                "zIndex": 0,
+                "parentNode": None
             },
             {
                 "id": "worker-1",
                 "type": "worker",
-                "label": "Product Detail Filter",
-                "position": {"x": 40, "y": 641},
+                "position": {
+                    "x": 40,
+                    "y": 641
+                },
                 "data": {
                     "detectionLogic": "and",
                     "detectionRules": [
                         {
-                            "id": "1783651265684",
-                            "type": "url-format",
-                            "selector": "",
                             "condition": "exists",
-                            "value": "",
+                            "id": "1783651265684",
                             "pattern": ".*-detail\\/[0-9]{1,}\\/?",
-                        },
-                    ],
+                            "selector": "",
+                            "type": "url-format",
+                            "value": ""
+                        }
+                    ]
                 },
+                "deletable": True,
+                "draggable": True,
+                "width": 320,
+                "height": 211,
+                "zIndex": 0,
+                "parentNode": None
             },
             {
                 "id": "ext-1",
                 "type": "html-data-extractor",
-                "label": "Extract Product Data",
-                "position": {"x": -423, "y": 426},
+                "position": {
+                    "x": -492.44587280108254,
+                    "y": 435.9208389715832
+                },
                 "data": {
-                    "presets": ["ecommerce-product"],
                     "customRules": [
                         {
+                            "extract": "text",
+                            "extractFrom": "html-element",
                             "id": "preset-ecom-html-1",
                             "name": "product_name",
-                            "extractFrom": "html-element",
-                            "selector": "h1.styles_nameProduct__QSdsj.mt-2",
-                            "extract": "text",
+                            "selector": "h1.styles_nameProduct__QSdsj.mt-2"
                         },
                         {
+                            "extract": "text",
+                            "extractFrom": "html-element",
                             "id": "preset-ecom-html-2",
                             "name": "price",
-                            "extractFrom": "html-element",
-                            "selector": "p.font-semibold.text-16.leading-8.text-black-600.line-clamp-1.break-all.styles_productPrice__zkPlt",
-                            "extract": "text",
+                            "selector": "p.font-semibold.text-16.leading-8.text-black-600.line-clamp-1.break-all.styles_productPrice__zkPlt"
                         },
                         {
-                            "id": "preset-ecom-html-3",
-                            "name": "sku",
+                            "extract": "text",
                             "extractFrom": "json-ld",
+                            "id": "preset-ecom-html-3",
                             "jsonPath": "offers.sku",
-                            "extract": "text",
+                            "name": "sku"
                         },
                         {
+                            "extract": "html",
+                            "extractFrom": "html-element",
                             "id": "preset-ecom-html-4",
                             "name": "description",
-                            "extractFrom": "html-element",
-                            "selector": "div.mt-6.whitespace-pre-wrap > p.text",
-                            "extract": "html",
+                            "selector": "div.mt-6.whitespace-pre-wrap > p.text"
                         },
                         {
+                            "attribute": "src",
+                            "extract": "attribute",
+                            "extractFrom": "html-element",
                             "id": "preset-ecom-html-5",
                             "name": "image_url",
-                            "extractFrom": "html-element",
-                            "selector": "img.styles_imageThumb__OYuNp.object-cover.rounded-md",
-                            "extract": "attribute",
-                            "attribute": "src",
+                            "selector": "img.styles_imageThumb__OYuNp.object-cover.rounded-md"
                         },
                         {
+                            "attribute": "src",
+                            "extract": "attribute",
+                            "extractFrom": "html-element",
+                            "extractMultiple": True,
                             "id": "preset-ecom-html-6",
                             "name": "images",
-                            "extractFrom": "html-element",
-                            "selector": ".image-gallery-thumbnail img",
-                            "extract": "attribute",
-                            "attribute": "src",
-                            "extractMultiple": True,
+                            "selector": ".image-gallery-thumbnail img"
                         },
+                        {
+                            "id": "1785642132986",
+                            "name": "category",
+                            "extractFrom": "html-element",
+                            "selector": "#__next > div.bg-\\[\\#F7F7F7\\]:nth-of-type(4) > div.bg-black-f3:nth-of-type(5) > div.container.mx-auto.mb-12.pb-20.styles_mainContainer__VzpQg > div.flex.styles_mainContainerSeller__7DVE5:nth-of-type(3) > div.flex-1.styles_aboutSeller__kHT9J:nth-of-type(1) > div.styles_containerOutstanding__CHgHx:nth-of-type(2) > div > div.flex.styles_itemInfo__FFfqL:nth-of-type(1) > div.styles_customContainerBc__j_y_v > ul.flex.container.mx-auto.py-4.flex-wrap.styles_customUl__Z_Nd_ li",
+                            "extract": "text",
+                            "extractMultiple": True
+                        }
                     ],
+                    "presets": [
+                        "ecommerce-product"
+                    ],
+                    "inspectorUrl": "https://www.oreka.vn/mua-ban-sach-thieu-nhi/bo-sach-nhung-cam-xuc-nho-quan-trong-cua-be--6-cuon----bia-cung--in-mau-detail/1088773",
+                    "inspectorLoading": False,
+                    "inspectorHtmlContent": ""
                 },
-            },
-            {
-                "id": "proc-1",
-                "type": "processor",
-                "label": "Excel Export",
-                "position": {"x": 52, "y": 914},
-                "data": {
-                    "processorType": "generate-excel-file",
-                    "settings": {
-                        "fileName": "crawl_results_{{date}}.xlsx",
-                        "sheetName": "Sheet1",
-                        "includeHeader": True,
-                        "autoMapHeaders": True,
-                        "columnMapping": {},
-                    },
-                },
-            },
+                "deletable": True,
+                "draggable": True,
+                "width": 320,
+                "height": 450,
+                "zIndex": 0,
+                "selected": False,
+                "dragging": False
+            }
         ],
         "edges": [
             {"id": "e-ds-pre", "source": "ds-oreka", "target": "pre-1"},
             {"id": "e-pre-repo", "source": "pre-1", "target": "repository-node"},
             {"id": "e-repo-worker", "source": "repository-node", "target": "worker-1"},
-            {"id": "e-ext-worker", "source": "ext-1", "target": "worker-1"},
-            {"id": "e-worker-proc", "source": "worker-1", "target": "proc-1"},
-        ],
+            {"id": "e-ext-worker", "source": "ext-1", "target": "worker-1"}
+        ]
     }
     return json.dumps([preset])
 
@@ -468,9 +512,13 @@ def preprocess_data(data_json):
             final_params = urllib.parse.parse_qs(parsed_final.query)
             original_params = urllib.parse.parse_qs(parsed_original.query)
             
+            # Lay page number tu final_url (mac dinh la 1 neu khong co page parameter)
+            final_page = int(final_params.get("page", ["1"])[0])
+            original_page = int(original_params.get("page", ["1"])[0])
+            
             # Neu final_url khong co page parameter hoac page parameter khac => redirect
-            if "page" not in final_params or final_params.get("page", ["1"])[0] != original_params.get("page", ["1"])[0]:
-                crawlflow.log(f"[OrekaShop][preprocess] Phat hien redirect tu trang {page_num} ve trang khac (final_url={final_url})", "warn")
+            if final_page != original_page:
+                crawlflow.log(f"[OrekaShop][preprocess] Phat hien redirect tu trang {original_page} ve trang {final_page} (final_url={final_url})", "warn")
                 crawlflow.log(f"[OrekaShop][preprocess] Da het trang, dung tai trang {page_num}", "info")
                 break
 
