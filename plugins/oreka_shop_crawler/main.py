@@ -504,7 +504,7 @@ def preprocess_data(data_json):
             )
             break
 
-        # Detect redirect: neu final_url khac page_url va khong co page parameter => redirect ve trang 1
+        # Detect redirect: chi break neu thuc su redirect ve trang 1 khi dang o trang > 1
         final_url = result.get("final_url", "") if isinstance(result, dict) else ""
         if final_url and final_url != page_url:
             parsed_final = urllib.parse.urlparse(final_url)
@@ -516,10 +516,11 @@ def preprocess_data(data_json):
             final_page = int(final_params.get("page", ["1"])[0])
             original_page = int(original_params.get("page", ["1"])[0])
             
-            # Neu final_url khong co page parameter hoac page parameter khac => redirect
-            if final_page != original_page:
-                crawlflow.log(f"[OrekaShop][preprocess] Phat hien redirect tu trang {original_page} ve trang {final_page} (final_url={final_url})", "warn")
-                crawlflow.log(f"[OrekaShop][preprocess] Da het trang, dung tai trang {page_num}", "info")
+            # Chi break neu redirect tu trang > 1 ve trang 1 (het trang)
+            # Khong break chi vi parameter doi thu tu
+            if original_page > 1 and final_page == 1:
+                crawlflow.log(f"[OrekaShop][preprocess] Phat hien redirect tu trang {original_page} ve trang 1 (het trang)", "warn")
+                crawlflow.log(f"[OrekaShop][preprocess] Dung tai trang {page_num}", "info")
                 break
 
         if not listing_html:
@@ -1135,7 +1136,7 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
             crawlflow.log(f"[OrekaShop] Loi fetch listing page {page_num}: {e}", "error")
             break
 
-        # Detect redirect: neu final_url khac page_url va khong co page parameter => redirect ve trang 1
+        # Detect redirect: chi break neu thuc su redirect ve trang 1 khi dang o trang > 1
         final_url = listing_result.get("final_url", "") if isinstance(listing_result, dict) else ""
         if final_url and final_url != page_url:
             parsed_final = urllib.parse.urlparse(final_url)
@@ -1143,10 +1144,15 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
             final_params = urllib.parse.parse_qs(parsed_final.query)
             original_params = urllib.parse.parse_qs(parsed_original.query)
             
-            # Neu final_url khong co page parameter hoac page parameter khac => redirect
-            if "page" not in final_params or final_params.get("page", ["1"])[0] != original_params.get("page", ["1"])[0]:
-                crawlflow.log(f"[OrekaShop] Phat hien redirect tu trang {page_num} ve trang khac (final_url={final_url})", "warn")
-                crawlflow.log(f"[OrekaShop] Da het trang, dung tai trang {page_num}", "info")
+            # Lay page number tu final_url (mac dinh la 1 neu khong co page parameter)
+            final_page = int(final_params.get("page", ["1"])[0])
+            original_page = int(original_params.get("page", ["1"])[0])
+            
+            # Chi break neu redirect tu trang > 1 ve trang 1 (het trang)
+            # Khong break chi vi parameter doi thu tu
+            if original_page > 1 and final_page == 1:
+                crawlflow.log(f"[OrekaShop] Phat hien redirect tu trang {original_page} ve trang 1 (het trang)", "warn")
+                crawlflow.log(f"[OrekaShop] Dung tai trang {page_num}", "info")
                 break
 
         listing_html = listing_result.get("body", "") if isinstance(listing_result, dict) else ""

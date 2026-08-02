@@ -25,7 +25,12 @@
     ],
     "externalBin": [
       "binaries/crawlflow-service"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    }
   },
   "app": {
     "windows": [

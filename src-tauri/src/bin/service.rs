@@ -1160,6 +1160,9 @@ fn run_as_console(args: &[String]) {
     let mut run_all = false;
     let mut interval_secs: u64 = 60;
     let mut is_service_mode = false;
+    let mut install_service = false;
+    let mut uninstall_service = false;
+    let mut data_dir_override: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -1168,9 +1171,23 @@ fn run_as_console(args: &[String]) {
             "--all" => { run_all = true; }
             "--interval" => { i += 1; interval_secs = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(60); }
             "--service" => { is_service_mode = true; }
+            "--install" => { install_service = true; }
+            "--uninstall" => { uninstall_service = true; }
+            "--data-dir" => { i += 1; data_dir_override = args.get(i).cloned(); }
             _ => {}
         }
         i += 1;
+    }
+
+    // Handle service installation/uninstallation
+    if install_service {
+        install_windows_service(data_dir_override);
+        return;
+    }
+
+    if uninstall_service {
+        uninstall_windows_service();
+        return;
     }
 
     if target_project.is_none() && !run_all {
@@ -1178,6 +1195,8 @@ fn run_as_console(args: &[String]) {
         eprintln!("Usage:");
         eprintln!("  crawlflow-service --project <PROJECT_ID> [--interval <SECONDS>]");
         eprintln!("  crawlflow-service --all [--interval <SECONDS>]");
+        eprintln!("  crawlflow-service --install [--data-dir <PATH>]");
+        eprintln!("  crawlflow-service --uninstall");
         std::process::exit(1);
     }
 
@@ -1317,6 +1336,9 @@ fn run_as_console(args: &[String]) {
 
 #[cfg(target_os = "windows")]
 const SERVICE_NAME: &str = "CrawlFlowService";
+
+#[cfg(target_os = "windows")]
+const SERVICE_DISPLAY_NAME: &str = "CrawlFlow Background Service";
 
 #[cfg(target_os = "windows")]
 fn run_as_windows_service() {
@@ -1514,4 +1536,97 @@ fn service_main_entry(_arguments: Vec<std::ffi::OsString>) {
         process_id: None,
     });
     svc_log!("[SERVICE] All stopped. Goodbye.");
+}
+
+#[cfg(target_os = "windows")]
+fn install_windows_service(data_dir_override: Option<String>) {
+    println!("[SERVICE] Installing Windows Service using sc command...");
+    
+    // Get current executable path
+    let exe_path = std::env::current_exe()
+        .expect("Failed to get current executable path");
+    
+    // Build service binary path
+    let service_path = exe_path.parent()
+        .expect("Failed to get parent directory")
+        .join("crawlflow-service.exe");
+    
+    let service_path_str = service_path.to_string_lossy().to_string();
+    
+    // Get data directory
+    let data_dir = data_dir_override.unwrap_or_else(|| {
+        dirs_next::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("com.CrawlFlow.desktop")
+            .to_string_lossy()
+            .to_string()
+    });
+    
+    // Build command with data-dir override
+    let bin_path = format!("\"{}\" --service --all --data-dir \"{}\"", service_path_str, data_dir);
+    
+    println!("[SERVICE] Service path: {}", service_path_str);
+    println!("[SERVICE] Command: {}", bin_path);
+    
+    // Use sc command to create service
+    let output = std::process::Command::new("sc")
+        .args([
+            "create",
+            "CrawlFlowService",
+            "binPath=",
+            &bin_path,
+            "start=",
+            "auto",
+            "DisplayName=",
+            "CrawlFlow Background Service",
+        ])
+        .output()
+        .expect("Failed to execute sc create");
+
+    if output.status.success() {
+        println!("[SERVICE] Service installed successfully");
+        println!("[SERVICE] Service name: CrawlFlowService");
+        println!("[SERVICE] To start the service, run: sc start CrawlFlowService");
+    } else {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let err_out = String::from_utf8_lossy(&output.stdout);
+        eprintln!("[SERVICE] Failed to create service: {} {}", err.trim(), err_out.trim());
+        std::process::exit(1);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn uninstall_windows_service() {
+    println!("[SERVICE] Uninstalling Windows Service...");
+    
+    // Stop service first
+    let _ = std::process::Command::new("sc")
+        .args(["stop", "CrawlFlowService"])
+        .output();
+    
+    // Delete service
+    let output = std::process::Command::new("sc")
+        .args(["delete", "CrawlFlowService"])
+        .output()
+        .expect("Failed to execute sc delete");
+
+    if output.status.success() {
+        println!("[SERVICE] Service uninstalled successfully");
+    } else {
+        let err = String::from_utf8_lossy(&output.stderr);
+        eprintln!("[SERVICE] Failed to delete service: {}", err.trim());
+        std::process::exit(1);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn install_windows_service(_data_dir_override: Option<String>) {
+    eprintln!("[SERVICE] Service installation is only supported on Windows");
+    std::process::exit(1);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn uninstall_windows_service() {
+    eprintln!("[SERVICE] Service uninstallation is only supported on Windows");
+    std::process::exit(1);
 }

@@ -6,6 +6,7 @@ use crate::services::ServiceManager;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::State;
+use dirs_next;
 
 pub struct AppState {
     pub plugin_engine: Mutex<PluginEngine>,
@@ -1265,15 +1266,30 @@ pub fn get_app_setting_cmd(key: String) -> Result<Option<String>, String> {
         .map_err(|e| format!("Failed to prepare: {}", e))?;
     let result: Option<String> = stmt.query_row([&key], |row| row.get(0)).ok();
 
-    // When the export dir is requested but never set, auto-detect the OS
+    // When the export dir is requested but never set or empty, auto-detect the OS
     // Downloads folder (saved to app_settings) and return it as the default.
     if key == "export_dir" {
-        if let Some(ref v) = result {
-            if !v.trim().is_empty() {
-                return Ok(result);
-            }
+        let is_empty = result.as_ref().map(|v| v.trim().is_empty()).unwrap_or(true);
+        if !is_empty {
+            return Ok(result);
         }
-        let detected = crate::services::read_global_export_dir();
+        
+        // Force detect Downloads folder and save to database
+        let detected = dirs_next::download_dir()
+            .or_else(|| dirs_next::data_dir())
+            .and_then(|p| {
+                let s = p.to_string_lossy().to_string();
+                if s.is_empty() { None } else { Some(s) }
+            });
+        
+        if let Some(ref path) = detected {
+            let _ = conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES ('export_dir', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
+                rusqlite::params![path],
+            );
+            println!("[Export] Auto-detected and saved Downloads folder: {}", path);
+        }
+        
         return Ok(detected);
     }
 
