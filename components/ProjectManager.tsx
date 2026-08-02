@@ -177,6 +177,7 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
             onOpenProject(id);
         } catch (e) {
             console.error('Failed to create project:', e);
+            alert(e instanceof Error ? e.message : 'Failed to create project');
         }
         setCreating(false);
     };
@@ -197,6 +198,7 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
             onOpenProject(id);
         } catch (e) {
             console.error('Failed to create project from preset:', e);
+            alert(e instanceof Error ? e.message : 'Failed to create project from preset');
         }
         setCreating(false);
     };

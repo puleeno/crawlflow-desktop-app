@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crawlflow_lib::services::{get_export_settings, read_project_refresh_strategy};
+use crawlflow_lib::services::{get_export_settings_with_override, read_project_refresh_strategy};
 use crawlflow_lib::ws::{self, WsHub};
 
 /// Current UTC timestamp as an ISO-8601-ish string for progress/status stamps.
@@ -56,6 +56,10 @@ static mut SERVICE_LOG_FILE: Option<std::fs::File> = None;
 /// install time so the LocalSystem-launched service reads the user's DB).
 static DATA_DIR_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
+/// Export dir override passed via `--export-dir <path>` (set by the GUI at service
+/// install time so the LocalSystem-launched service writes to the user's Downloads).
+static EXPORT_DIR_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
 /// Parse `--data-dir <path>` from argv and store the override if present.
 fn parse_data_dir_override(args: &[String]) {
     let mut i = 0;
@@ -68,6 +72,25 @@ fn parse_data_dir_override(args: &[String]) {
         }
         i += 1;
     }
+}
+
+/// Parse `--export-dir <path>` from argv and store the override if present.
+fn parse_export_dir_override(args: &[String]) {
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--export-dir" {
+            if let Some(dir) = args.get(i + 1) {
+                let _ = EXPORT_DIR_OVERRIDE.set(PathBuf::from(dir));
+                let _ = std::fs::create_dir_all(dir);
+            }
+        }
+        i += 1;
+    }
+}
+
+/// Get the export dir override if set by the GUI at service install time.
+pub fn get_export_dir_override() -> Option<PathBuf> {
+    EXPORT_DIR_OVERRIDE.get().cloned()
 }
 
 fn service_log_dir() -> PathBuf {
@@ -343,6 +366,7 @@ fn list_enabled_projects() -> Result<Vec<ProjectRow>, String> {
         })
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
+        .filter(|p| !p.name.trim().is_empty()) // Skip projects with empty names
         .collect();
     Ok(rows)
 }
@@ -595,6 +619,12 @@ async fn run_project_loop(
     let db_path = project_db_path(&proj.db_path);
     let master_db = master_db_path();
 
+    // Skip projects with empty names
+    if proj.name.trim().is_empty() {
+        println!("[SERVICE] Skipping project '{}' due to empty name", project_id);
+        return;
+    }
+
     println!("[SERVICE] Initializing project '{}' ...", proj.name);
 
     // Ensure project_runtime table exists
@@ -646,7 +676,10 @@ async fn run_project_loop(
     // Resolve export settings (global export folder + per-project grouping)
     // once per project loop so the export plugin places files correctly.
     println!("[SERVICE] Resolving export settings for project '{}'...", proj.name);
-    let export_settings = get_export_settings(&project_id, &db_path);
+    let export_dir_override = get_export_dir_override()
+        .and_then(|p| p.to_str())
+        .map(|s| s.to_string());
+    let export_settings = get_export_settings_with_override(&project_id, &db_path, export_dir_override);
 
     // Resolve refresh strategy (update interval etc.)
     let (refresh_strategy, update_method, refresh_interval) =
@@ -1133,6 +1166,8 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     // Parse --data-dir BEFORE init_file_logger so the log lands in the right place.
     parse_data_dir_override(&args);
+    // Parse --export-dir so service writes to user's Downloads instead of systemprofile.
+    parse_export_dir_override(&args);
     // Initialize file logger + panic hook FIRST so every mode (console AND
     // Windows Service) writes diagnostics to the log dir on failure.
     init_file_logger();
@@ -1163,6 +1198,7 @@ fn run_as_console(args: &[String]) {
     let mut install_service = false;
     let mut uninstall_service = false;
     let mut data_dir_override: Option<String> = None;
+    let mut export_dir_override: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -1174,6 +1210,7 @@ fn run_as_console(args: &[String]) {
             "--install" => { install_service = true; }
             "--uninstall" => { uninstall_service = true; }
             "--data-dir" => { i += 1; data_dir_override = args.get(i).cloned(); }
+            "--export-dir" => { i += 1; export_dir_override = args.get(i).cloned(); }
             _ => {}
         }
         i += 1;
@@ -1181,7 +1218,7 @@ fn run_as_console(args: &[String]) {
 
     // Handle service installation/uninstallation
     if install_service {
-        install_windows_service(data_dir_override);
+        install_windows_service(data_dir_override, export_dir_override);
         return;
     }
 
@@ -1539,7 +1576,7 @@ fn service_main_entry(_arguments: Vec<std::ffi::OsString>) {
 }
 
 #[cfg(target_os = "windows")]
-fn install_windows_service(data_dir_override: Option<String>) {
+fn install_windows_service(data_dir_override: Option<String>, export_dir_override: Option<String>) {
     println!("[SERVICE] Installing Windows Service using sc command...");
     
     // Get current executable path
@@ -1562,8 +1599,20 @@ fn install_windows_service(data_dir_override: Option<String>) {
             .to_string()
     });
     
-    // Build command with data-dir override
-    let bin_path = format!("\"{}\" --service --all --data-dir \"{}\"", service_path_str, data_dir);
+    // Get export directory (user's Downloads folder)
+    let export_dir = export_dir_override.unwrap_or_else(|| {
+        dirs_next::download_dir()
+            .or_else(|| dirs_next::data_dir())
+            .unwrap_or_else(|| PathBuf::from("."))
+            .to_string_lossy()
+            .to_string()
+    });
+    
+    // Build command with data-dir and export-dir overrides
+    let bin_path = format!(
+        "\"{}\" --service --all --data-dir \"{}\" --export-dir \"{}\"", 
+        service_path_str, data_dir, export_dir
+    );
     
     println!("[SERVICE] Service path: {}", service_path_str);
     println!("[SERVICE] Command: {}", bin_path);
@@ -1620,7 +1669,7 @@ fn uninstall_windows_service() {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn install_windows_service(_data_dir_override: Option<String>) {
+fn install_windows_service(_data_dir_override: Option<String>, _export_dir_override: Option<String>) {
     eprintln!("[SERVICE] Service installation is only supported on Windows");
     std::process::exit(1);
 }

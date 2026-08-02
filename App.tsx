@@ -151,7 +151,7 @@ const App: React.FC = () => {
     executionMode: 'queue',
     groupExport: true,
     groupFormat: 'name',
-    refreshStrategy: 'refresh',
+    refreshStrategy: 'update_only',
     updateMethod: 'check_first_page_until_duplicate',
     refreshInterval: 3600,
   });

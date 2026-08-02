@@ -57,7 +57,20 @@ fn master_db_path() -> std::path::PathBuf {
 /// Read the global `export_dir` from `app_settings`. If empty and not yet
 /// scanned, auto-detect the OS Downloads folder, save it, and set the
 /// scanned flag so the slow scan runs only once.
-pub fn read_global_export_dir() -> Option<String> {
+/// 
+/// When running as a Windows Service, the override parameter (passed via
+/// --export-dir at service install time) takes precedence to ensure files
+/// are written to the user's Downloads folder instead of systemprofile.
+pub fn read_global_export_dir_with_override(export_dir_override: Option<String>) -> Option<String> {
+    // If service provided an override (e.g., user's Downloads), use it directly
+    if let Some(override_dir) = export_dir_override {
+        let trimmed = override_dir.trim().to_string();
+        if !trimmed.is_empty() {
+            println!("[Export] Using export dir override: {}", trimmed);
+            return Some(trimmed);
+        }
+    }
+
     let conn = rusqlite::Connection::open(master_db_path()).ok()?;
 
     // 1. Check if already set by user
@@ -116,6 +129,11 @@ pub fn read_global_export_dir() -> Option<String> {
     detected
 }
 
+/// Read the global `export_dir` from `app_settings` (no override).
+pub fn read_global_export_dir() -> Option<String> {
+    read_global_export_dir_with_override(None)
+}
+
 /// Read `group_export` / `group_format` from the per-project `project_settings`
 /// table. Returns defaults (enabled, "name") when the project DB is unavailable.
 fn read_project_export_settings(project_db_path: &Path) -> (bool, String) {
@@ -149,7 +167,7 @@ fn read_project_export_settings(project_db_path: &Path) -> (bool, String) {
 pub fn read_project_refresh_strategy(project_db_path: &Path) -> (String, String, u64) {
     let conn = match rusqlite::Connection::open(project_db_path).ok() {
         Some(c) => c,
-        None => return ("refresh".into(), "check_first_page_until_duplicate".into(), 3600),
+        None => return ("update_only".into(), "check_first_page_until_duplicate".into(), 3600),
     };
     let get = |key: &str| -> Option<String> {
         conn.query_row(
@@ -161,7 +179,7 @@ pub fn read_project_refresh_strategy(project_db_path: &Path) -> (String, String,
     };
     let strategy = get("refresh_strategy")
         .filter(|s| matches!(s.as_str(), "refresh" | "refresh_update" | "update_only"))
-        .unwrap_or_else(|| "refresh".into());
+        .unwrap_or_else(|| "update_only".into());
     let update_method = get("update_method")
         .filter(|s| matches!(s.as_str(), "check_last_page" | "check_first_page_until_duplicate"))
         .unwrap_or_else(|| "check_first_page_until_duplicate".into());
@@ -173,8 +191,14 @@ pub fn read_project_refresh_strategy(project_db_path: &Path) -> (String, String,
 }
 
 /// Resolve the full export settings for a project run.
-pub fn get_export_settings(project_id: &str, project_db_path: &Path) -> ExportSettings {
-    let export_dir = read_global_export_dir();
+/// When running as a service, the export_dir_override (user's Downloads)
+/// should be passed to avoid writing to systemprofile.
+pub fn get_export_settings_with_override(
+    project_id: &str, 
+    project_db_path: &Path,
+    export_dir_override: Option<String>
+) -> ExportSettings {
+    let export_dir = read_global_export_dir_with_override(export_dir_override);
     let (group_export, group_format) = read_project_export_settings(project_db_path);
     let _ = project_id;
     ExportSettings {
@@ -182,6 +206,11 @@ pub fn get_export_settings(project_id: &str, project_db_path: &Path) -> ExportSe
         group_export,
         group_format,
     }
+}
+
+/// Resolve the full export settings for a project run (no override).
+pub fn get_export_settings(project_id: &str, project_db_path: &Path) -> ExportSettings {
+    get_export_settings_with_override(project_id, project_db_path, None)
 }
 
 impl Default for ServiceInfo {
@@ -316,6 +345,26 @@ impl ServiceManager {
         _edges: Vec<serde_json::Value>,
         _settings: serde_json::Value,
     ) -> Result<(), String> {
+        // Check if project name is empty before starting service
+        let project_db_path = dirs_next::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("com.CrawlFlow.desktop")
+            .join(format!("project_{}.db", project_id));
+        
+        if let Ok(conn) = rusqlite::Connection::open(&project_db_path) {
+            let project_name: Result<String, _> = conn.query_row(
+                "SELECT value FROM project_settings WHERE key = 'name'",
+                [],
+                |row| row.get(0),
+            );
+            
+            if let Ok(name) = project_name {
+                if name.trim().is_empty() {
+                    return Err("Project name cannot be empty. Please set a project name before starting the service.".to_string());
+                }
+            }
+        }
+        
         // Only write service_control to SQLite - background service handles execution
         let db_path = dirs_next::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))

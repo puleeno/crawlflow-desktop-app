@@ -336,9 +336,18 @@ WantedBy=default.target
                 // Pass the GUI's data dir to the service via --data-dir so that
                 // even when SCM launches it as LocalSystem it reads the same DB
                 // as the desktop app instead of the empty systemprofile DB.
+                // Also pass the export dir (user's Downloads) so exports go to the
+                // right place instead of systemprofile's Downloads.
                 let data_dir_override = data_dir().to_string_lossy().to_string();
-                let bin_path =
-                    format!("\"{}\" --service --all --data-dir \"{}\"", exe_str, data_dir_override);
+                let export_dir_override = dirs_next::download_dir()
+                    .or_else(|| dirs_next::data_dir())
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .to_string_lossy()
+                    .to_string();
+                let bin_path = format!(
+                    "\"{}\" --service --all --data-dir \"{}\" --export-dir \"{}\"",
+                    exe_str, data_dir_override, export_dir_override
+                );
                 let output = std::process::Command::new("sc")
                     .args([
                         "create",

@@ -389,6 +389,18 @@ fn inject_export_settings(config: &mut serde_json::Value, project_id: &str) {
         .join("com.CrawlFlow.desktop")
         .join(format!("project_{}.db", project_id));
     let settings = get_export_settings(project_id, &project_db);
+    
+    // Read project name from database
+    let project_name = if let Ok(conn) = rusqlite::Connection::open(&project_db) {
+        conn.query_row(
+            "SELECT value FROM project_settings WHERE key = 'name'",
+            [],
+            |row| row.get::<_, String>(0),
+        ).ok().unwrap_or_default()
+    } else {
+        String::new()
+    };
+    
     if let Some(obj) = config.as_object_mut() {
         if let Some(dir) = &settings.export_dir {
             obj.insert("outputDir".into(), serde_json::json!(dir));
@@ -397,7 +409,7 @@ fn inject_export_settings(config: &mut serde_json::Value, project_id: &str) {
         obj.insert("groupFormat".into(), serde_json::json!(settings.group_format));
         obj.insert("projectId".into(), serde_json::json!(project_id));
         if !obj.contains_key("projectName") {
-            obj.insert("projectName".into(), serde_json::json!(""));
+            obj.insert("projectName".into(), serde_json::json!(project_name));
         }
     }
 }

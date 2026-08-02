@@ -182,6 +182,11 @@ export async function createProject(
   name: string,
   description: string = ''
 ): Promise<{ id: string; dbPath: string }> {
+  // Validate project name is not empty
+  if (!name || name.trim() === '') {
+    throw new Error('Project name cannot be empty');
+  }
+
   const id = crypto.randomUUID();
   const dbPath = `project_${id}.db`;
 
@@ -209,6 +214,11 @@ export async function createProjectFromPreset(
   nodes: any[],
   edges: any[]
 ): Promise<{ id: string; dbPath: string }> {
+  // Validate project name is not empty
+  if (!presetName || presetName.trim() === '') {
+    throw new Error('Project name cannot be empty');
+  }
+
   const id = crypto.randomUUID();
   const dbPath = `project_${id}.db`;
 
@@ -247,6 +257,12 @@ export async function saveProjectState(
   edges: any[],
   settings: Record<string, any>
 ): Promise<void> {
+  // Validate project name is not empty
+  const projectName = settings?.name || '';
+  if (!projectName || projectName.trim() === '') {
+    throw new Error('Project name cannot be empty');
+  }
+
   const db = await getProjectDb(projectId);
 
   await db.execute('DELETE FROM nodes');

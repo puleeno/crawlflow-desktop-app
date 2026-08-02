@@ -59,7 +59,7 @@ def register_presets():
         "icon": "ShoppingCartIcon",
         "icon_color": "#10b981",
         "project_settings": {
-            "name": "Oreka Shop - {shop_name}",
+            "name": "",
             "description": "Crawl sản phẩm từ shop oreka.vn",
             "enabled": True,
             "crawlDelay": 1500,
@@ -68,7 +68,7 @@ def register_presets():
             "executionMode": "queue",
             "groupExport": True,
             "groupFormat": "name",
-            "refreshStrategy": "refresh",
+            "refreshStrategy": "update_only",
             "updateMethod": "check_first_page_until_duplicate",
             "refreshInterval": 3600
         },
@@ -76,14 +76,9 @@ def register_presets():
             {
                 "id": "ds-oreka",
                 "type": "start",
-                "position": {
-                    "x": 50,
-                    "y": 50
-                },
+                "position": {"x": 50, "y": 50},
                 "data": {
-                    "pluginConfig": {
-                        "shop_url": ""
-                    },
+                    "pluginConfig": {"shop_url": ""},
                     "pluginSourceType": "oreka-shop-crawler",
                     "sourceType": "url",
                     "sourceValue": "",
@@ -104,10 +99,7 @@ def register_presets():
             {
                 "id": "pre-1",
                 "type": "preprocessor",
-                "position": {
-                    "x": -568,
-                    "y": 38
-                },
+                "position": {"x": -568, "y": 38},
                 "data": {
                     "csvDelimiter": ",",
                     "csvHasHeader": True,
@@ -119,9 +111,9 @@ def register_presets():
                         {
                             "enabled": True,
                             "type": "regex",
-                            "value": ".*-detail\\/[0-9]{1,}\\/?"
+                            "value": ".*-detail\\/[0-9]{1,}\\/?",
                         }
-                    ]
+                    ],
                 },
                 "deletable": True,
                 "draggable": True,
@@ -129,30 +121,24 @@ def register_presets():
                 "height": 316,
                 "zIndex": 0,
                 "selected": False,
-                "dragging": False
+                "dragging": False,
             },
             {
                 "id": "repository-node",
                 "type": "repository",
-                "position": {
-                    "x": 50,
-                    "y": 329
-                },
+                "position": {"x": 50, "y": 329},
                 "data": {},
                 "deletable": True,
                 "draggable": True,
                 "width": 320,
                 "height": 183,
                 "zIndex": 0,
-                "parentNode": None
+                "parentNode": None,
             },
             {
                 "id": "worker-1",
                 "type": "worker",
-                "position": {
-                    "x": 40,
-                    "y": 641
-                },
+                "position": {"x": 40, "y": 641},
                 "data": {
                     "detectionLogic": "and",
                     "detectionRules": [
@@ -162,23 +148,23 @@ def register_presets():
                             "pattern": ".*-detail\\/[0-9]{1,}\\/?",
                             "selector": "",
                             "type": "url-format",
-                            "value": ""
+                            "value": "",
                         }
-                    ]
+                    ],
                 },
                 "deletable": True,
                 "draggable": True,
                 "width": 320,
                 "height": 211,
                 "zIndex": 0,
-                "parentNode": None
+                "parentNode": None,
             },
             {
                 "id": "ext-1",
                 "type": "html-data-extractor",
                 "position": {
                     "x": -492.44587280108254,
-                    "y": 435.9208389715832
+                    "y": 435.9208389715832,
                 },
                 "data": {
                     "customRules": [
@@ -187,28 +173,28 @@ def register_presets():
                             "extractFrom": "html-element",
                             "id": "preset-ecom-html-1",
                             "name": "product_name",
-                            "selector": "h1.styles_nameProduct__QSdsj.mt-2"
+                            "selector": "h1.styles_nameProduct__QSdsj.mt-2",
                         },
                         {
                             "extract": "text",
                             "extractFrom": "html-element",
                             "id": "preset-ecom-html-2",
                             "name": "price",
-                            "selector": "p.font-semibold.text-16.leading-8.text-black-600.line-clamp-1.break-all.styles_productPrice__zkPlt"
+                            "selector": "p.font-semibold.text-16.leading-8.text-black-600.line-clamp-1.break-all.styles_productPrice__zkPlt",
                         },
                         {
                             "extract": "text",
                             "extractFrom": "json-ld",
                             "id": "preset-ecom-html-3",
                             "jsonPath": "offers.sku",
-                            "name": "sku"
+                            "name": "sku",
                         },
                         {
                             "extract": "html",
                             "extractFrom": "html-element",
                             "id": "preset-ecom-html-4",
                             "name": "description",
-                            "selector": "div.mt-6.whitespace-pre-wrap > p.text"
+                            "selector": "div.mt-6.whitespace-pre-wrap > p.text",
                         },
                         {
                             "attribute": "src",
@@ -216,7 +202,7 @@ def register_presets():
                             "extractFrom": "html-element",
                             "id": "preset-ecom-html-5",
                             "name": "image_url",
-                            "selector": "img.styles_imageThumb__OYuNp.object-cover.rounded-md"
+                            "selector": "img.styles_imageThumb__OYuNp.object-cover.rounded-md",
                         },
                         {
                             "attribute": "src",
@@ -225,39 +211,148 @@ def register_presets():
                             "extractMultiple": True,
                             "id": "preset-ecom-html-6",
                             "name": "images",
-                            "selector": ".image-gallery-thumbnail img"
+                            "selector": ".image-gallery-thumbnail img",
                         },
                         {
                             "id": "1785642132986",
                             "name": "category",
                             "extractFrom": "html-element",
-                            "selector": "#__next > div.bg-\\[\\#F7F7F7\\]:nth-of-type(4) > div.bg-black-f3:nth-of-type(5) > div.container.mx-auto.mb-12.pb-20.styles_mainContainer__VzpQg > div.flex.styles_mainContainerSeller__7DVE5:nth-of-type(3) > div.flex-1.styles_aboutSeller__kHT9J:nth-of-type(1) > div.styles_containerOutstanding__CHgHx:nth-of-type(2) > div > div.flex.styles_itemInfo__FFfqL:nth-of-type(1) > div.styles_customContainerBc__j_y_v > ul.flex.container.mx-auto.py-4.flex-wrap.styles_customUl__Z_Nd_ li",
+                            "selector": (
+                                "#__next > div.bg-\\[\\#F7F7F7\\]:nth-of-type(4)"
+                                " > div.bg-black-f3:nth-of-type(5)"
+                                " > div.container.mx-auto.mb-12.pb-20.styles_mainContainer__VzpQg"
+                                " > div.flex.styles_mainContainerSeller__7DVE5:nth-of-type(3)"
+                                " > div.flex-1.styles_aboutSeller__kHT9J:nth-of-type(1)"
+                                " > div.styles_containerOutstanding__CHgHx:nth-of-type(2)"
+                                " > div > div.flex.styles_itemInfo__FFfqL:nth-of-type(1)"
+                                " > div.styles_customContainerBc__j_y_v"
+                                " > ul.flex.container.mx-auto.py-4.flex-wrap.styles_customUl__Z_Nd_ li"
+                            ),
                             "extract": "text",
-                            "extractMultiple": True
-                        }
+                            "extractMultiple": True,
+                        },
                     ],
-                    "presets": [
-                        "ecommerce-product"
-                    ],
+                    "presets": ["ecommerce-product"],
                     "inspectorUrl": "https://www.oreka.vn/mua-ban-sach-thieu-nhi/bo-sach-nhung-cam-xuc-nho-quan-trong-cua-be--6-cuon----bia-cung--in-mau-detail/1088773",
                     "inspectorLoading": False,
-                    "inspectorHtmlContent": ""
+                    "inspectorHtmlContent": "",
                 },
                 "deletable": True,
                 "draggable": True,
                 "width": 320,
-                "height": 450,
+                "height": 239,
                 "zIndex": 0,
                 "selected": False,
-                "dragging": False
-            }
+                "dragging": False,
+                "positionAbsolute": {
+                    "x": -492.44587280108254,
+                    "y": 435.9208389715832,
+                },
+            },
+            {
+                "id": "proc-1",
+                "type": "processor",
+                "position": {"x": 52, "y": 914},
+                "data": {
+                    "processorType": "generate-excel-file",
+                    "settings": {
+                        "autoMapHeaders": True,
+                        "columnMapping": {},
+                        "fileName": "crawl_results_{{date}}.xlsx",
+                        "includeHeader": True,
+                        "sheetName": "Sheet1",
+                    },
+                },
+                "deletable": True,
+                "draggable": True,
+                "width": 320,
+                "height": 167,
+                "zIndex": 0,
+                "parentNode": None,
+            },
+            {
+                "id": "fetch-data-ds-oreka",
+                "type": "fetchData",
+                "position": {"x": 50, "y": 370},
+                "data": {
+                    "sourceType": "url",
+                    "label": "Fetch Data (url)",
+                },
+                "deletable": False,
+                "width": 320,
+                "height": 243,
+            },
+            {
+                "id": "completion-node",
+                "type": "completion",
+                "position": {"x": 52, "y": 1214},
+                "data": {},
+                "deletable": False,
+                "draggable": False,
+                "width": 320,
+                "height": 157,
+            },
         ],
         "edges": [
-            {"id": "e-ds-pre", "source": "ds-oreka", "target": "pre-1"},
-            {"id": "e-pre-repo", "source": "pre-1", "target": "repository-node"},
-            {"id": "e-repo-worker", "source": "repository-node", "target": "worker-1"},
-            {"id": "e-ext-worker", "source": "ext-1", "target": "worker-1"}
-        ]
+            {
+                "id": "e-ds-pre",
+                "source": "ds-oreka",
+                "target": "pre-1",
+                "sourceHandle": None,
+                "targetHandle": None,
+                "type": "smoothstep",
+                "animated": False,
+                "data": {},
+            },
+            {
+                "id": "e-repo-worker",
+                "source": "repository-node",
+                "target": "worker-1",
+                "sourceHandle": None,
+                "targetHandle": None,
+                "type": "smoothstep",
+                "animated": False,
+                "data": {},
+            },
+            {
+                "id": "e-ext-worker",
+                "source": "ext-1",
+                "target": "worker-1",
+                "sourceHandle": None,
+                "targetHandle": None,
+                "type": "smoothstep",
+                "animated": False,
+                "data": {},
+            },
+            {
+                "id": "e-worker-proc",
+                "source": "worker-1",
+                "target": "proc-1",
+                "sourceHandle": None,
+                "targetHandle": None,
+                "type": "smoothstep",
+                "animated": False,
+                "data": {},
+            },
+            {
+                "id": "e-pre-1-fetch-data-ds-oreka",
+                "source": "pre-1",
+                "target": "fetch-data-ds-oreka",
+                "animated": True,
+            },
+            {
+                "id": "e-fetch-data-ds-oreka-repository-node",
+                "source": "fetch-data-ds-oreka",
+                "target": "repository-node",
+                "animated": True,
+            },
+            {
+                "id": "e-proc-1-completion-node",
+                "source": "proc-1",
+                "target": "completion-node",
+                "type": "smoothstep",
+            },
+        ],
     }
     return json.dumps([preset])
 
@@ -1378,10 +1473,16 @@ def export_data(data_json, config_json):
         output_dir = os.path.join(os.path.expanduser("~"), "Downloads")
     os.makedirs(output_dir, exist_ok=True)
 
-    # Lay ten shop tu URL
+    # Lay ten shop: uu tien projectName tu config (neu co), sau do lay tu URL
+    project_name = config.get("projectName", "")
     shop_url = config.get("shop_url", "")
     shop_name = "oreka_shop"
-    if shop_url:
+    
+    if project_name:
+        # Dung project name neu duoc cung cap
+        shop_name = project_name.replace("?", "_").replace("&", "_").replace("/", "_").replace("\\", "_")
+    elif shop_url:
+        # Neu khong co project name, lay tu URL
         parts = shop_url.rstrip("/").split("/")
         if parts:
             shop_name = parts[-1].replace("?", "_").replace("&", "_")

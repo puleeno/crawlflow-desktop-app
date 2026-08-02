@@ -11,6 +11,9 @@
   ; Build data directory path
   StrCpy $1 "$LOCALAPPDATA\com.CrawlFlow.desktop"
   
+  ; Build export directory path (user's Downloads folder)
+  StrCpy $3 "$PROFILE\Downloads"
+  
   ; Create data directory if it doesn't exist
   CreateDirectory "$1"
   
@@ -18,6 +21,7 @@
   DetailPrint "Installing Windows Service..."
   DetailPrint "Service binary: $0"
   DetailPrint "Data directory: $1"
+  DetailPrint "Export directory: $3"
   DetailPrint "Install directory: $INSTDIR"
   
   ; Check if service binary exists
@@ -26,8 +30,8 @@
   Goto +2
   DetailPrint "ERROR: Service binary not found at $0"
   
-  ; Build command with proper quoting
-  StrCpy $2 '"$0" --service --all --data-dir "$1"'
+  ; Build command with proper quoting (include export-dir override)
+  StrCpy $2 '"$0" --service --all --data-dir "$1" --export-dir "$3"'
   DetailPrint "Service command: $2"
   
   nsExec::ExecToLog 'sc create ${SERVICE_NAME} binPath= $2 start= auto DisplayName= "CrawlFlow Background Service"'

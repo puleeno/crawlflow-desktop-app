@@ -1915,7 +1915,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                                 onClick={() => onUpdateProjectSettings({ refreshStrategy: opt.value })}
                                 disabled={isRunning}
                                 className={`text-left p-3 rounded-md border transition-colors disabled:opacity-50 ${
-                                    (projectSettings.refreshStrategy || 'refresh') === opt.value
+                                    (projectSettings.refreshStrategy || 'update_only') === opt.value
                                         ? 'bg-blue-600 text-white border-blue-600'
                                         : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                                 }`}
@@ -1927,7 +1927,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                     </div>
                 </div>
 
-                {(projectSettings.refreshStrategy || 'refresh') === 'update_only' && (
+                {(projectSettings.refreshStrategy || 'update_only') === 'update_only' && (
                     <div className="mb-4">
                         <label className={commonLabelClasses}>Update Method</label>
                         <div className="flex gap-2">
@@ -1958,7 +1958,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = (props) => {
                     </div>
                 )}
 
-                {(projectSettings.refreshStrategy || 'refresh') !== 'update_only' && (
+                {(projectSettings.refreshStrategy || 'update_only') !== 'update_only' && (
                     <div>
                         <label className={commonLabelClasses}>Refresh Interval (seconds)</label>
                         <input

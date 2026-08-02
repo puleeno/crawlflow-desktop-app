@@ -25,9 +25,11 @@ export const CreateProjectForm: React.FC<CreateProjectFormProps> = ({ onSubmit, 
     }, []);
 
     const handleSubmit = () => {
-        if (name.trim()) {
-            onSubmit(name.trim(), desc.trim());
+        if (!name.trim()) {
+            alert('Project name is required');
+            return;
         }
+        onSubmit(name.trim(), desc.trim());
     };
 
     if (mode === 'presets') {
