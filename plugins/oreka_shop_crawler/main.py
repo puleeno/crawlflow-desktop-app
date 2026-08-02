@@ -779,6 +779,33 @@ def _safe_int(val, default=0):
         return default
 
 
+def _clean_category(value):
+    """Chuan hoa chuoi category:
+    - Loai bo dau '>' (va cac ky tu phan tach breadcrumb nhu ; | / › >>)
+    - Bo 2 items dau tien (thuong la 'Oreka', 'Đồ cũ')
+    - Noi cac phan con lai bang '; '
+    """
+    if value is None:
+        return ""
+    # Dua ve danh sach cac doan
+    if isinstance(value, list):
+        parts = [str(v) for v in value]
+    else:
+        parts = re.split(r'\s*(?:>|>>|›|»|\||;)\s*', str(value))
+    # Lam sach tung doan (bo dau >/khoang trang o dau va cuoi, loai bo o trong)
+    cleaned = []
+    for p in parts:
+        q = re.sub(r'^[\s>›»]+', '', str(p))
+        q = re.sub(r'[\s>›»]+$', '', q)
+        q = q.replace('>', '').replace('›', '').replace('»', '').strip()
+        if q:
+            cleaned.append(q)
+    # Bo 2 phan dau tien
+    if len(cleaned) > 2:
+        cleaned = cleaned[2:]
+    return "; ".join(cleaned)
+
+
 # Kich thuoc anh lon nhat duoc ho tro boi static.oreka.vn CDN
 _OREKA_IMAGE_SIZE = "800-800"
 
@@ -1138,7 +1165,7 @@ def _parse_product_from_html(html, url):
         "sku": sku,
         "description": description[:500] if description else "",
         "specs": specs,
-        "category": category,
+        "category": _clean_category(category),
         "stock": stock,
         "availability": availability or "Còn hàng",
         "crawled_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
@@ -1436,7 +1463,7 @@ def process_data(data_json, config_json):
             "images": item.get("images"),
             "sku": item.get("sku", "").strip(),
             "description": (item.get("description", "") or "").strip(),
-            "category": item.get("category", "").strip(),
+            "category": _clean_category(item.get("category", "")),
             "availability": item.get("availability", "Còn hàng"),
             "crawled_at": item.get("crawled_at", datetime.now().strftime("%Y-%m-%dT%H:%M:%S")),
             "specs": item.get("specs", {}),
@@ -1618,7 +1645,7 @@ def _export_xlsx(products, filepath, seen_ids):
             _spec_value(specs, "Năm xuất bản", "Năm XB"),
             _spec_value(specs, "Thương hiệu", "Nhà xuất bản", "NXB", "Tác giả"),
             item.get("name", ""),
-            item.get("category", ""),
+            _clean_category(item.get("category", "")),
         ]
         ws.append(row)
         count += 1
@@ -1667,7 +1694,7 @@ def _export_csv(products, filepath):
                 _spec_value(specs, "Năm xuất bản", "Năm XB"),
                 _spec_value(specs, "Thương hiệu", "Nhà xuất bản", "NXB", "Tác giả"),
                 item.get("name", ""),
-                item.get("category", ""),
+                _clean_category(item.get("category", "")),
             ])
             count += 1
 
