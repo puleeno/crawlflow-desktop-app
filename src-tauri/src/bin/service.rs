@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crawlflow_lib::services::{get_export_settings, read_project_refresh_strategy};
@@ -1159,6 +1159,7 @@ fn run_as_console(args: &[String]) {
     let mut target_project: Option<String> = None;
     let mut run_all = false;
     let mut interval_secs: u64 = 60;
+    let mut is_service_mode = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -1166,7 +1167,7 @@ fn run_as_console(args: &[String]) {
             "--project" => { i += 1; target_project = args.get(i).cloned(); }
             "--all" => { run_all = true; }
             "--interval" => { i += 1; interval_secs = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(60); }
-            "--service" => {}
+            "--service" => { is_service_mode = true; }
             _ => {}
         }
         i += 1;
@@ -1241,18 +1242,66 @@ fn run_as_console(args: &[String]) {
     };
 
     if projects.is_empty() {
-        log_to_file("[SERVICE] No enabled projects. Exiting.");
-        return;
+        if is_service_mode {
+            log_to_file("[SERVICE] No enabled projects. Service will keep running and wait for projects to be enabled.");
+        } else {
+            log_to_file("[SERVICE] No enabled projects. Exiting (command line mode).");
+            return;
+        }
     }
 
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     rt.block_on(async {
         let mut handles = Vec::new();
+        let tracked_project_ids = Arc::new(Mutex::new(std::collections::HashSet::new()));
+        
         for proj in projects {
+            println!("[SERVICE] Spawning loop for project '{}' ({})", proj.name, proj.id);
             let sd = shutdown.clone();
             let hub = ws_hub.clone();
+            {
+                let mut ids = tracked_project_ids.lock().unwrap();
+                ids.insert(proj.id.clone());
+            }
             handles.push(tokio::spawn(run_project_loop(proj, interval_secs, sd, hub)));
         }
+        
+        // Background task to periodically check for newly enabled projects
+        let sd_monitor = shutdown.clone();
+        let hub_monitor = ws_hub.clone();
+        let interval_monitor = interval_secs;
+        let tracked_ids = tracked_project_ids.clone();
+        tokio::spawn(async move {
+            let mut check_interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            loop {
+                check_interval.tick().await;
+                if sd_monitor.load(Ordering::Relaxed) {
+                    break;
+                }
+                
+                match list_enabled_projects() {
+                    Ok(projects) => {
+                        for proj in projects {
+                            let mut ids = tracked_ids.lock().unwrap();
+                            if !ids.contains(&proj.id) {
+                                drop(ids); // Release lock before spawning
+                                println!("[SERVICE] Detected newly enabled project '{}' ({}). Spawning loop...", proj.name, proj.id);
+                                let sd = sd_monitor.clone();
+                                let hub = hub_monitor.clone();
+                                let mut ids = tracked_ids.lock().unwrap();
+                                ids.insert(proj.id.clone());
+                                drop(ids);
+                                tokio::spawn(run_project_loop(proj, interval_monitor, sd, hub));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("[SERVICE] Error checking for new projects: {}", e);
+                    }
+                }
+            }
+        });
+        
         while !shutdown.load(Ordering::Relaxed) {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
@@ -1371,17 +1420,7 @@ fn service_main_entry(_arguments: Vec<std::ffi::OsString>) {
     };
 
     if all_projects.is_empty() {
-        svc_log!("[SERVICE] No enabled projects found. Stopping.");
-        let _ = status_handle.set_service_status(ServiceStatus {
-            service_type: ServiceType::OWN_PROCESS,
-            current_state: ServiceState::Stopped,
-            controls_accepted: ServiceControlAccept::empty(),
-            exit_code: windows_service::service::ServiceExitCode::ServiceSpecific(0),
-            checkpoint: 0,
-            wait_hint: std::time::Duration::ZERO,
-            process_id: None,
-        });
-        return;
+        svc_log!("[SERVICE] No enabled projects found. Service will keep running and wait for projects to be enabled.");
     }
 
     svc_log!("[SERVICE] Starting {} enabled project(s)", all_projects.len());
@@ -1407,12 +1446,55 @@ fn service_main_entry(_arguments: Vec<std::ffi::OsString>) {
     };
     rt.block_on(async {
         let mut handles = Vec::new();
+        let tracked_project_ids = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+        
         for proj in all_projects {
             svc_log!("[SERVICE] Spawning loop for project '{}' ({})", proj.name, proj.id);
             let sd = shutdown.clone();
             let hub = ws_hub.clone();
+            {
+                let mut ids = tracked_project_ids.lock().unwrap();
+                ids.insert(proj.id.clone());
+            }
             handles.push(tokio::spawn(run_project_loop(proj, interval_secs, sd, hub)));
         }
+        
+        // Background task to periodically check for newly enabled projects
+        let sd_monitor = shutdown.clone();
+        let hub_monitor = ws_hub.clone();
+        let interval_monitor = interval_secs;
+        let tracked_ids = tracked_project_ids.clone();
+        tokio::spawn(async move {
+            let mut check_interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            loop {
+                check_interval.tick().await;
+                if sd_monitor.load(Ordering::Relaxed) {
+                    break;
+                }
+                
+                match list_enabled_projects() {
+                    Ok(projects) => {
+                        for proj in projects {
+                            let mut ids = tracked_ids.lock().unwrap();
+                            if !ids.contains(&proj.id) {
+                                drop(ids); // Release lock before spawning
+                                svc_log!("[SERVICE] Detected newly enabled project '{}' ({}). Spawning loop...", proj.name, proj.id);
+                                let sd = sd_monitor.clone();
+                                let hub = hub_monitor.clone();
+                                let mut ids = tracked_ids.lock().unwrap();
+                                ids.insert(proj.id.clone());
+                                drop(ids);
+                                tokio::spawn(run_project_loop(proj, interval_monitor, sd, hub));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        svc_log!("[SERVICE] Error checking for new projects: {}", e);
+                    }
+                }
+            }
+        });
+        
         while !shutdown.load(Ordering::Relaxed) {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
