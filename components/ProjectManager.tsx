@@ -23,9 +23,11 @@ interface ProjectManagerProps {
     onOpenProject: (projectId: string) => void;
     onImportProject: () => void;
     onOpenSettings?: () => void;
+    /** Called when a preset is selected — loads it into the editor as an unsaved draft. */
+    onApplyPreset?: (preset: Preset) => void;
 }
 
-export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, onImportProject, onOpenSettings }) => {
+export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, onImportProject, onOpenSettings, onApplyPreset }) => {
     const [projects, setProjects] = useState<ProjectRecord[]>([]);
     const [serviceInfos, setServiceInfos] = useState<Record<string, ServiceInfo>>({});
     const [loading, setLoading] = useState(true);
@@ -183,6 +185,13 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
     };
 
     const handleApplyPreset = async (preset: Preset) => {
+        // Prefer loading the preset as an unsaved draft into the editor; fall
+        // back to creating a project immediately when no draft handler exists.
+        if (onApplyPreset) {
+            onApplyPreset(preset);
+            setShowCreate(false);
+            return;
+        }
         setCreating(true);
         try {
             const presetName = preset.project_settings.name || preset.name;

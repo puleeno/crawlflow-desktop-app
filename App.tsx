@@ -48,7 +48,7 @@ import AppSettings from './components/AppSettings';
 import { ProjectWsClient } from '@/wsClient';
 
 
-import { NodeData, ProjectSettings, HTMLDataExtractorNodeData, ShapeNodeData, ShapeType } from './types';
+import { NodeData, ProjectSettings, HTMLDataExtractorNodeData, ShapeNodeData, ShapeType, Preset } from './types';
 
 const REPOSITORY_NODE_ID = 'repository-node';
 const COMPLETION_NODE_ID = 'completion-node';
@@ -173,6 +173,9 @@ const App: React.FC = () => {
 
   // Navigation state
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  // True when the user loaded a preset into the editor as an unsaved draft.
+  // The editor renders, but no project DB is created until "Save".
+  const [isDraft, setIsDraft] = useState(false);
   const [isPluginManagerOpen, setPluginManagerOpen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showRawItemsBrowser, setShowRawItemsBrowser] = useState(false);
@@ -1148,15 +1151,36 @@ const App: React.FC = () => {
   }, [projectSettings, nodes, edges, isTauriEnv]);
 
   const saveProject = useCallback(async () => {
-    if (!currentProjectId) {
-      alert('No project is currently open. Create or open a project first.');
-      return;
-    }
-
     if (isTauriEnv()) {
       try {
-        const { saveProjectState } = await import('./lib/db');
-        await saveProjectState(currentProjectId, nodes, edges, {
+        const { saveProjectState, createProjectFromPreset } = await import('./lib/db');
+
+        // Unsaved preset draft: create the project on first save, then persist.
+        let targetId = currentProjectId;
+        if (!targetId) {
+          const { id } = await createProjectFromPreset(
+            projectSettings.name || 'Untitled',
+            projectSettings.description || '',
+            {
+              name: projectSettings.name,
+              description: projectSettings.description,
+              crawlDelay: String(projectSettings.crawlDelay),
+              userAgent: projectSettings.userAgent,
+              concurrency: String(projectSettings.concurrency),
+              enabled: String(projectSettings.enabled),
+              executionMode: projectSettings.executionMode,
+              group_export: String(projectSettings.groupExport ?? false),
+              group_format: projectSettings.groupFormat ?? 'id',
+            },
+            nodes,
+            edges
+          );
+          targetId = id;
+          setCurrentProjectId(id);
+          setIsDraft(false);
+        }
+
+        await saveProjectState(targetId, nodes, edges, {
           name: projectSettings.name,
           description: projectSettings.description,
           crawlDelay: String(projectSettings.crawlDelay),
@@ -1501,6 +1525,7 @@ const App: React.FC = () => {
 
   const handleOpenProject = useCallback(async (projectId: string) => {
     try {
+      setIsDraft(false);
       const { loadProjectState } = await import('./lib/db');
       const state = await loadProjectState(projectId);
       if (state.nodes.length > 0) {
@@ -1545,6 +1570,23 @@ const App: React.FC = () => {
     }
   }, [setNodes, setEdges]);
 
+  // Load a preset into the editor as an UNSAVED draft — no project is created
+  // until the user configures the flow and clicks Save.
+  const handleLoadPreset = useCallback((preset: Preset) => {
+    if (preset.nodes?.length) setNodes(preset.nodes as any);
+    if (preset.edges?.length) setEdges(preset.edges as any);
+    const ps = preset.project_settings || {};
+    setProjectSettings((prev) => ({
+      ...prev,
+      ...ps,
+      name: ps.name || preset.name,
+      description: ps.description ?? preset.description ?? '',
+    }));
+    setCurrentProjectId(null);
+    setIsDraft(true);
+    setSelectedNode(null);
+  }, [setNodes, setEdges]);
+
   const runDemo = useCallback(async () => {
     if (isDemoRunning) return;
     setIsDemoRunning(true);
@@ -1562,6 +1604,7 @@ const App: React.FC = () => {
 
   const handleCloseProject = useCallback(() => {
     setCurrentProjectId(null);
+    setIsDraft(false);
     setNodes([]);
     setEdges([]);
     setSelectedNode(null);
@@ -1571,12 +1614,13 @@ const App: React.FC = () => {
     return <AppSettings onClose={() => setShowSettings(false)} />;
   }
 
-  if (!currentProjectId) {
+  if (!currentProjectId && !isDraft) {
     return (
       <ProjectManager
         onOpenProject={handleOpenProject}
         onImportProject={importConfiguration}
         onOpenSettings={() => setShowSettings(true)}
+        onApplyPreset={handleLoadPreset}
       />
     );
   }

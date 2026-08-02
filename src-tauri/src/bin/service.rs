@@ -677,6 +677,7 @@ async fn run_project_loop(
     // once per project loop so the export plugin places files correctly.
     println!("[SERVICE] Resolving export settings for project '{}'...", proj.name);
     let export_dir_override = get_export_dir_override()
+        .as_ref()
         .and_then(|p| p.to_str())
         .map(|s| s.to_string());
     let export_settings = get_export_settings_with_override(&project_id, &db_path, export_dir_override);
@@ -1338,7 +1339,7 @@ fn run_as_console(args: &[String]) {
                 match list_enabled_projects() {
                     Ok(projects) => {
                         for proj in projects {
-                            let mut ids = tracked_ids.lock().unwrap();
+                            let ids = tracked_ids.lock().unwrap();
                             if !ids.contains(&proj.id) {
                                 drop(ids); // Release lock before spawning
                                 println!("[SERVICE] Detected newly enabled project '{}' ({}). Spawning loop...", proj.name, proj.id);
@@ -1534,7 +1535,7 @@ fn service_main_entry(_arguments: Vec<std::ffi::OsString>) {
                 match list_enabled_projects() {
                     Ok(projects) => {
                         for proj in projects {
-                            let mut ids = tracked_ids.lock().unwrap();
+                            let ids = tracked_ids.lock().unwrap();
                             if !ids.contains(&proj.id) {
                                 drop(ids); // Release lock before spawning
                                 svc_log!("[SERVICE] Detected newly enabled project '{}' ({}). Spawning loop...", proj.name, proj.id);
