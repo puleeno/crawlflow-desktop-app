@@ -497,12 +497,16 @@ fn process_node(
                     .iter()
                     .filter(|n| n.node_type == "html-data-extractor")
                     .filter_map(|n| {
-                        let rules = n
-                            .data
-                            .get("customRules")
-                            .or_else(|| n.data.get("extractionRules"))
-                            .or_else(|| n.data.get("extractRules"))?
-                            .as_array()?;
+                        // Pick the first *non-empty* list among
+                        // customRules / extractionRules / extractRules.
+                        // An empty customRules array must not short-circuit
+                        // the real (preset-expanded) extractionRules,
+                        // otherwise declared fields lose their Excel column.
+                        let rules = ["customRules", "extractionRules", "extractRules"]
+                            .iter()
+                            .find_map(|k| {
+                                n.data.get(*k).and_then(|v| v.as_array()).filter(|a| !a.is_empty())
+                            })?;
                         Some(
                             rules
                                 .iter()
