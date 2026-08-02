@@ -804,7 +804,11 @@ async fn run_project_loop(
             );
             // If stopped or disabled, exit the loop entirely
             if service_control == "stop" || !project_enabled {
-                exit_status = if !project_enabled { "disabled" } else { "stopped" };
+                // Keep a terminal "completed" status from update_only runs:
+                // the auto-stop that follows must not regress it to "stopped".
+                if exit_status != "completed" {
+                    exit_status = if !project_enabled { "disabled" } else { "stopped" };
+                }
                 break;
             }
             for _ in 0..interval_secs {

@@ -1414,37 +1414,54 @@ pub fn delete_project_cmd(project_id: String) -> Result<(), String> {
     if let Some(parent) = db_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+    let mut conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+    // The service process keeps the master DB open; without a busy timeout a
+    // concurrent DELETE can fail with SQLITE_BUSY and the project survives.
+    conn.busy_timeout(std::time::Duration::from_secs(10))
+        .map_err(|e| e.to_string())?;
 
-    // 1. Delete project_runtime entry
-    let _ = conn.execute(
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let _ = tx.execute(
         "DELETE FROM project_runtime WHERE project_id = ?1",
         rusqlite::params![project_id],
     );
-
-    // 2. Delete logs for this project
-    let _ = conn.execute(
+    let _ = tx.execute(
         "DELETE FROM logs WHERE project_id = ?1",
         rusqlite::params![project_id],
     );
-
-    // 3. Delete the project row
-    conn.execute(
+    tx.execute(
         "DELETE FROM projects WHERE id = ?1",
         rusqlite::params![project_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| format!("Failed to delete project record: {}", e))?;
+    tx.commit().map_err(|e| e.to_string())?;
 
-    // 4. Delete the project database file
-    let data_dir = dirs_next::data_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("com.CrawlFlow.desktop");
-    let project_db = data_dir.join(format!("project_{}.db", project_id));
-    if project_db.exists() {
-        std::fs::remove_file(&project_db).map_err(|e| {
-            let msg = format!("Deleted project record but failed to remove DB file {:?}: {}", project_db, e);
-            log::warn!("{}", msg);
-            msg
-        })?;
+    // Delete the project database file (plus any WAL/SHM side files). The
+    // background service may hold the file open on Windows, so retry for a few
+    // seconds before giving up (file removal is best-effort — the record is gone).
+    let project_db = get_project_db_path(&project_id);
+    let candidates = [
+        project_db.clone(),
+        project_db.with_extension("db-wal"),
+        project_db.with_extension("db-shm"),
+        project_db.with_extension("db-journal"),
+    ];
+    for path in candidates {
+        for attempt in 0..5 {
+            match std::fs::remove_file(&path) {
+                Ok(_) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+                Err(e) if attempt == 4 => {
+                    log::warn!(
+                        "Deleted project {} but failed to remove DB file {:?}: {}",
+                        project_id,
+                        path,
+                        e
+                    );
+                }
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(400)),
+            }
+        }
     }
 
     log::info!("Deleted project {} and all associated data", project_id);

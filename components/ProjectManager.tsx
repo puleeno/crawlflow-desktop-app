@@ -235,8 +235,17 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
             confirmed = window.confirm(`Delete "${name}"?`);
         }
         if (confirmed) {
-            await deleteProject(id);
-            await loadProjects();
+            // Optimistically drop the row so the list refreshes immediately,
+            // then reconcile from the DB. Deleting never leaves the UI stale.
+            setProjects((prev) => prev.filter((p) => p.id !== id));
+            try {
+                await deleteProject(id);
+            } catch (e) {
+                console.error(`Failed to delete project ${id}:`, e);
+                alert(e instanceof Error ? e.message : `Failed to delete "${name}"`);
+            } finally {
+                await loadProjects();
+            }
         }
     };
 

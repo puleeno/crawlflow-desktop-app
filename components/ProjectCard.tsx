@@ -36,6 +36,8 @@ const getRuntimeStatus = (serviceInfo?: ServiceInfo): { label: string; color: st
     if (s === 'running') return { label: 'Running', color: 'bg-green-100 text-green-700', dot: 'bg-green-500 animate-pulse' };
     if (s === 'idle') return { label: 'Idle', color: 'bg-slate-100 text-slate-600', dot: 'bg-slate-400' };
     if (s === 'paused') return { label: 'Paused', color: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500' };
+    if (s === 'completed') return { label: 'Completed', color: 'bg-blue-100 text-blue-700', dot: 'bg-blue-500' };
+    if (s === 'disabled') return { label: 'Disabled', color: 'bg-yellow-100 text-yellow-700', dot: 'bg-yellow-500' };
     if (s.startsWith('error')) return { label: 'Error', color: 'bg-red-100 text-red-700', dot: 'bg-red-500' };
     return { label: 'Stopped', color: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' };
 };
