@@ -17,6 +17,24 @@
   ; Create data directory if it doesn't exist
   CreateDirectory "$1"
   
+  ; Copy bundled plugins into the user plugins dir so both the GUI and the
+  ; background service can always find them, no matter where the installer
+  ; placed the packaged resources (_up_\plugins under $INSTDIR or %LOCALAPPDATA%).
+  CreateDirectory "$1\plugins"
+  IfFileExists "$INSTDIR\_up_\plugins" 0 +4
+    DetailPrint "Copying plugins from $INSTDIR\_up_\plugins ..."
+    nsExec::ExecToLog 'xcopy /E /I /Y "$INSTDIR\_up_\plugins\*" "$1\plugins\"'
+  IfFileExists "$INSTDIR\plugins" 0 +4
+    DetailPrint "Copying plugins from $INSTDIR\plugins ..."
+    nsExec::ExecToLog 'xcopy /E /I /Y "$INSTDIR\plugins\*" "$1\plugins\"'
+  IfFileExists "$LOCALAPPDATA\CrawlFlow\_up_\plugins" 0 +4
+    DetailPrint "Copying plugins from $LOCALAPPDATA\CrawlFlow\_up_\plugins ..."
+    nsExec::ExecToLog 'xcopy /E /I /Y "$LOCALAPPDATA\CrawlFlow\_up_\plugins\*" "$1\plugins\"'
+  IfFileExists "$LOCALAPPDATA\CrawlFlow\plugins" 0 +4
+    DetailPrint "Copying plugins from $LOCALAPPDATA\CrawlFlow\plugins ..."
+    nsExec::ExecToLog 'xcopy /E /I /Y "$LOCALAPPDATA\CrawlFlow\plugins\*" "$1\plugins\"'
+  DetailPrint "Plugins copied to $1\plugins"
+  
   ; Install Windows Service using sc command
   DetailPrint "Installing Windows Service..."
   DetailPrint "Service binary: $0"

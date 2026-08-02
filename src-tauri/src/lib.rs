@@ -37,26 +37,55 @@ fn get_user_plugins_dir() -> PathBuf {
 }
 
 fn get_builtin_plugins_dir(app: &tauri::App) -> Option<PathBuf> {
+    // Packaged resources can live at several Windows locations depending on
+    // whether the app was installed per-user or per-machine. Probe them all.
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
     if let Ok(resource_dir) = app.path().resource_dir() {
-        // Standard location: <resource_dir>/plugins
-        let path = resource_dir.join("plugins");
-        if path.is_dir() {
-            return Some(path);
-        }
-        // Fallback for bundles that ship plugins under <resource_dir>/_up_/plugins
-        let up_path = resource_dir.join("_up_").join("plugins");
-        if up_path.is_dir() {
-            return Some(up_path);
+        candidates.push(resource_dir.join("plugins"));
+        candidates.push(resource_dir.join("_up_").join("plugins"));
+    }
+
+    for base in [
+        dirs_next::data_dir(),
+        dirs_next::data_local_dir(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for pkgdir in ["CrawlFlow", "com.CrawlFlow.desktop"] {
+            let root = base.join(pkgdir);
+            candidates.push(root.join("plugins"));
+            candidates.push(root.join("_up_").join("plugins"));
+            candidates.push(root.join("resources").join("plugins"));
+            candidates.push(root.join("resources").join("_up_").join("plugins"));
         }
     }
-    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(|p| p.join("plugins"))
-        .unwrap_or_default();
-    if dev_path.is_dir() {
-        return Some(dev_path);
+
+    // Dev workspace (pointing at the repo's plugins/ when run from source).
+    if let Ok(dev_path) = dev_plugins_path() {
+        candidates.push(dev_path);
+    }
+
+    for candidate in candidates {
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
     }
     None
+}
+
+#[cfg(debug_assertions)]
+fn dev_plugins_path() -> Result<PathBuf, ()> {
+    Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|p| p.join("plugins"))
+        .unwrap_or_default())
+}
+
+#[cfg(not(debug_assertions))]
+fn dev_plugins_path() -> Result<PathBuf, ()> {
+    Err(())
 }
 
 fn is_service_mode() -> bool {

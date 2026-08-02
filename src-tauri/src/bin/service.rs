@@ -204,29 +204,54 @@ fn get_user_plugins_dir() -> PathBuf {
 }
 
 fn get_builtin_plugins_dir() -> Option<PathBuf> {
-    let bundled_dir = std::env::current_exe().ok().and_then(|path| {
-        let contents = path.parent()?; // .../Contents/MacOS -> .../Contents
-        // Standard: <Contents>/Resources/plugins
-        let resources = contents.join("Resources");
-        let std = resources.join("plugins");
-        if std.is_dir() {
-            return Some(std);
+    // The bundled plugin resources can live in several Windows locations
+    // depending on whether the app is installed per-user or per-machine:
+    //   - beside the service exe (install dir): ./plugins, ./_up_/plugins
+    //   - the product resource dir under LOCALAPPDATA: ...\CrawlFlow\...
+    //   - the identifier dir under Roaming/Local: ...\com.CrawlFlow.desktop\...
+    // plus the macOS bundle layout <app>/Contents/Resources/... . We probe
+    // every plausible candidate and use the first that exists.
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            candidates.push(exe_dir.join("plugins"));
+            candidates.push(exe_dir.join("_up_").join("plugins"));
+            candidates.push(exe_dir.join("Resources").join("plugins"));
+            candidates.push(exe_dir.join("Resources").join("_up_").join("plugins"));
         }
-        // Fallback: <Contents>/Resources/_up_/plugins
-        let up = resources.join("_up_").join("plugins");
-        if up.is_dir() {
-            return Some(up);
-        }
-        None
-    });
-    if bundled_dir.is_some() {
-        return bundled_dir;
     }
 
-    let dev_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(|path| path.join("plugins"));
-    dev_dir.filter(|path| path.is_dir())
+    // Per-user data/resource dirs (covers INSTDIR elsewhere but plugins shipped
+    // under the user's LOCALAPPDATA, e.g. ...\CrawlFlow\_up_\plugins).
+for base in [
+        dirs_next::data_dir(),      // Roaming (Windows %APPDATA%)
+        dirs_next::data_local_dir(), // Local (Windows %LOCALAPPDATA%)
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for pkgdir in ["CrawlFlow", "com.CrawlFlow.desktop"] {
+            let root = base.join(pkgdir);
+            candidates.push(root.join("plugins"));
+            candidates.push(root.join("_up_").join("plugins"));
+            candidates.push(root.join("resources").join("plugins"));
+            candidates.push(root.join("resources").join("_up_").join("plugins"));
+        }
+    }
+
+    // Also the dev workspace (not shipped binaries).
+    if let Some(dev) = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent() {
+        candidates.push(dev.join("plugins"));
+    }
+
+    for candidate in candidates {
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+
+    None
 }
 
 fn resolve_python_path_for_service() {
