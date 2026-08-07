@@ -1158,7 +1158,7 @@ def _parse_product_from_html(html, url):
 
     return {
         "url": url,
-        "product_name": name or os.path.basename(url),
+        "name": name or os.path.basename(url),
         "price": price,
         "old_price": old_price,
         "image_url": image,
