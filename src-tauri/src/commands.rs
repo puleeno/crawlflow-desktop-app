@@ -2,7 +2,7 @@ use crate::crawler;
 use crate::logs::LogManager;
 use crate::models::*;
 use crate::plugins::PluginEngine;
-use crate::services::{ServiceManager, ServiceInfo};
+use crate::services::ServiceManager;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{State, AppHandle};

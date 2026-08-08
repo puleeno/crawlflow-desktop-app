@@ -534,6 +534,17 @@ impl ServiceManager {
         state.get(project_id).cloned()
     }
 
+    /// Update progress in RAM immediately. Called when WebSocket receives
+    /// progress frame from background service.
+    pub fn update_progress_immediate(project_id: &str, progress: ServiceProgress) {
+        let mut state = SERVICE_STATE.lock().unwrap();
+        let entry = state.entry(project_id.to_string()).or_insert_with(|| ServiceInfo {
+            project_id: project_id.to_string(),
+            ..ServiceInfo::default()
+        });
+        entry.progress = progress;
+    }
+
     /// Broadcast a `ServiceInfo` to the frontend.
     ///
     /// Emits two events (Tauri v2 has no wildcard listeners):

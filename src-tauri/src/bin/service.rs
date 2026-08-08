@@ -1125,9 +1125,8 @@ async fn run_project_loop(
                                 }
                             }
 
-                            // For 'update_only' strategy: stop after 1 successful cycle
-                            // ONLY when all matched items have been processed.
-                            // For 'refresh' / 'refresh_update': keep looping.
+                            // For 'update_only' strategy: mark completed but keep looping
+                            // to monitor for new items. For 'refresh' / 'refresh_update': keep looping.
                             if refresh_strategy == "update_only" {
                                 let remaining = match crawlflow_lib::repository::RawItemRepository::open(&db_path) {
                                     Ok(r) => r.count_pending_matched().unwrap_or(0),
@@ -1135,14 +1134,10 @@ async fn run_project_loop(
                                 };
                                 if remaining == 0 {
                                     exit_status = "completed";
-                                    let _ = conn.execute(
-                                        "UPDATE project_runtime SET service_control = 'stop' WHERE project_id = ?1",
-                                        rusqlite::params![&project_id],
-                                    );
                                     lm.info(
                                         &project_id,
                                         "service",
-                                        &format!("Cycle #{}: all items processed, marking completed", cycle),
+                                        &format!("Cycle #{}: all items processed, marking completed (monitoring for new items)", cycle),
                                     );
                                 } else {
                                     lm.info(
@@ -1350,12 +1345,8 @@ fn run_as_console(args: &[String]) {
     };
 
     if projects.is_empty() {
-        if is_service_mode {
-            log_to_file("[SERVICE] No enabled projects. Service will keep running and wait for projects to be enabled.");
-        } else {
-            log_to_file("[SERVICE] No enabled projects. Exiting (command line mode).");
-            return;
-        }
+        // Always keep running — wait for projects to be enabled
+        log_to_file("[SERVICE] No enabled projects. Service will keep running and wait for projects to be enabled.");
     }
 
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
