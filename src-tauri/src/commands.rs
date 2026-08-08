@@ -1392,15 +1392,15 @@ pub fn request_project_run_cmd(
     }
 }
 
-/// Tell the background service to pause/skip this project (service_control = 'paused')
+/// Tell the background service to stop this project (service_control = 'stop')
 #[tauri::command]
 pub fn request_project_stop_cmd(project_id: String) -> Result<(), String> {
     let db_path = master_db_path();
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO project_runtime (project_id, service_control, runner_status, updated_at)
-         VALUES (?1, 'paused', 'stopped', datetime('now'))
-         ON CONFLICT(project_id) DO UPDATE SET service_control = 'paused', runner_status = 'stopped', updated_at = datetime('now')",
+         VALUES (?1, 'stop', 'stopped', datetime('now'))
+         ON CONFLICT(project_id) DO UPDATE SET service_control = 'stop', runner_status = 'stopped', updated_at = datetime('now')",
         rusqlite::params![project_id],
     ).map_err(|e| e.to_string())?;
     log::info!("Requested stop for project {}", project_id);
