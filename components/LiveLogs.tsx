@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { XMarkIcon, ChevronDownIcon, ChevronUpIcon } from './icons';
+import { ProjectWsClient } from '../wsClient';
 
 interface LogEntry {
   id: number;
@@ -9,6 +10,17 @@ interface LogEntry {
   source: string;
   message: string;
   details?: string | null;
+}
+
+interface ProgressPayload {
+  items_total?: number;
+  items_processed?: number;
+  items_success?: number;
+  items_failed?: number;
+  items_pending?: number;
+  progress_pct?: number;
+  phase?: string;
+  message?: string;
 }
 
 interface LiveLogsProps {
@@ -37,13 +49,12 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [serviceStatus, setServiceStatus] = useState<string>('stopped');
   const [serviceInfo, setServiceInfo] = useState<any>(null);
+  const [progress, setProgress] = useState<ProgressPayload | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
-  // Content-based dedup key. We use `timestamp|message` instead of the numeric
-  // `id` because the headless service's in-memory log counter resets every
-  // cycle, so WebSocket log frames would otherwise arrive with ids lower than
-  // the DB-fetched history and be mistaken for duplicates and dropped.
   const seenRef = useRef<Set<string>>(new Set());
   const pollLastIdRef = useRef(0);
+  const wsRef = useRef<ProjectWsClient | null>(null);
+  const wsConnectedRef = useRef(false);
 
   // Fetch existing logs from DB on mount (captures background service logs)
   useEffect(() => {
@@ -68,7 +79,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
     })();
   }, [projectId]);
 
-  // Subscribe to live log events (new logs from in-process execution)
+  // Subscribe to Tauri events (in-process logs + status)
   useEffect(() => {
     const logEvent = `project-log:${projectId}`;
     const statusEvent = `service-status:${projectId}`;
@@ -120,7 +131,68 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
     };
   }, [projectId]);
 
-  // Poll for new logs from DB every 2s (reliable for headless service mode)
+  // Connect to the background service's WebSocket for realtime logs + progress
+  useEffect(() => {
+    let cancelled = false;
+
+    const connectWs = async () => {
+      try {
+        const { invoke } = await import('../lib/platform');
+        const info: any = await invoke('get_service_status_cmd', { projectId });
+        if (cancelled || !info?.ws_port) return;
+
+        setServiceStatus(info.status || 'stopped');
+        setServiceInfo(info);
+
+        const ws = new ProjectWsClient(projectId, {
+          onLog: (payload) => {
+            if (!payload || !payload.message) return;
+            const key = `${payload.timestamp}|${payload.message}`;
+            if (seenRef.current.has(key)) return;
+            seenRef.current.add(key);
+            setLogs(prev => {
+              const next = [...prev, {
+                id: payload.id || Date.now(),
+                project_id: projectId,
+                timestamp: payload.timestamp || '',
+                level: payload.level || 'info',
+                source: payload.source || 'ws',
+                message: payload.message,
+                details: payload.details || null,
+              }];
+              if (next.length > 500) next.splice(0, next.length - 500);
+              return next;
+            });
+          },
+          onProgress: (payload) => {
+            setProgress(payload);
+          },
+          onStatus: (payload) => {
+            if (payload?.status) setServiceStatus(payload.status);
+          },
+          onOpen: () => { wsConnectedRef.current = true; },
+          onClose: () => { wsConnectedRef.current = false; },
+        });
+        wsRef.current = ws;
+        ws.connect(info.ws_port);
+      } catch { /* ignore */ }
+    };
+
+    connectWs();
+
+    // Periodically reconnect if WS dropped
+    const reconnectTimer = setInterval(connectWs, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(reconnectTimer);
+      wsRef.current?.disconnect();
+      wsRef.current = null;
+    };
+  }, [projectId]);
+
+  // Poll for new logs from DB every 2s (fallback for headless service mode)
+  // This catches logs written by the service but not received via WS (e.g. during startup)
   useEffect(() => {
     let cancelled = false;
 
@@ -183,6 +255,11 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
   const statusColor = isRunning ? 'bg-green-500' : isPaused ? 'bg-amber-500' : isError ? 'bg-red-500' : 'bg-gray-400';
   const statusLabel = isRunning ? 'Running' : isPaused ? 'Paused' : isError ? 'Error' : 'Stopped';
 
+  const progressPct = progress?.progress_pct ?? 0;
+  const itemsProcessed = progress?.items_processed ?? 0;
+  const itemsTotal = progress?.items_total ?? 0;
+  const itemsFailed = progress?.items_failed ?? 0;
+
   return (
     <div className="border-t border-slate-200 bg-white shadow-inner">
       {/* Header bar */}
@@ -202,6 +279,25 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
           </div>
           {serviceInfo && (
             <span className="text-xs text-gray-400">Cycle #{serviceInfo.cycle_count}</span>
+          )}
+          {/* Realtime progress display */}
+          {itemsTotal > 0 && (
+            <div className="flex items-center gap-2 ml-2">
+              <div className="w-24 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                  style={{ width: `${Math.min(progressPct, 100)}%` }}
+                />
+              </div>
+              <span className="text-xs text-gray-500">
+                {itemsProcessed}/{itemsTotal}
+                {itemsFailed > 0 && <span className="text-red-500 ml-1">({itemsFailed} failed)</span>}
+              </span>
+              <span className="text-xs text-gray-400">{Math.round(progressPct)}%</span>
+            </div>
+          )}
+          {progress?.message && (
+            <span className="text-xs text-gray-400 ml-1">{progress.message}</span>
           )}
         </div>
         <div className="flex items-center gap-2">

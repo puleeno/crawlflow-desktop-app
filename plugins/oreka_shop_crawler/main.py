@@ -1264,6 +1264,8 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
     products = []
     seen_urls = set()
     page_num = 1
+    max_retries = 3
+    retry_base_delay = 2.0  # seconds, doubles each retry
 
     # Cac page da hoan thanh o chu ky crawl truoc (luu trong bang crawl_pages)
     # se duoc bo qua de ho tro resume khi service bi dung dot ngot.
@@ -1284,11 +1286,21 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
             continue
         crawlflow.log(f"[OrekaShop] Listing page {page_num}: {page_url}", "info")
 
-        try:
-            raw = _fetch(page_url)
-            listing_result = json.loads(raw) if isinstance(raw, str) else raw
-        except Exception as e:
-            crawlflow.log(f"[OrekaShop] Loi fetch listing page {page_num}: {e}", "error")
+        listing_fetched = False
+        for attempt in range(max_retries):
+            try:
+                raw = _fetch(page_url)
+                listing_result = json.loads(raw) if isinstance(raw, str) else raw
+                listing_fetched = True
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    delay = retry_base_delay * (2 ** attempt)
+                    crawlflow.log(f"[OrekaShop] Loi fetch listing page {page_num}, retry {attempt + 2}/{max_retries} sau {delay}s — {e}", "warn")
+                    time.sleep(delay)
+                else:
+                    crawlflow.log(f"[OrekaShop] Loi fetch listing page {page_num} sau {max_retries} lan: {e}", "error")
+        if not listing_fetched:
             break
 
         # Detect redirect: chi break neu thuc su redirect ve trang 1 khi dang o trang > 1
@@ -1366,26 +1378,43 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
                 continue
             seen_urls.add(p_url)
             crawlflow.log(f"[OrekaShop] Fetch product ({len(seen_urls)}/{len(product_urls)} trang {page_num}): {p_url}", "info")
-            t0 = time.time()
-            try:
-                praw = _fetch(p_url)
-                pres = json.loads(praw) if isinstance(praw, str) else praw
-                phtml = pres.get("body", "") if isinstance(pres, dict) else ""
-                elapsed_ms = int((time.time() - t0) * 1000)
-                if phtml:
-                    prod = _parse_product_from_html(phtml, p_url)
-                    products.append(prod)
-                    name = prod.get("name") or prod.get("title") or "(khong ten)"
-                    price = prod.get("price") or prod.get("current_price") or ""
-                    crawlflow.log(
-                        f"[OrekaShop] OK {elapsed_ms}ms — \"{name}\"" + (f" | gia: {price}" if price else "") + f" | {p_url}",
-                        "info",
-                    )
-                else:
-                    crawlflow.log(f"[OrekaShop] Canh bao: HTML rong sau {elapsed_ms}ms — {p_url}", "warn")
-            except Exception as e:
-                elapsed_ms = int((time.time() - t0) * 1000)
-                crawlflow.log(f"[OrekaShop] Loi fetch product sau {elapsed_ms}ms — {p_url} — {e}", "warn")
+
+            success = False
+            last_error = None
+            for attempt in range(max_retries):
+                t0 = time.time()
+                try:
+                    praw = _fetch(p_url)
+                    pres = json.loads(praw) if isinstance(praw, str) else praw
+                    phtml = pres.get("body", "") if isinstance(pres, dict) else ""
+                    elapsed_ms = int((time.time() - t0) * 1000)
+                    if phtml:
+                        prod = _parse_product_from_html(phtml, p_url)
+                        products.append(prod)
+                        name = prod.get("name") or prod.get("title") or "(khong ten)"
+                        price = prod.get("price") or prod.get("current_price") or ""
+                        crawlflow.log(
+                            f"[OrekaShop] OK {elapsed_ms}ms — \"{name}\"" + (f" | gia: {price}" if price else "") + f" | {p_url}",
+                            "info",
+                        )
+                        success = True
+                        break
+                    else:
+                        last_error = f"HTML rong sau {elapsed_ms}ms"
+                        if attempt < max_retries - 1:
+                            delay = retry_base_delay * (2 ** attempt)
+                            crawlflow.log(f"[OrekaShop] HTML rong, retry {attempt + 2}/{max_retries} sau {delay}s — {p_url}", "warn")
+                            time.sleep(delay)
+                except Exception as e:
+                    elapsed_ms = int((time.time() - t0) * 1000)
+                    last_error = f"{e}"
+                    if attempt < max_retries - 1:
+                        delay = retry_base_delay * (2 ** attempt)
+                        crawlflow.log(f"[OrekaShop] Loi fetch product sau {elapsed_ms}ms, retry {attempt + 2}/{max_retries} sau {delay}s — {p_url} — {e}", "warn")
+                        time.sleep(delay)
+
+            if not success:
+                crawlflow.log(f"[OrekaShop] Dau hang sau {max_retries} lan retry — {p_url} — {last_error}", "error")
 
         # Tiep tuc phan trang: reqwest da lay xong HTML listing, giao cho
         # Python tim nut "next page" trong chinh HTML do (khong fetch them).
