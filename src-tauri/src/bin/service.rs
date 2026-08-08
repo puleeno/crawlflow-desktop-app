@@ -530,7 +530,7 @@ fn is_project_being_edited(conn: &rusqlite::Connection, project_id: &str) -> boo
 /// is used so the GUI shows continuously-updating progress without waiting for
 /// the cycle to finish.
 fn build_progress(
-    _project_id: &str,
+    project_id: &str,
     db_path: &PathBuf,
     phase: Option<&str>,
     message: Option<&str>,
@@ -538,9 +538,19 @@ fn build_progress(
 ) -> crawlflow_lib::services::ServiceProgress {
     use crawlflow_lib::services::ServiceProgress;
 
-    let summary = crawlflow_lib::repository::RawItemRepository::open(db_path)
-        .ok()
-        .and_then(|repo| repo.get_summary().ok());
+    let summary = match crawlflow_lib::repository::RawItemRepository::open(db_path) {
+        Ok(repo) => match repo.get_summary() {
+            Ok(s) => Some(s),
+            Err(e) => {
+                eprintln!("[SERVICE-TICKER] get_summary failed for {}: {}", project_id, e);
+                None
+            }
+        },
+        Err(e) => {
+            eprintln!("[SERVICE-TICKER] RawItemRepository::open failed for {} at {:?}: {}", project_id, db_path, e);
+            None
+        }
+    };
 
     let (items_total, items_done, items_error, items_pending) = match summary {
         Some(s) => (s.total, s.done, s.error, s.pending + s.processing),
@@ -888,15 +898,20 @@ async fn run_project_loop(
                 let ticker_pid = project_id.clone();
                 let ticker_db = db_path.clone();
                 let ticker_lm = lm.clone();
+                println!("[SERVICE-TICKER] Starting ticker for {} — db={:?}", project_id, db_path);
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+                    let mut tick_count = 0u64;
                     while ticker_running.load(Ordering::Relaxed) {
                         interval.tick().await;
                         let now = now_iso();
                         let activity = ticker_lm.latest_activity();
                         let progress = build_progress(&ticker_pid, &ticker_db, None, activity.as_deref(), &now);
+                        if tick_count < 5 || tick_count % 10 == 0 {
+                            println!("[SERVICE-TICKER] tick={} total={} done={} pending={} pct={:.1}%", tick_count, progress.items_total, progress.items_success, progress.items_pending, progress.progress_pct);
+                        }
+                        tick_count += 1;
                         crawlflow_lib::services::ServiceManager::write_progress_json(&ticker_pid, &progress);
-                        // Push live over WebSocket (no polling delay).
                         crawlflow_lib::ws::publish_progress(&ticker_pid, serde_json::to_value(&progress).unwrap_or_default());
                     }
                 });

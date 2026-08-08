@@ -37,7 +37,10 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [serviceStatus, setServiceStatus] = useState<string>('stopped');
   const [serviceInfo, setServiceInfo] = useState<any>(null);
+  const [progress, setProgress] = useState<any>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const wsRef = useRef<any>(null);
+  const wsConnectedRef = useRef(false);
   // Content-based dedup key. We use `timestamp|message` instead of the numeric
   // `id` because the headless service's in-memory log counter resets every
   // cycle, so WebSocket log frames would otherwise arrive with ids lower than
@@ -59,7 +62,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
         });
         if (existing.length > 0) {
           for (const l of existing) seenRef.current.add(`${l.timestamp}|${l.message}`);
-          setLogs(existing);
+          setLogs(existing.slice().reverse());
           pollLastIdRef.current = existing.reduce((max, l) => Math.max(max, l.id), 0);
         }
       } catch (e) {
@@ -87,8 +90,8 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
           if (seenRef.current.has(key)) return;
           seenRef.current.add(key);
           setLogs(prev => {
-            const next = [...prev, l];
-            if (next.length > 500) next.splice(0, next.length - 500);
+            const next = [l, ...prev];
+            if (next.length > 500) next.length = 500;
             return next;
           });
         });
@@ -120,7 +123,69 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
     };
   }, [projectId]);
 
-  // Poll for new logs from DB every 2s (reliable for headless service mode)
+  // Connect to the background service's WebSocket for realtime logs + progress
+  useEffect(() => {
+    let cancelled = false;
+
+    const connectWs = async () => {
+      try {
+        const { invoke } = await import('../lib/platform');
+        const info: any = await invoke('get_service_status_cmd', { projectId });
+        if (cancelled || !info?.ws_port) return;
+
+        setServiceStatus(info.status || 'stopped');
+        setServiceInfo(info);
+
+        const { ProjectWsClient } = await import('../wsClient');
+        const ws = new ProjectWsClient(projectId, {
+          onLog: (payload) => {
+            if (!payload || !payload.message) return;
+            const key = `${payload.timestamp}|${payload.message}`;
+            if (seenRef.current.has(key)) return;
+            seenRef.current.add(key);
+            setLogs(prev => {
+              const next = [{
+                id: payload.id || Date.now(),
+                project_id: projectId,
+                timestamp: payload.timestamp || '',
+                level: payload.level || 'info',
+                source: payload.source || 'ws',
+                message: payload.message,
+                details: payload.details || null,
+              }, ...prev];
+              if (next.length > 500) next.length = 500;
+              return next;
+            });
+          },
+          onProgress: (payload) => {
+            setProgress(payload);
+          },
+          onStatus: (payload) => {
+            if (payload?.status) setServiceStatus(payload.status);
+          },
+          onOpen: () => { wsConnectedRef.current = true; },
+          onClose: () => { wsConnectedRef.current = false; },
+        });
+        wsRef.current = ws;
+        ws.connect(info.ws_port);
+      } catch { /* ignore */ }
+    };
+
+    connectWs();
+
+    // Periodically reconnect if WS dropped
+    const reconnectTimer = setInterval(connectWs, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(reconnectTimer);
+      wsRef.current?.disconnect();
+      wsRef.current = null;
+    };
+  }, [projectId]);
+
+  // Poll for new logs from DB every 500ms (fallback for headless service mode)
+  // This catches logs written by the service but not received via WS (e.g. during startup)
   useEffect(() => {
     let cancelled = false;
 
@@ -144,9 +209,9 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
               const key = `${l.timestamp}|${l.message}`;
               if (seenRef.current.has(key)) continue;
               seenRef.current.add(key);
-              next.push(l);
+              next.unshift(l);
             }
-            if (next.length > 500) next.splice(0, next.length - 500);
+            if (next.length > 500) next.length = 500;
             return next;
           });
         }
@@ -157,10 +222,10 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
     return () => { cancelled = true; clearInterval(timer); };
   }, [projectId]);
 
-  // Auto-scroll
+  // Auto-scroll to top (newest logs)
   useEffect(() => {
     if (autoScroll && logEndRef.current) {
-      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      logEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [logs.length, autoScroll]);
 
@@ -236,6 +301,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
       {/* Log entries */}
       {isExpanded && (
         <div className="overflow-y-auto" style={{ maxHeight: '30vh' }}>
+          <div ref={logEndRef} />
           {filteredLogs.length === 0 ? (
             <div className="flex items-center justify-center h-24 text-sm text-gray-400">
               No logs yet. Start the service to see pipeline execution logs.
@@ -259,7 +325,6 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
               </div>
             ))
           )}
-          <div ref={logEndRef} />
         </div>
       )}
     </div>
