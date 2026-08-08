@@ -3,10 +3,10 @@ use crate::logs::LogManager;
 use crate::models::*;
 use crate::plugins::PluginEngine;
 use crate::services::ServiceManager;
+use dirs_next;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tauri::{State, AppHandle};
-use dirs_next;
+use tauri::{AppHandle, State};
 
 pub struct AppState {
     pub plugin_engine: Mutex<PluginEngine>,
@@ -272,11 +272,18 @@ fn filter_export_data(
                 for (k, v) in obj.iter() {
                     let is_metadata = matches!(
                         k.as_str(),
-                        "id" | "url" | "source_url" | "extracted_url" | "item_type"
-                            | "html" | "text" | "status"
+                        "id" | "url"
+                            | "source_url"
+                            | "extracted_url"
+                            | "item_type"
+                            | "html"
+                            | "text"
+                            | "status"
                     );
-                    let allowed_by_extract =
-                        extract_fields.as_ref().map(|f| f.contains(k)).unwrap_or(true);
+                    let allowed_by_extract = extract_fields
+                        .as_ref()
+                        .map(|f| f.contains(k))
+                        .unwrap_or(true);
                     let allowed_by_mapping = mapped_keys.contains(k);
 
                     if is_metadata && !allowed_by_extract && !allowed_by_mapping {
@@ -396,8 +403,12 @@ pub async fn spreadsheet_export_cmd(
 
     let content: (String, String, String) = match format.as_str() {
         "csv" => {
-            let wb =
-                crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header, &opts);
+            let wb = crate::spreadsheet::Workbook::from_json_rows(
+                &data,
+                sheet_name,
+                include_header,
+                &opts,
+            );
             match crate::spreadsheet::to_csv_string(&wb) {
                 Ok(csv) => (csv, "text/csv".into(), "csv".into()),
                 Err(e) => {
@@ -410,8 +421,12 @@ pub async fn spreadsheet_export_cmd(
             }
         }
         "ods" => {
-            let wb =
-                crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header, &opts);
+            let wb = crate::spreadsheet::Workbook::from_json_rows(
+                &data,
+                sheet_name,
+                include_header,
+                &opts,
+            );
             match crate::spreadsheet::to_ods_bytes(&wb) {
                 Ok(bytes) => {
                     use base64::Engine;
@@ -433,8 +448,12 @@ pub async fn spreadsheet_export_cmd(
         }
         _ => {
             // Default: xlsx
-            let wb =
-                crate::spreadsheet::Workbook::from_json_rows(&data, sheet_name, include_header, &opts);
+            let wb = crate::spreadsheet::Workbook::from_json_rows(
+                &data,
+                sheet_name,
+                include_header,
+                &opts,
+            );
             match crate::spreadsheet::to_xlsx_bytes(&wb) {
                 Ok(bytes) => {
                     use base64::Engine;
@@ -772,16 +791,16 @@ pub fn run_demo_cmd() -> Result<serde_json::Value, String> {
 
 // ── Service commands ───────────────────────────────────────────────────
 
-fn is_service_process_running() -> bool {
+fn is_service_process_running(project_id: &str) -> bool {
     let db_path = dirs_next::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("com.CrawlFlow.desktop")
         .join("crawlflow.db");
     if let Ok(conn) = rusqlite::Connection::open(&db_path) {
         if let Ok(mut stmt) =
-            conn.prepare("SELECT runner_pid FROM project_runtime WHERE runner_pid IS NOT NULL AND runner_pid > 0")
+            conn.prepare("SELECT runner_pid FROM project_runtime WHERE project_id = ?1 AND runner_pid IS NOT NULL AND runner_pid > 0")
         {
-            if let Ok(rows) = stmt.query_map([], |row| row.get::<_, i64>(0)) {
+            if let Ok(rows) = stmt.query_map(rusqlite::params![project_id], |row| row.get::<_, i64>(0)) {
                 for row in rows.flatten() {
                     #[cfg(unix)]
                     {
@@ -844,7 +863,11 @@ fn spawn_service_process(project_id: &str) -> Result<(), String> {
             Ok(())
         }
         Err(e) => {
-            let msg = format!("Failed to spawn service process {}: {}", exe_path.display(), e);
+            let msg = format!(
+                "Failed to spawn service process {}: {}",
+                exe_path.display(),
+                e
+            );
             log::error!("{}", msg);
             Err(msg)
         }
@@ -855,8 +878,11 @@ fn spawn_service_process(project_id: &str) -> Result<(), String> {
 /// it if none is running. Returns an error string if the spawn failed so the
 /// frontend can display it.
 fn ensure_service_running(project_id: &str) -> Result<(), String> {
-    if is_service_process_running() {
-        log::info!("Background service already running; skipping spawn");
+    if is_service_process_running(project_id) {
+        log::info!(
+            "Background service already running for project {}; skipping spawn",
+            project_id
+        );
         return Ok(());
     }
     spawn_service_process(project_id)
@@ -901,9 +927,7 @@ pub fn stop_project_service_cmd(
     app_handle: AppHandle,
     project_id: String,
 ) -> Result<String, String> {
-    state
-        .service_manager
-        .stop_service(&project_id)?;
+    state.service_manager.stop_service(&project_id)?;
 
     // Update RAM + emit event immediately
     ServiceManager::update_status_immediate(&project_id, "pending", None, &app_handle);
@@ -917,9 +941,7 @@ pub fn pause_project_service_cmd(
     app_handle: AppHandle,
     project_id: String,
 ) -> Result<String, String> {
-    state
-        .service_manager
-        .pause_service(&project_id)?;
+    state.service_manager.pause_service(&project_id)?;
 
     // Update RAM + emit event immediately
     ServiceManager::update_status_immediate(&project_id, "pending", None, &app_handle);
@@ -933,9 +955,7 @@ pub fn resume_project_service_cmd(
     app_handle: AppHandle,
     project_id: String,
 ) -> Result<String, String> {
-    state
-        .service_manager
-        .resume_service(&project_id)?;
+    state.service_manager.resume_service(&project_id)?;
 
     // Update RAM + emit event immediately
     ServiceManager::update_status_immediate(&project_id, "running", None, &app_handle);
@@ -1008,15 +1028,19 @@ pub fn install_system_service_cmd(state: State<'_, AppState>) -> Result<String, 
     match &result {
         Ok(msg) => {
             log::info!("install_system_service_cmd: {}", msg);
-            state
-                .log_manager
-                .info("system", "system", &format!("Windows Service install: {}", msg));
+            state.log_manager.info(
+                "system",
+                "system",
+                &format!("Windows Service install: {}", msg),
+            );
         }
         Err(e) => {
             log::error!("install_system_service_cmd failed: {}", e);
-            state
-                .log_manager
-                .error("system", "system", &format!("Windows Service install failed: {}", e));
+            state.log_manager.error(
+                "system",
+                "system",
+                &format!("Windows Service install failed: {}", e),
+            );
         }
     }
     result
@@ -1272,8 +1296,8 @@ pub fn master_db_path() -> PathBuf {
 
 #[tauri::command]
 pub fn detect_python_cmd() -> Result<Option<String>, String> {
-    Ok(crate::python_plugins::resolve_python_path()
-        .map(|p| p.to_string_lossy().to_string()))}
+    Ok(crate::python_plugins::resolve_python_path().map(|p| p.to_string_lossy().to_string()))
+}
 
 #[tauri::command]
 pub fn get_app_setting_cmd(key: String) -> Result<Option<String>, String> {
@@ -1292,23 +1316,30 @@ pub fn get_app_setting_cmd(key: String) -> Result<Option<String>, String> {
         if !is_empty {
             return Ok(result);
         }
-        
+
         // Force detect Downloads folder and save to database
         let detected = dirs_next::download_dir()
             .or_else(|| dirs_next::data_dir())
             .and_then(|p| {
                 let s = p.to_string_lossy().to_string();
-                if s.is_empty() { None } else { Some(s) }
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
             });
-        
+
         if let Some(ref path) = detected {
             let _ = conn.execute(
                 "INSERT INTO app_settings (key, value) VALUES ('export_dir', ?1) ON CONFLICT(key) DO UPDATE SET value = ?1",
                 rusqlite::params![path],
             );
-            println!("[Export] Auto-detected and saved Downloads folder: {}", path);
+            println!(
+                "[Export] Auto-detected and saved Downloads folder: {}",
+                path
+            );
         }
-        
+
         return Ok(detected);
     }
 
@@ -1398,7 +1429,9 @@ pub fn request_project_run_cmd(
         rusqlite::params![project_id],
     ).map_err(|e| e.to_string())?;
     log::info!("Requested run for project {}", project_id);
-    state.log_manager.info(&project_id, "system", "Run requested");
+    state
+        .log_manager
+        .info(&project_id, "system", "Run requested");
 
     // Update RAM + emit event immediately
     ServiceManager::update_status_immediate(&project_id, "running", None, &app_handle);
@@ -1407,9 +1440,11 @@ pub fn request_project_run_cmd(
     match ensure_service_running(&project_id) {
         Ok(()) => Ok(()),
         Err(e) => {
-            state
-                .log_manager
-                .error(&project_id, "system", &format!("Failed to start service: {}", e));
+            state.log_manager.error(
+                &project_id,
+                "system",
+                &format!("Failed to start service: {}", e),
+            );
             Err(e)
         }
     }
@@ -1417,10 +1452,7 @@ pub fn request_project_run_cmd(
 
 /// Tell the background service to stop this project (service_control = 'stop')
 #[tauri::command]
-pub fn request_project_stop_cmd(
-    app_handle: AppHandle,
-    project_id: String,
-) -> Result<(), String> {
+pub fn request_project_stop_cmd(app_handle: AppHandle, project_id: String) -> Result<(), String> {
     let db_path = master_db_path();
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
     conn.execute(
