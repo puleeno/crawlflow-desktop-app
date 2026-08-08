@@ -331,37 +331,70 @@ impl ServiceManager {
         }
     }
 
-    /// Spawn a background thread that syncs RAM -> SQLite every 2 seconds.
-    /// This is the ONLY place that writes status to SQLite (besides initial load).
+    /// Spawn a background thread that syncs RAM <-> SQLite every 2 seconds.
+    /// - RAM → SQLite: persists status changes made by the GUI
+    /// - SQLite → RAM: picks up progress_json and ws_port written by the background service
     fn start_ram_to_sqlite_sync() {
         std::thread::spawn(|| loop {
             std::thread::sleep(std::time::Duration::from_millis(2000));
-            let snapshot: Vec<ServiceInfo> = {
-                let state = SERVICE_STATE.lock().unwrap();
-                state.values().cloned().collect()
-            };
-            if snapshot.is_empty() {
-                continue;
-            }
             let db_path = dirs_next::data_dir()
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
                 .join("com.CrawlFlow.desktop")
                 .join("crawlflow.db");
-            if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-                let _ = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;");
-                for info in &snapshot {
-                    let progress_json = serde_json::to_string(&info.progress).unwrap_or_default();
-                    let _ = conn.execute(
-                        "INSERT INTO project_runtime (project_id, runner_status, cycle_count, last_run_at, last_error, progress_json, ws_port, updated_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
-                         ON CONFLICT(project_id) DO UPDATE SET
-                             runner_status = ?2, cycle_count = ?3, last_run_at = ?4,
-                             last_error = ?5, progress_json = ?6, ws_port = ?7, updated_at = datetime('now')",
-                        rusqlite::params![
-                            info.project_id, info.status, info.cycle_count as i64,
-                            info.last_run_at, info.last_error, progress_json, info.ws_port as i64,
-                        ],
-                    );
+            let conn = match rusqlite::Connection::open(&db_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let _ = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;");
+
+            // ── RAM → SQLite: persist GUI-side status changes ──
+            let snapshot: Vec<ServiceInfo> = {
+                let state = SERVICE_STATE.lock().unwrap();
+                state.values().cloned().collect()
+            };
+            for info in &snapshot {
+                let progress_json = serde_json::to_string(&info.progress).unwrap_or_default();
+                let _ = conn.execute(
+                    "INSERT INTO project_runtime (project_id, runner_status, cycle_count, last_run_at, last_error, progress_json, ws_port, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
+                     ON CONFLICT(project_id) DO UPDATE SET
+                         runner_status = ?2, cycle_count = ?3, last_run_at = ?4,
+                         last_error = ?5, progress_json = ?6, ws_port = ?7, updated_at = datetime('now')",
+                    rusqlite::params![
+                        info.project_id, info.status, info.cycle_count as i64,
+                        info.last_run_at, info.last_error, progress_json, info.ws_port as i64,
+                    ],
+                );
+            }
+
+            // ── SQLite → RAM: pick up progress_json + ws_port written by background service ──
+            {
+                let mut state = SERVICE_STATE.lock().unwrap();
+                if let Ok(mut rows) = conn.prepare(
+                    "SELECT project_id, progress_json, ws_port FROM project_runtime WHERE progress_json IS NOT NULL OR ws_port > 0"
+                ).and_then(|mut stmt| {
+                    let mapped = stmt.query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, Option<i64>>(2)?,
+                        ))
+                    })?;
+                    Ok(mapped.collect::<Vec<_>>())
+                }) {
+                    for row in rows.drain(..).filter_map(|r| r.ok()) {
+                        let (pid, progress_json, ws_port) = row;
+                        if let Some(existing) = state.get_mut(&pid) {
+                            if let Some(wp) = ws_port {
+                                existing.ws_port = wp as u16;
+                            }
+                            if let Some(pj) = &progress_json {
+                                if let Ok(progress) = serde_json::from_str::<ServiceProgress>(pj) {
+                                    existing.progress = progress;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         });

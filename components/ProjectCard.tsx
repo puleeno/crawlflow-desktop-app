@@ -58,7 +58,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ project, serviceInfo, 
     const runtime = getRuntimeStatus(serviceInfo);
     const progress = serviceInfo?.progress;
     const pct = progress ? Math.max(0, Math.min(100, progress.progress_pct)) : 0;
-    const isActive = !!serviceInfo && (runtime.label === 'Running' || runtime.label === 'Idle');
+    const isActive = !!serviceInfo && !!progress && (runtime.label === 'Running' || runtime.label === 'Idle');
     const hasProgress = !!progress && (progress.items_total > 0 || progress.items_processed > 0);
 
     return (

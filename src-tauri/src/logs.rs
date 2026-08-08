@@ -170,6 +170,7 @@ pub struct LogManager {
     handlers: RwLock<Vec<Box<dyn LogHandler>>>,
     next_id: Arc<AtomicU64>,
     buffer: Arc<RwLock<VecDeque<LogEntry>>>,
+    latest_message: Arc<RwLock<String>>,
     master_db_path: Mutex<Option<PathBuf>>,
     ws_hub: RwLock<Option<Arc<WsHub>>>,
 }
@@ -180,9 +181,12 @@ impl LogManager {
         Self {
             // The ring buffer is always attached so emits are readable in-memory
             // even before install_service_handlers / install_gui_handlers runs.
-            handlers: RwLock::new(vec![Box::new(BufferLogHandler { buffer: buffer.clone() })]),
+            handlers: RwLock::new(vec![Box::new(BufferLogHandler {
+                buffer: buffer.clone(),
+            })]),
             next_id: Arc::new(AtomicU64::new(1)),
             buffer,
+            latest_message: Arc::new(RwLock::new(String::new())),
             master_db_path: Mutex::new(None),
             ws_hub: RwLock::new(None),
         }
@@ -220,7 +224,9 @@ impl LogManager {
 
         let mut handlers = self.handlers.write().unwrap();
         handlers.clear();
-        handlers.push(Box::new(BufferLogHandler { buffer: self.buffer.clone() }));
+        handlers.push(Box::new(BufferLogHandler {
+            buffer: self.buffer.clone(),
+        }));
         if let Some(hub) = self.ws_hub.read().unwrap().clone() {
             handlers.push(Box::new(WsLogHandler { hub }));
         }
@@ -258,7 +264,9 @@ impl LogManager {
 
         let mut handlers = self.handlers.write().unwrap();
         handlers.clear();
-        handlers.push(Box::new(BufferLogHandler { buffer: self.buffer.clone() }));
+        handlers.push(Box::new(BufferLogHandler {
+            buffer: self.buffer.clone(),
+        }));
         handlers.push(Box::new(TauriLogHandler { handle: app_handle }));
         handlers.push(Box::new(DbLogHandler));
     }
@@ -300,14 +308,12 @@ impl LogManager {
     /// Return the most recent non-debug log message, for use as a live
     /// progress message on the project card (e.g. "Processing item X…").
     pub fn latest_activity(&self) -> Option<String> {
-        let buf = self.buffer.read().ok()?;
-        // Walk backwards to find the newest info/warn/error entry
-        for entry in buf.iter().rev() {
-            if entry.level != "debug" {
-                return Some(entry.message.clone());
-            }
+        let msg = self.latest_message.read().unwrap().clone();
+        if msg.is_empty() {
+            None
+        } else {
+            Some(msg)
         }
-        None
     }
 
     fn ensure_logs_table(&self, path: &PathBuf) {
@@ -329,7 +335,9 @@ impl LogManager {
     }
 
     fn now_iso() -> String {
-        let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        let d = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
         let secs = d.as_secs();
         let millis = d.subsec_millis();
         let days = (secs / 86400) as i64;
@@ -376,6 +384,12 @@ impl LogManager {
             details,
         };
 
+        if level != "debug" {
+            if let Ok(mut lock) = self.latest_message.write() {
+                *lock = message.to_string();
+            }
+        }
+
         // Fan out to every handler (channel). WS + Tauri are non-blocking;
         // DB enqueues onto an mpsc channel consumed by a dedicated thread.
         for handler in self.handlers.read().unwrap().iter() {
@@ -416,8 +430,20 @@ impl LogManager {
         buffer
             .iter()
             .filter(|e| e.project_id == project_id)
-            .filter(|e| if let Some(since) = since_id { e.id > since } else { true })
-            .filter(|e| if let Some(lvl) = level_filter { e.level == lvl } else { true })
+            .filter(|e| {
+                if let Some(since) = since_id {
+                    e.id > since
+                } else {
+                    true
+                }
+            })
+            .filter(|e| {
+                if let Some(lvl) = level_filter {
+                    e.level == lvl
+                } else {
+                    true
+                }
+            })
             .rev()
             .take(limit)
             .cloned()
@@ -466,8 +492,20 @@ impl LogManager {
         let mut all: Vec<LogEntry> = rows.filter_map(|r| r.ok()).collect();
         all.reverse();
         all.into_iter()
-            .filter(|e| if let Some(since) = since_id { e.id > since } else { true })
-            .filter(|e| if let Some(lvl) = level_filter { e.level == lvl } else { true })
+            .filter(|e| {
+                if let Some(since) = since_id {
+                    e.id > since
+                } else {
+                    true
+                }
+            })
+            .filter(|e| {
+                if let Some(lvl) = level_filter {
+                    e.level == lvl
+                } else {
+                    true
+                }
+            })
             .take(limit)
             .collect()
     }
@@ -476,8 +514,11 @@ impl LogManager {
         // The in-memory buffer is shared across projects; we can only drop
         // entries belonging to this project.
         let mut buffer = self.buffer.write().unwrap();
-        let before: VecDeque<LogEntry> =
-            buffer.iter().filter(|e| e.project_id != project_id).cloned().collect();
+        let before: VecDeque<LogEntry> = buffer
+            .iter()
+            .filter(|e| e.project_id != project_id)
+            .cloned()
+            .collect();
         *buffer = before;
         if let Some(ref db_path) = self.master_db_path.lock().unwrap().clone() {
             if let Ok(conn) = rusqlite::Connection::open(db_path) {

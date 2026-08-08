@@ -320,7 +320,7 @@ const App: React.FC = () => {
     });
     wsRef.current = ws;
     // Kick off the connection using the port we just fetched.
-    fetchStatus().then(() => {});
+    fetchStatus().then(() => { });
 
     return () => {
       clearInterval(timer);
@@ -1091,26 +1091,26 @@ const App: React.FC = () => {
     const nodeToDelete = nodes.find(n => n.id === nodeId);
     const isStartNode = nodeToDelete?.type === 'start';
     const fetchNodeId = isStartNode ? getFetchNodeId(nodeId) : null;
-    
+
     setNodes((nds) => {
       if (isStartNode && fetchNodeId) {
         return nds.filter((node) => node.id !== nodeId && node.id !== fetchNodeId);
       }
       return nds.filter((node) => node.id !== nodeId);
     });
-    
+
     setEdges((eds) => {
       if (isStartNode && fetchNodeId) {
-        return eds.filter((edge) => 
-          edge.source !== nodeId && 
-          edge.target !== nodeId && 
-          edge.source !== fetchNodeId && 
+        return eds.filter((edge) =>
+          edge.source !== nodeId &&
+          edge.target !== nodeId &&
+          edge.source !== fetchNodeId &&
           edge.target !== fetchNodeId
         );
       }
       return eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId);
     });
-    
+
     setSelectedNode(null);
   }, [setNodes, setEdges, nodes]);
 
@@ -1651,57 +1651,56 @@ const App: React.FC = () => {
             Run Demo
           </button>
         )}
-          <div className="flex items-center gap-2">
-            {/* Service status indicator */}
-            <button
-              onClick={() => setLogPanelOpen(!isLogPanelOpen)}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
-            >
-              <span className={`inline-block w-2.5 h-2.5 rounded-full ${serviceStatus === 'running' ? 'bg-green-500 animate-pulse' :
-                serviceStatus === 'paused' ? 'bg-amber-500' :
-                  serviceStatus?.startsWith('error') ? 'bg-red-500' :
-                    'bg-gray-400'
-                }`} />
-              Service
-              {serviceCycleCount > 0 && (
-                <span className="text-xs text-gray-400">#{serviceCycleCount}</span>
-              )}
-            </button>
-            {/* Realtime progress bar + live last-log ticker */}
-            {(serviceStatus === 'running' || serviceStatus === 'idle') && (
-              <div className="flex flex-col gap-1 px-2 py-1 bg-slate-100 rounded-lg max-w-md">
-                <div className="flex items-center gap-2">
-                  <div className="w-32 h-1.5 bg-gray-200 rounded-full overflow-hidden shrink-0">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ${serviceProgress?.items_failed > 0 && (serviceProgress?.progress_pct ?? 0) >= 100 ? 'bg-amber-500' : 'bg-blue-500'}`}
-                      style={{ width: `${serviceProgress ? Math.max(0, Math.min(100, serviceProgress.progress_pct)) : 0}%` }}
-                    />
-                  </div>
-                  <span className="text-xs font-mono text-gray-600">
-                    {serviceProgress ? Math.max(0, Math.min(100, serviceProgress.progress_pct)).toFixed(0) : 0}%
-                  </span>
-                  {serviceProgress && (serviceProgress.items_total > 0 || serviceProgress.items_processed > 0) && (
-                    <span className="text-[11px] text-gray-400">
-                      {serviceProgress.items_success}/{serviceProgress.items_total}
-                    </span>
-                  )}
+        <div className="flex items-center gap-2">
+          {/* Service status indicator */}
+          <button
+            onClick={() => setLogPanelOpen(!isLogPanelOpen)}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
+          >
+            <span className={`inline-block w-2.5 h-2.5 rounded-full ${serviceStatus === 'running' ? 'bg-green-500 animate-pulse' :
+              serviceStatus === 'paused' ? 'bg-amber-500' :
+                serviceStatus?.startsWith('error') ? 'bg-red-500' :
+                  'bg-gray-400'
+              }`} />
+            Service
+            {serviceCycleCount > 0 && (
+              <span className="text-xs text-gray-400">#{serviceCycleCount}</span>
+            )}
+          </button>
+          {/* Realtime progress bar + live last-log ticker */}
+          {(serviceStatus === 'running' || serviceStatus === 'idle') && (
+            <div className="flex flex-col gap-1 px-2 py-1 bg-slate-100 rounded-lg max-w-md">
+              <div className="flex items-center gap-2">
+                <div className="w-32 h-1.5 bg-gray-200 rounded-full overflow-hidden shrink-0">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${serviceProgress?.items_failed > 0 && (serviceProgress?.progress_pct ?? 0) >= 100 ? 'bg-amber-500' : 'bg-blue-500'}`}
+                    style={{ width: `${serviceProgress ? Math.max(0, Math.min(100, serviceProgress.progress_pct)) : 0}%` }}
+                  />
                 </div>
-                {lastLog && (
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span
-                      className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
-                        lastLog.level === 'error' ? 'bg-red-500' :
-                        lastLog.level === 'warn' ? 'bg-amber-500' :
-                        'bg-blue-400 animate-pulse'
-                      }`}
-                    />
-                    <span className="text-[11px] text-gray-500 truncate font-mono">
-                      {lastLog.message}
-                    </span>
-                  </div>
+                <span className="text-xs font-mono text-gray-600">
+                  {serviceProgress ? Math.max(0, Math.min(100, serviceProgress.progress_pct)).toFixed(0) : 0}%
+                </span>
+                {serviceProgress && (serviceProgress.items_total > 0 || serviceProgress.items_processed > 0) && (
+                  <span className="text-[11px] text-gray-400">
+                    {serviceProgress.items_success}/{serviceProgress.items_total}
+                  </span>
                 )}
               </div>
-            )}
+              {lastLog && (
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span
+                    className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${lastLog.level === 'error' ? 'bg-red-500' :
+                      lastLog.level === 'warn' ? 'bg-amber-500' :
+                        'bg-blue-400 animate-pulse'
+                      }`}
+                  />
+                  <span className="text-[11px] text-gray-500 truncate font-mono">
+                    {lastLog.message}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
           <button
             onClick={() => setShowRawItemsBrowser(true)}
             className="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 hover:bg-slate-100 rounded-lg transition-colors"
