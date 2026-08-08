@@ -70,7 +70,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
         });
         if (existing.length > 0) {
           for (const l of existing) seenRef.current.add(`${l.timestamp}|${l.message}`);
-          setLogs(existing);
+          setLogs(existing.slice().reverse());
           pollLastIdRef.current = existing.reduce((max, l) => Math.max(max, l.id), 0);
         }
       } catch (e) {
@@ -98,8 +98,8 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
           if (seenRef.current.has(key)) return;
           seenRef.current.add(key);
           setLogs(prev => {
-            const next = [...prev, l];
-            if (next.length > 500) next.splice(0, next.length - 500);
+            const next = [l, ...prev];
+            if (next.length > 500) next.length = 500;
             return next;
           });
         });
@@ -151,7 +151,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
             if (seenRef.current.has(key)) return;
             seenRef.current.add(key);
             setLogs(prev => {
-              const next = [...prev, {
+              const next = [{
                 id: payload.id || Date.now(),
                 project_id: projectId,
                 timestamp: payload.timestamp || '',
@@ -159,8 +159,8 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
                 source: payload.source || 'ws',
                 message: payload.message,
                 details: payload.details || null,
-              }];
-              if (next.length > 500) next.splice(0, next.length - 500);
+              }, ...prev];
+              if (next.length > 500) next.length = 500;
               return next;
             });
           },
@@ -216,9 +216,9 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
               const key = `${l.timestamp}|${l.message}`;
               if (seenRef.current.has(key)) continue;
               seenRef.current.add(key);
-              next.push(l);
+              next.unshift(l);
             }
-            if (next.length > 500) next.splice(0, next.length - 500);
+            if (next.length > 500) next.length = 500;
             return next;
           });
         }
@@ -229,10 +229,10 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
     return () => { cancelled = true; clearInterval(timer); };
   }, [projectId]);
 
-  // Auto-scroll
+  // Auto-scroll to top (newest logs)
   useEffect(() => {
     if (autoScroll && logEndRef.current) {
-      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      logEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [logs.length, autoScroll]);
 
@@ -332,6 +332,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
       {/* Log entries */}
       {isExpanded && (
         <div className="overflow-y-auto" style={{ maxHeight: '30vh' }}>
+          <div ref={logEndRef} />
           {filteredLogs.length === 0 ? (
             <div className="flex items-center justify-center h-24 text-sm text-gray-400">
               No logs yet. Start the service to see pipeline execution logs.
@@ -355,7 +356,6 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
               </div>
             ))
           )}
-          <div ref={logEndRef} />
         </div>
       )}
     </div>
