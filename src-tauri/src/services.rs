@@ -1,8 +1,16 @@
 use crate::logs::LogManager;
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use tauri::{AppHandle, Emitter};
+
+lazy_static! {
+    /// Global in-memory status cache. Key = project_id.
+    /// Updated immediately on every status change; broadcast thread reads from here.
+    static ref SERVICE_STATE: Mutex<HashMap<String, ServiceInfo>> = Mutex::new(HashMap::new());
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceInfo {
@@ -306,19 +314,67 @@ impl ServiceManager {
     pub fn initialize(&self, app_handle: AppHandle, log_manager: Arc<LogManager>) {
         *self.app_handle.write().unwrap() = Some(app_handle.clone());
         *self.log_manager.write().unwrap() = Some(log_manager);
-        self.start_status_broadcast(app_handle);
+        // Load initial state from SQLite into RAM
+        Self::sync_sqlite_to_ram();
+        // Start broadcast thread (reads from RAM, emits Tauri events)
+        self.start_status_broadcast(app_handle.clone());
+        // Start sync thread (writes RAM to SQLite every 2s)
+        Self::start_ram_to_sqlite_sync();
     }
 
-    /// Spawn a background thread in the GUI process that polls SQLite every
-    /// second and re-broadcasts `service-status:<id>` / `service-status-update`
-    /// events. This decouples event emission from component-level reads so the
-    /// frontend receives realtime progress even when no component is actively
-    /// polling (the background service writes progress every ~1s while running).
+    /// Load all project runtime info from SQLite into the in-memory state.
+    fn sync_sqlite_to_ram() {
+        let infos = Self::read_all_runtime_from_sqlite();
+        let mut state = SERVICE_STATE.lock().unwrap();
+        for info in infos {
+            state.insert(info.project_id.clone(), info);
+        }
+    }
+
+    /// Spawn a background thread that syncs RAM -> SQLite every 2 seconds.
+    /// This is the ONLY place that writes status to SQLite (besides initial load).
+    fn start_ram_to_sqlite_sync() {
+        std::thread::spawn(|| loop {
+            std::thread::sleep(std::time::Duration::from_millis(2000));
+            let snapshot: Vec<ServiceInfo> = {
+                let state = SERVICE_STATE.lock().unwrap();
+                state.values().cloned().collect()
+            };
+            if snapshot.is_empty() {
+                continue;
+            }
+            let db_path = dirs_next::data_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("com.CrawlFlow.desktop")
+                .join("crawlflow.db");
+            if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                let _ = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;");
+                for info in &snapshot {
+                    let progress_json = serde_json::to_string(&info.progress).unwrap_or_default();
+                    let _ = conn.execute(
+                        "INSERT INTO project_runtime (project_id, runner_status, cycle_count, last_run_at, last_error, progress_json, ws_port, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
+                         ON CONFLICT(project_id) DO UPDATE SET
+                             runner_status = ?2, cycle_count = ?3, last_run_at = ?4,
+                             last_error = ?5, progress_json = ?6, ws_port = ?7, updated_at = datetime('now')",
+                        rusqlite::params![
+                            info.project_id, info.status, info.cycle_count as i64,
+                            info.last_run_at, info.last_error, progress_json, info.ws_port as i64,
+                        ],
+                    );
+                }
+            }
+        });
+    }
+
+    /// Broadcast thread: reads from RAM (instant) and emits Tauri events every 100ms.
     fn start_status_broadcast(&self, app_handle: AppHandle) {
         std::thread::spawn(move || loop {
-            // Read the full list (cheap; only emits for projects with a record).
-            let infos = ServiceManager::read_all_runtime();
-            for info in &infos {
+            let snapshot: Vec<ServiceInfo> = {
+                let state = SERVICE_STATE.lock().unwrap();
+                state.values().cloned().collect()
+            };
+            for info in &snapshot {
                 let event = format!("service-status:{}", info.project_id);
                 let _ = app_handle.emit(&event, info);
                 let _ = app_handle.emit(
@@ -326,8 +382,38 @@ impl ServiceManager {
                     serde_json::json!({ "project_id": info.project_id, "info": info }),
                 );
             }
-            std::thread::sleep(std::time::Duration::from_millis(1000));
+            std::thread::sleep(std::time::Duration::from_millis(100));
         });
+    }
+
+    /// Update status in RAM immediately. Called by GUI actions (start/stop/pause).
+    /// Also emits Tauri event right away — no waiting for broadcast thread.
+    pub fn update_status_immediate(
+        project_id: &str,
+        status: &str,
+        progress: Option<ServiceProgress>,
+        app_handle: &AppHandle,
+    ) {
+        let info = {
+            let mut state = SERVICE_STATE.lock().unwrap();
+            let entry = state.entry(project_id.to_string()).or_insert_with(|| ServiceInfo {
+                project_id: project_id.to_string(),
+                status: status.to_string(),
+                ..ServiceInfo::default()
+            });
+            entry.status = status.to_string();
+            if let Some(p) = progress {
+                entry.progress = p;
+            }
+            entry.clone()
+        };
+        // Emit immediately — no need to wait for broadcast thread
+        let event = format!("service-status:{}", project_id);
+        let _ = app_handle.emit(&event, &info);
+        let _ = app_handle.emit(
+            "service-status-update",
+            serde_json::json!({ "project_id": project_id, "info": info }),
+        );
     }
 
     fn lm(&self) -> Arc<LogManager> {
@@ -443,49 +529,9 @@ impl ServiceManager {
     }
 
     pub fn get_service_info(&self, project_id: &str) -> Option<ServiceInfo> {
-        // Read only from SQLite project_runtime (background service state)
-        let db_path = dirs_next::data_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("com.CrawlFlow.desktop")
-            .join("crawlflow.db");
-        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-            Self::ensure_progress_column(&conn);
-            let row: rusqlite::Result<(String, i64, Option<String>, Option<String>, Option<String>, Option<i64>)> = conn.query_row(
-                "SELECT runner_status, cycle_count, last_run_at, last_error, progress_json, ws_port FROM project_runtime WHERE project_id = ?1",
-                rusqlite::params![project_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4).ok().flatten(), r.get(5).ok().flatten())),
-            );
-            if let Ok((status, cycle_count, last_run_at, last_error, progress_json, ws_port)) = row {
-                // For background service "running" status, verify the PID is still alive
-                let effective_status = if status == "running" {
-                    if is_project_running_in_background(project_id) {
-                        "running"
-                    } else {
-                        "stopped"
-                    }
-                } else {
-                    &status
-                };
-                let info = ServiceInfo {
-                    project_id: project_id.to_string(),
-                    status: effective_status.to_string(),
-                    cycle_count: cycle_count as u64,
-                    started_at: String::new(),
-                    last_run_at: last_run_at.clone().unwrap_or_default(),
-                    last_error,
-                    interval_seconds: 60,
-                    progress: Self::parse_progress(progress_json.as_deref(), last_run_at),
-                    ws_port: ws_port.unwrap_or(0) as u16,
-                };
-                self.emit_service_info(&info);
-                return Some(info);
-            }
-        }
-
-        // Default: stopped (no record means no service has ever run)
-        let info = ServiceInfo::default();
-        self.emit_service_info(&info);
-        Some(info)
+        // Read from RAM (instant, no DB access)
+        let state = SERVICE_STATE.lock().unwrap();
+        state.get(project_id).cloned()
     }
 
     /// Broadcast a `ServiceInfo` to the frontend.
@@ -506,9 +552,15 @@ impl ServiceManager {
         }
     }
 
-    /// Read every project's runtime info directly from SQLite (no `self`
-    /// needed). Used by the status broadcast thread.
+    /// Read every project's runtime info from RAM (instant, no DB access).
+    /// Used by the status broadcast thread and list_service_infos.
     pub fn read_all_runtime() -> Vec<ServiceInfo> {
+        let state = SERVICE_STATE.lock().unwrap();
+        state.values().cloned().collect()
+    }
+
+    /// Read from SQLite (used only for initial load into RAM).
+    fn read_all_runtime_from_sqlite() -> Vec<ServiceInfo> {
         let db_path = dirs_next::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("com.CrawlFlow.desktop")

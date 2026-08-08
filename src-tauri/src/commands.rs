@@ -2,10 +2,10 @@ use crate::crawler;
 use crate::logs::LogManager;
 use crate::models::*;
 use crate::plugins::PluginEngine;
-use crate::services::ServiceManager;
+use crate::services::{ServiceManager, ServiceInfo};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tauri::State;
+use tauri::{State, AppHandle};
 use dirs_next;
 
 pub struct AppState {
@@ -865,6 +865,7 @@ fn ensure_service_running(project_id: &str) -> Result<(), String> {
 #[tauri::command]
 pub fn start_project_service_cmd(
     state: State<'_, AppState>,
+    app_handle: AppHandle,
     project_id: String,
     nodes: Vec<serde_json::Value>,
     edges: Vec<serde_json::Value>,
@@ -885,6 +886,9 @@ pub fn start_project_service_cmd(
         .service_manager
         .start_service(&project_id, nodes, edges, settings)?;
 
+    // Update RAM + emit event immediately (no wait for broadcast thread)
+    ServiceManager::update_status_immediate(&project_id, "running", None, &app_handle);
+
     // Auto-spawn the background service process if not already running
     ensure_service_running(&project_id)?;
 
@@ -894,34 +898,49 @@ pub fn start_project_service_cmd(
 #[tauri::command]
 pub fn stop_project_service_cmd(
     state: State<'_, AppState>,
+    app_handle: AppHandle,
     project_id: String,
 ) -> Result<String, String> {
     state
         .service_manager
-        .stop_service(&project_id)
-        .map(|_| format!("Service stopped for project {}", project_id))
+        .stop_service(&project_id)?;
+
+    // Update RAM + emit event immediately
+    ServiceManager::update_status_immediate(&project_id, "stopped", None, &app_handle);
+
+    Ok(format!("Service stopped for project {}", project_id))
 }
 
 #[tauri::command]
 pub fn pause_project_service_cmd(
     state: State<'_, AppState>,
+    app_handle: AppHandle,
     project_id: String,
 ) -> Result<String, String> {
     state
         .service_manager
-        .pause_service(&project_id)
-        .map(|_| format!("Service paused for project {}", project_id))
+        .pause_service(&project_id)?;
+
+    // Update RAM + emit event immediately
+    ServiceManager::update_status_immediate(&project_id, "paused", None, &app_handle);
+
+    Ok(format!("Service paused for project {}", project_id))
 }
 
 #[tauri::command]
 pub fn resume_project_service_cmd(
     state: State<'_, AppState>,
+    app_handle: AppHandle,
     project_id: String,
 ) -> Result<String, String> {
     state
         .service_manager
-        .resume_service(&project_id)
-        .map(|_| format!("Service resumed for project {}", project_id))
+        .resume_service(&project_id)?;
+
+    // Update RAM + emit event immediately
+    ServiceManager::update_status_immediate(&project_id, "running", None, &app_handle);
+
+    Ok(format!("Service resumed for project {}", project_id))
 }
 
 #[tauri::command]
@@ -1363,6 +1382,7 @@ pub fn unlock_project_edit_cmd(project_id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn request_project_run_cmd(
     state: State<'_, AppState>,
+    app_handle: AppHandle,
     project_id: String,
 ) -> Result<(), String> {
     let db_path = master_db_path();
@@ -1380,6 +1400,9 @@ pub fn request_project_run_cmd(
     log::info!("Requested run for project {}", project_id);
     state.log_manager.info(&project_id, "system", "Run requested");
 
+    // Update RAM + emit event immediately
+    ServiceManager::update_status_immediate(&project_id, "running", None, &app_handle);
+
     // Auto-spawn the background service process if not already running
     match ensure_service_running(&project_id) {
         Ok(()) => Ok(()),
@@ -1394,7 +1417,10 @@ pub fn request_project_run_cmd(
 
 /// Tell the background service to stop this project (service_control = 'stop')
 #[tauri::command]
-pub fn request_project_stop_cmd(project_id: String) -> Result<(), String> {
+pub fn request_project_stop_cmd(
+    app_handle: AppHandle,
+    project_id: String,
+) -> Result<(), String> {
     let db_path = master_db_path();
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
     conn.execute(
@@ -1404,6 +1430,10 @@ pub fn request_project_stop_cmd(project_id: String) -> Result<(), String> {
         rusqlite::params![project_id],
     ).map_err(|e| e.to_string())?;
     log::info!("Requested stop for project {}", project_id);
+
+    // Update RAM + emit event immediately
+    ServiceManager::update_status_immediate(&project_id, "stopped", None, &app_handle);
+
     Ok(())
 }
 
