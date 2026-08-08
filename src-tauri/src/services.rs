@@ -480,8 +480,8 @@ impl ServiceManager {
         if let Ok(conn) = rusqlite::Connection::open(&db_path) {
             conn.execute(
                 "INSERT INTO project_runtime (project_id, service_control, runner_status, updated_at)
-                 VALUES (?1, 'stop', 'stopped', datetime('now'))
-                 ON CONFLICT(project_id) DO UPDATE SET service_control = 'stop', runner_status = 'stopped', updated_at = datetime('now')",
+                 VALUES (?1, 'stop', 'pending', datetime('now'))
+                 ON CONFLICT(project_id) DO UPDATE SET service_control = 'stop', runner_status = 'pending', updated_at = datetime('now')",
                 rusqlite::params![project_id],
             ).map_err(|e| e.to_string())?;
         }
@@ -499,8 +499,8 @@ impl ServiceManager {
         if let Ok(conn) = rusqlite::Connection::open(&db_path) {
             conn.execute(
                 "INSERT INTO project_runtime (project_id, service_control, runner_status, updated_at)
-                 VALUES (?1, 'paused', 'paused', datetime('now'))
-                 ON CONFLICT(project_id) DO UPDATE SET service_control = 'paused', runner_status = 'paused', updated_at = datetime('now')",
+                 VALUES (?1, 'paused', 'pending', datetime('now'))
+                 ON CONFLICT(project_id) DO UPDATE SET service_control = 'paused', runner_status = 'pending', updated_at = datetime('now')",
                 rusqlite::params![project_id],
             ).map_err(|e| e.to_string())?;
         }

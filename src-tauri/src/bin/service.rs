@@ -827,12 +827,12 @@ async fn run_project_loop(
                 "service",
                 &format!("Project '{}' is {}. Skipping cycle.", proj.name, reason),
             );
-            // If stopped or disabled, exit the loop entirely
-            if service_control == "stop" || !project_enabled {
+            // If stopped, paused, or disabled, exit the loop entirely
+            if service_control == "stop" || service_control == "paused" || !project_enabled {
                 // Keep a terminal "completed" status from update_only runs:
-                // the auto-stop that follows must not regress it to "stopped".
+                // the auto-stop that follows must not regress it to "pending".
                 if exit_status != "completed" {
-                    exit_status = if !project_enabled { "disabled" } else { "stopped" };
+                    exit_status = if !project_enabled { "disabled" } else { "pending" };
                 }
                 break;
             }

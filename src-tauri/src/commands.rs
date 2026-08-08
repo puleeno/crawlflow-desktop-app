@@ -906,7 +906,7 @@ pub fn stop_project_service_cmd(
         .stop_service(&project_id)?;
 
     // Update RAM + emit event immediately
-    ServiceManager::update_status_immediate(&project_id, "stopped", None, &app_handle);
+    ServiceManager::update_status_immediate(&project_id, "pending", None, &app_handle);
 
     Ok(format!("Service stopped for project {}", project_id))
 }
@@ -922,7 +922,7 @@ pub fn pause_project_service_cmd(
         .pause_service(&project_id)?;
 
     // Update RAM + emit event immediately
-    ServiceManager::update_status_immediate(&project_id, "paused", None, &app_handle);
+    ServiceManager::update_status_immediate(&project_id, "pending", None, &app_handle);
 
     Ok(format!("Service paused for project {}", project_id))
 }
@@ -1425,14 +1425,14 @@ pub fn request_project_stop_cmd(
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO project_runtime (project_id, service_control, runner_status, updated_at)
-         VALUES (?1, 'stop', 'stopped', datetime('now'))
-         ON CONFLICT(project_id) DO UPDATE SET service_control = 'stop', runner_status = 'stopped', updated_at = datetime('now')",
+         VALUES (?1, 'stop', 'pending', datetime('now'))
+         ON CONFLICT(project_id) DO UPDATE SET service_control = 'stop', runner_status = 'pending', updated_at = datetime('now')",
         rusqlite::params![project_id],
     ).map_err(|e| e.to_string())?;
     log::info!("Requested stop for project {}", project_id);
 
     // Update RAM + emit event immediately
-    ServiceManager::update_status_immediate(&project_id, "stopped", None, &app_handle);
+    ServiceManager::update_status_immediate(&project_id, "pending", None, &app_handle);
 
     Ok(())
 }
