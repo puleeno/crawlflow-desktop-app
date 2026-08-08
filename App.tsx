@@ -294,7 +294,20 @@ const App: React.FC = () => {
     const ws = new ProjectWsClient(currentProjectId, {
       onProgress: (payload) => {
         wsProgressReceivedRef.current = true;
-        setServiceProgress(payload);
+        setServiceProgress((prev: any) => {
+          // Avoid glitching: Ignore empty Ticker progress if the plugin is manually driving it
+          if (
+            payload.items_total === 0 &&
+            payload.phase === 'running' &&
+            prev?.phase === 'fetching'
+          ) {
+            return {
+              ...prev,
+              message: payload.message || prev.message,
+            };
+          }
+          return payload;
+        });
       },
       onLog: (payload) => {
         if (!payload || !payload.message) return;
