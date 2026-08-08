@@ -1067,6 +1067,31 @@ def _parse_product_from_html(html, url):
     if h1_match:
         name = _get_text(h1_match.group(1), "").strip()
 
+    # Fallback: extract name from JSON-LD BreadcrumbList (last item = product)
+    if not name:
+        for ld_text in re.findall(
+            r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+            html, re.DOTALL | re.IGNORECASE
+        ):
+            try:
+                ld_data = json.loads(ld_text)
+                if isinstance(ld_data, dict) and ld_data.get("@type") == "BreadcrumbList":
+                    items = ld_data.get("itemListElement", [])
+                    if items:
+                        last_item = items[-1]
+                        name = last_item.get("item", {}).get("name", "").strip()
+                        if name:
+                            break
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+    # Fallback: extract name from URL slug
+    # Pattern: /mua-ban-<category>/<slug>-detail/<id>
+    if not name:
+        slug_match = re.search(r'/mua-ban[^/]*/([^/]+)-detail/', url)
+        if slug_match:
+            name = slug_match.group(1).replace('-', ' ').strip()
+
     # Gia
     price_patterns = [
         r'<span[^>]*class\s*=\s*["\'][^"\']*price[^"\']*["\'][^>]*>([^<]+)</span>',
