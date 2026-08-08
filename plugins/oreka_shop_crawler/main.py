@@ -1397,6 +1397,25 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
                             f"[OrekaShop] OK {elapsed_ms}ms — \"{name}\"" + (f" | gia: {price}" if price else "") + f" | {p_url}",
                             "info",
                         )
+                        # Push live progress qua WebSocket mỗi khi fetch 1 sản phẩm xong.
+                        # Đây là nguồn dữ liệu duy nhất cho progress bar vì fetch_data
+                        # không save vào raw_items (ticker sẽ luôn thấy 0).
+                        if project_id:
+                            total_urls = len(seen_urls)  # số đã crawl
+                            try:
+                                crawlflow.emit_event(project_id, "progress", json.dumps({
+                                    "items_total": total_urls,
+                                    "items_processed": len(products),
+                                    "items_success": len(products),
+                                    "items_failed": 0,
+                                    "items_pending": total_urls - len(products),
+                                    "progress_pct": round(len(products) / total_urls * 100, 1) if total_urls > 0 else 0.0,
+                                    "phase": "fetching",
+                                    "message": f"[OrekaShop] OK {elapsed_ms}ms — \"{name}\"" + (f" | gia: {price}" if price else "") + f" | {p_url}",
+                                    "last_run_at": "",
+                                }))
+                            except Exception:
+                                pass
                         success = True
                         break
                     else:
