@@ -1530,6 +1530,11 @@ pub async fn execute_repository_pipeline(
                     "project_id": project_id,
                     "db_path": db_path.to_str().unwrap_or(""),
                     "config": preproc_config,
+                    "refresh_strategy": config
+                        .settings
+                        .get("refresh_strategy")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("refresh"),
                 });
                 match engine.call_preprocessor_hook("oreka-shop-crawler", data_json) {
                     Ok(items) if !items.is_empty() => {

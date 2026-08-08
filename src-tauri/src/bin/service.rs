@@ -1125,14 +1125,32 @@ async fn run_project_loop(
                                 }
                             }
 
-                            // For 'update_only' strategy: stop after 1 successful cycle.
+                            // For 'update_only' strategy: stop after 1 successful cycle
+                            // ONLY when all matched items have been processed.
                             // For 'refresh' / 'refresh_update': keep looping.
                             if refresh_strategy == "update_only" {
-                                exit_status = "completed";
-                                let _ = conn.execute(
-                                    "UPDATE project_runtime SET service_control = 'stop' WHERE project_id = ?1",
-                                    rusqlite::params![&project_id],
-                                );
+                                let remaining = match crawlflow_lib::repository::RawItemRepository::open(&db_path) {
+                                    Ok(r) => r.count_pending_matched().unwrap_or(0),
+                                    Err(_) => 0,
+                                };
+                                if remaining == 0 {
+                                    exit_status = "completed";
+                                    let _ = conn.execute(
+                                        "UPDATE project_runtime SET service_control = 'stop' WHERE project_id = ?1",
+                                        rusqlite::params![&project_id],
+                                    );
+                                    lm.info(
+                                        &project_id,
+                                        "service",
+                                        &format!("Cycle #{}: all items processed, marking completed", cycle),
+                                    );
+                                } else {
+                                    lm.info(
+                                        &project_id,
+                                        "service",
+                                        &format!("Cycle #{}: {} items still pending, continuing...", cycle, remaining),
+                                    );
+                                }
                             }
                         } else {
                         let err = result.error.clone().unwrap_or_default();

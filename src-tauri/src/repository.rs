@@ -645,6 +645,17 @@ impl RawItemRepository {
             .map_err(|e| format!("Failed to count items: {}", e))
     }
 
+    /// Count items that are matched to a worker but not yet processed.
+    pub fn count_pending_matched(&self) -> Result<i64, String> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM raw_items WHERE status = 'pending' AND matched = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to count pending matched items: {}", e))
+    }
+
     /// Reset items pending lai sau khi xử lý lỗi
     #[allow(dead_code)]
     pub fn reset_failed_items(&self) -> Result<i64, String> {

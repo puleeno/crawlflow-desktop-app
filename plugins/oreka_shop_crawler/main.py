@@ -545,6 +545,14 @@ def preprocess_data(data_json):
     project_id = payload.get("project_id", "")
     db_path = payload.get("db_path", "")
     config = payload.get("config", {})
+    refresh_strategy = payload.get("refresh_strategy", "refresh")
+
+    # Skip listing crawl for update_only — existing items in DB are sufficient.
+    # Only refresh / refresh_update need to re-crawl listing pages.
+    if refresh_strategy == "update_only":
+        crawlflow.log("[OrekaShop][preprocess] update_only — skip listing crawl", "info")
+        return json.dumps([])
+
     store_id = _extract_store_id_from_html(html) or _extract_store_id_from_html(source_url)
 
     if not store_id:
@@ -1456,7 +1464,7 @@ def process_data(data_json, config_json):
     for idx, item in enumerate(data, 1):
         norm = {
             "url": item.get("url", ""),
-            "name": item.get("name", "").strip(),
+            "name": (item.get("name") or item.get("product_name") or "").strip(),
             "price": _safe_float(item.get("price", 0)),
             "old_price": _safe_float(item.get("old_price", 0)),
             "image": item.get("image", ""),
@@ -1644,7 +1652,7 @@ def _export_xlsx(products, filepath, seen_ids):
             item.get("availability", ""),
             _spec_value(specs, "Năm xuất bản", "Năm XB"),
             _spec_value(specs, "Thương hiệu", "Nhà xuất bản", "NXB", "Tác giả"),
-            item.get("name", ""),
+            item.get("name") or item.get("product_name", ""),
             _clean_category(item.get("category", "")),
         ]
         ws.append(row)
@@ -1693,7 +1701,7 @@ def _export_csv(products, filepath):
                 item.get("availability", ""),
                 _spec_value(specs, "Năm xuất bản", "Năm XB"),
                 _spec_value(specs, "Thương hiệu", "Nhà xuất bản", "NXB", "Tác giả"),
-                item.get("name", ""),
+                item.get("name") or item.get("product_name", ""),
                 _clean_category(item.get("category", "")),
             ])
             count += 1
