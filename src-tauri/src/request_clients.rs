@@ -183,22 +183,54 @@ fn is_global_headless_enabled() -> bool {
 }
 
 fn build_reqwest_client(profile: &ClientProfile) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder()
-        .danger_accept_invalid_certs(false)
-        .timeout(Duration::from_secs(profile.timeout_secs.unwrap_or(30)));
+    // Try to use the shared pooled client with global network settings.
+    let db_path = crate::commands::master_db_path();
+    let settings = crate::network_client::NetworkSettings::load_from_db(&db_path);
+    match crate::network_client::get_shared_client(&settings) {
+        Ok(client) => {
+            // Apply per-request overrides (proxy, user-agent) on top of the
+            // shared client by rebuilding if needed.
+            let mut builder = reqwest::Client::builder()
+                .danger_accept_invalid_certs(false)
+                .timeout(Duration::from_secs(profile.timeout_secs.unwrap_or(settings.timeout_secs)))
+                .pool_max_idle_per_host(settings.pool_size as usize)
+                .connect_timeout(Duration::from_secs(10));
 
-    if let Some(ua) = &profile.user_agent {
-        builder = builder.user_agent(ua);
+            if settings.keep_alive {
+                builder = builder
+                    .tcp_keepalive(Some(Duration::from_secs(60)))
+                    .tcp_nodelay(true);
+            }
+
+            if let Some(ua) = &profile.user_agent {
+                builder = builder.user_agent(ua);
+            }
+            if let Some(proxy) = &profile.proxy_url {
+                let proxy = reqwest::Proxy::all(proxy).map_err(|e| format!("Invalid proxy: {}", e))?;
+                builder = builder.proxy(proxy);
+            }
+
+            builder
+                .build()
+                .map_err(|e| format!("Failed to build reqwest client: {}", e))
+        }
+        Err(_) => {
+            // Fallback: build a standalone client with defaults.
+            let mut builder = reqwest::Client::builder()
+                .danger_accept_invalid_certs(false)
+                .timeout(Duration::from_secs(profile.timeout_secs.unwrap_or(30)));
+            if let Some(ua) = &profile.user_agent {
+                builder = builder.user_agent(ua);
+            }
+            if let Some(proxy) = &profile.proxy_url {
+                let proxy = reqwest::Proxy::all(proxy).map_err(|e| format!("Invalid proxy: {}", e))?;
+                builder = builder.proxy(proxy);
+            }
+            builder
+                .build()
+                .map_err(|e| format!("Failed to build reqwest client: {}", e))
+        }
     }
-
-    if let Some(proxy) = &profile.proxy_url {
-        let proxy = reqwest::Proxy::all(proxy).map_err(|e| format!("Invalid proxy: {}", e))?;
-        builder = builder.proxy(proxy);
-    }
-
-    builder
-        .build()
-        .map_err(|e| format!("Failed to build reqwest client: {}", e))
 }
 
 pub async fn fetch_reqwest(url: &str, profile: &ClientProfile) -> CrawlResult {

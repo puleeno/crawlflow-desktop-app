@@ -1264,6 +1264,8 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
     products = []
     seen_urls = set()
     page_num = 1
+    consecutive_empty = 0
+    max_consecutive_empty = 2
 
     # Cac page da hoan thanh o chu ky crawl truoc (luu trong bang crawl_pages)
     # se duoc bo qua de ho tro resume khi service bi dung dot ngot.
@@ -1327,6 +1329,9 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
             crawlflow.log(f"[OrekaShop] Khong con san pham, dung tai trang {page_num}", "info")
             break
 
+        # Co san pham => reset empty counter
+        consecutive_empty = 0
+
         # Luu tung luot product URL vao DB NGAY de progress bar (pending)
         # cap nhat realtime thay vi chi nhay 1 lan sau khi xong het.
         saved = 0
@@ -1348,9 +1353,10 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
             except Exception as e:
                 crawlflow.log(f"[OrekaShop] Loi save_raw_items: {e}", "warn")
 
-        # Voi chien luoc update_only: dung neu khong co URL moi nao duoc insert
-        if refresh_strategy == "update_only" and saved == 0 and product_urls:
-            crawlflow.log(f"[OrekaShop] Khong con URL moi, dung tai trang {page_num}", "info")
+        # update_only: chi dung khi trang trong khong co product URL nao.
+        # Khong dung khi saved==0 vi san pham moi co o trang sau.
+        if refresh_strategy == "update_only" and not product_urls:
+            crawlflow.log(f"[OrekaShop] Trang {page_num} trong, dung phan trang", "info")
             break
 
         # Danh dau page nay da hoan thanh de ho tro resume.
@@ -1395,6 +1401,18 @@ def _crawl_all_products(shop_url, max_pages, delay_ms, client_type=None, headles
 
         has_next = _has_next_page(listing_html, page_num)
         if not has_next:
+            # Fallback: neu HTML khong co pagination (SPA/JS) nhung van co
+            # san pham, thu fetch trang tiep theo de kiem tra.
+            if product_urls and consecutive_empty < max_consecutive_empty:
+                crawlflow.log(
+                    f"[OrekaShop] Khong tim thay next page trong HTML, thu trang {page_num + 1}...",
+                    "info",
+                )
+                page_num += 1
+                consecutive_empty += 1
+                if delay_ms > 0:
+                    time.sleep(delay_ms / 1000.0)
+                continue
             crawlflow.log(f"[OrekaShop] Het phan trang tai trang {page_num}", "info")
             break
         page_num += 1

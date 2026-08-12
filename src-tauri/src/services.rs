@@ -614,8 +614,8 @@ impl ServiceManager {
             Self::ensure_progress_column(&conn);
             let json = serde_json::to_string(progress).unwrap_or_default();
             let _ = conn.execute(
-                "INSERT INTO project_runtime (project_id, progress_json, updated_at)
-                 VALUES (?1, ?2, datetime('now'))
+                "INSERT INTO project_runtime (project_id, service_control, progress_json, updated_at)
+                 VALUES (?1, 'stopped', ?2, datetime('now'))
                  ON CONFLICT(project_id) DO UPDATE SET progress_json = ?2, updated_at = datetime('now')",
                 rusqlite::params![project_id, json],
             );

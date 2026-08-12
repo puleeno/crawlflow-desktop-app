@@ -36,7 +36,7 @@ pub fn get_master_migrations() -> Vec<Migration> {
                 runner_status TEXT NOT NULL DEFAULT 'stopped',
                 runner_pid INTEGER,
                 runner_type TEXT DEFAULT 'service',
-                service_control TEXT NOT NULL DEFAULT 'run',
+                service_control TEXT NOT NULL DEFAULT 'stopped',
                 edit_pid INTEGER,
                 cycle_count INTEGER NOT NULL DEFAULT 0,
                 last_run_at TEXT,
