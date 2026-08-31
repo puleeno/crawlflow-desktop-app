@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { XMarkIcon, ChevronDownIcon, ChevronUpIcon } from './icons';
-import { ProjectWsClient } from '../wsClient';
 
 interface LogEntry {
   id: number;
@@ -10,17 +9,6 @@ interface LogEntry {
   source: string;
   message: string;
   details?: string | null;
-}
-
-interface ProgressPayload {
-  items_total?: number;
-  items_processed?: number;
-  items_success?: number;
-  items_failed?: number;
-  items_pending?: number;
-  progress_pct?: number;
-  phase?: string;
-  message?: string;
 }
 
 interface LiveLogsProps {
@@ -49,12 +37,16 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [serviceStatus, setServiceStatus] = useState<string>('stopped');
   const [serviceInfo, setServiceInfo] = useState<any>(null);
-  const [progress, setProgress] = useState<ProgressPayload | null>(null);
+  const [progress, setProgress] = useState<any>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const wsRef = useRef<any>(null);
+  const wsConnectedRef = useRef(false);
+  // Content-based dedup key. We use `timestamp|message` instead of the numeric
+  // `id` because the headless service's in-memory log counter resets every
+  // cycle, so WebSocket log frames would otherwise arrive with ids lower than
+  // the DB-fetched history and be mistaken for duplicates and dropped.
   const seenRef = useRef<Set<string>>(new Set());
   const pollLastIdRef = useRef(0);
-  const wsRef = useRef<ProjectWsClient | null>(null);
-  const wsConnectedRef = useRef(false);
 
   // Fetch existing logs from DB on mount (captures background service logs)
   useEffect(() => {
@@ -79,7 +71,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
     })();
   }, [projectId]);
 
-  // Subscribe to Tauri events (in-process logs + status)
+  // Subscribe to live log events (new logs from in-process execution)
   useEffect(() => {
     const logEvent = `project-log:${projectId}`;
     const statusEvent = `service-status:${projectId}`;
@@ -144,6 +136,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
         setServiceStatus(info.status || 'stopped');
         setServiceInfo(info);
 
+        const { ProjectWsClient } = await import('../wsClient');
         const ws = new ProjectWsClient(projectId, {
           onLog: (payload) => {
             if (!payload || !payload.message) return;
@@ -191,7 +184,7 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
     };
   }, [projectId]);
 
-  // Poll for new logs from DB every 2s (fallback for headless service mode)
+  // Poll for new logs from DB every 500ms (fallback for headless service mode)
   // This catches logs written by the service but not received via WS (e.g. during startup)
   useEffect(() => {
     let cancelled = false;
@@ -255,11 +248,6 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
   const statusColor = isRunning ? 'bg-green-500' : isPaused ? 'bg-amber-500' : isError ? 'bg-red-500' : 'bg-gray-400';
   const statusLabel = isRunning ? 'Running' : isPaused ? 'Paused' : isError ? 'Error' : 'Stopped';
 
-  const progressPct = progress?.progress_pct ?? 0;
-  const itemsProcessed = progress?.items_processed ?? 0;
-  const itemsTotal = progress?.items_total ?? 0;
-  const itemsFailed = progress?.items_failed ?? 0;
-
   return (
     <div className="border-t border-slate-200 bg-white shadow-inner">
       {/* Header bar */}
@@ -279,25 +267,6 @@ const LiveLogs: React.FC<LiveLogsProps> = ({ projectId, onClose }) => {
           </div>
           {serviceInfo && (
             <span className="text-xs text-gray-400">Cycle #{serviceInfo.cycle_count}</span>
-          )}
-          {/* Realtime progress display */}
-          {itemsTotal > 0 && (
-            <div className="flex items-center gap-2 ml-2">
-              <div className="w-24 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-blue-500 rounded-full transition-all duration-300"
-                  style={{ width: `${Math.min(progressPct, 100)}%` }}
-                />
-              </div>
-              <span className="text-xs text-gray-500">
-                {itemsProcessed}/{itemsTotal}
-                {itemsFailed > 0 && <span className="text-red-500 ml-1">({itemsFailed} failed)</span>}
-              </span>
-              <span className="text-xs text-gray-400">{Math.round(progressPct)}%</span>
-            </div>
-          )}
-          {progress?.message && (
-            <span className="text-xs text-gray-400 ml-1">{progress.message}</span>
           )}
         </div>
         <div className="flex items-center gap-2">

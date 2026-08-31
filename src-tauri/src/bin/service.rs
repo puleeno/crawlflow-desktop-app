@@ -462,7 +462,7 @@ fn ensure_runtime_table(conn: &rusqlite::Connection) {
             runner_status TEXT NOT NULL DEFAULT 'stopped',
             runner_pid INTEGER,
             runner_type TEXT DEFAULT 'service',
-            service_control TEXT NOT NULL DEFAULT 'run',
+            service_control TEXT NOT NULL DEFAULT 'stopped',
             edit_pid INTEGER,
             cycle_count INTEGER NOT NULL DEFAULT 0,
             last_run_at TEXT,
@@ -628,8 +628,8 @@ fn set_runner_status(
     last_error: Option<&str>,
 ) {
     conn.execute(
-        "INSERT INTO project_runtime (project_id, runner_status, runner_pid, runner_type, cycle_count, last_run_at, last_error, updated_at)
-         VALUES (?1, ?2, ?3, 'service', COALESCE(?4, 0), ?5, ?6, datetime('now'))
+        "INSERT INTO project_runtime (project_id, service_control, runner_status, runner_pid, runner_type, cycle_count, last_run_at, last_error, updated_at)
+         VALUES (?1, 'stopped', ?2, ?3, 'service', COALESCE(?4, 0), ?5, ?6, datetime('now'))
          ON CONFLICT(project_id) DO UPDATE SET
              runner_status = ?2,
              runner_pid = ?3,
@@ -643,6 +643,41 @@ fn set_runner_status(
 }
 
 // ── Per-project async loop ─────────────────────────────────────────────────────────
+
+/// Wait until the user requests a run (`service_control = 'run'`), the project
+/// is disabled/deleted, or the process is shutting down. Polls every second so
+/// a Start press is picked up immediately regardless of the cycle interval.
+async fn wait_for_run_request(
+    master_db: &PathBuf,
+    project_id: &str,
+    shutdown: &Arc<AtomicBool>,
+) {
+    loop {
+        if shutdown.load(Ordering::Relaxed) {
+            return;
+        }
+        if let Ok(conn) = rusqlite::Connection::open(master_db) {
+            let control: String = conn
+                .query_row(
+                    "SELECT service_control FROM project_runtime WHERE project_id = ?1",
+                    rusqlite::params![project_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|_| "stopped".to_string());
+            let enabled: bool = conn
+                .query_row(
+                    "SELECT status = 'enabled' FROM projects WHERE id = ?1",
+                    rusqlite::params![project_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+            if control == "run" || !enabled {
+                return;
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
 
 async fn run_project_loop(
     proj: ProjectRow,
@@ -795,7 +830,8 @@ async fn run_project_loop(
             .map(|conn| is_project_being_edited(conn, &project_id))
             .unwrap_or(false);
 
-        // Check if user requested a stop/pause via the desktop app UI
+        // Check if user requested a run/stop/pause via the desktop app UI.
+        // Default is 'stopped': the service only crawls after an explicit Start.
         let service_control = conn_result
             .as_ref()
             .map(|conn| {
@@ -804,9 +840,9 @@ async fn run_project_loop(
                     rusqlite::params![&project_id],
                     |row| row.get::<_, String>(0),
                 )
-                .unwrap_or_else(|_| "run".to_string())
+                .unwrap_or_else(|_| "stopped".to_string())
             })
-            .unwrap_or_else(|_| "run".to_string());
+            .unwrap_or_else(|_| "stopped".to_string());
 
         // Check if project has been disabled while the service was running
         let project_enabled = conn_result
@@ -821,38 +857,62 @@ async fn run_project_loop(
             })
             .unwrap_or(false);
 
-        if is_editing || service_control == "paused" || service_control == "stop" || !project_enabled {
-            let reason = if !project_enabled {
-                "disabled by user"
-            } else if is_editing {
-                "open in desktop app"
-            } else if service_control == "paused" {
-                "paused by user"
-            } else {
-                "stopped by user"
+        // Disabled/deleted projects end their loop entirely.
+        if !project_enabled {
+            println!("[SERVICE] Skipping: project '{}' is disabled by user", proj.name);
+            lm.info(
+                &project_id,
+                "service",
+                &format!("Project '{}' is disabled. Stopping service loop.", proj.name),
+            );
+            if exit_status != "completed" {
+                exit_status = "disabled";
+            }
+            break;
+        }
+
+        // Only crawl when the user pressed Start (service_control = 'run').
+        if service_control != "run" {
+            let reason = match service_control.as_str() {
+                "paused" => "paused by user",
+                "stop" => "stopped by user",
+                _ => "waiting for Start",
             };
-            println!("[SERVICE] Skipping: project '{}' is {}", proj.name, reason);
+            println!(
+                "[SERVICE] Skipping: project '{}' is {} (control='{}')",
+                proj.name, reason, service_control
+            );
             lm.info(
                 &project_id,
                 "service",
                 &format!("Project '{}' is {}. Skipping cycle.", proj.name, reason),
             );
-            // If stopped, paused, or disabled, exit the loop entirely
-            if service_control == "stop" || service_control == "paused" || !project_enabled {
-                // Keep a terminal "completed" status from update_only runs:
-                // the auto-stop that follows must not regress it to "pending".
-                if exit_status != "completed" {
-                    exit_status = if !project_enabled { "disabled" } else { "pending" };
+            if is_editing {
+                // GUI has the project open and no run requested: retry shortly
+                // so we notice when the user closes it or presses Start.
+                for _ in 0..5 {
+                    if shutdown.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_secs(1)).await;
                 }
-                break;
+                continue;
             }
-            for _ in 0..interval_secs {
-                if shutdown.load(Ordering::Relaxed) {
-                    break;
-                }
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            }
+            // Keep the loop alive and poll for an explicit Start request, so
+            // Start/Stop/Start works even under the --all service.
+            wait_for_run_request(&master_db, &project_id, &shutdown).await;
             continue;
+        }
+
+        // Explicit Start requested: take ownership from any open editor so a
+        // cycle can execute even while the desktop app has the project open.
+        if is_editing {
+            if let Ok(conn) = rusqlite::Connection::open(&master_db) {
+                let _ = conn.execute(
+                    "UPDATE project_runtime SET edit_pid = NULL, updated_at = datetime('now') WHERE project_id = ?1",
+                    rusqlite::params![&project_id],
+                );
+            }
         }
 
         // Mark as running in shared SQLite and reset service_control
@@ -1140,8 +1200,9 @@ async fn run_project_loop(
                                 }
                             }
 
-                            // For 'update_only' strategy: mark completed but keep looping
-                            // to monitor for new items. For 'refresh' / 'refresh_update': keep looping.
+                            // For 'update_only' strategy: stop after 1 successful cycle
+                            // ONLY when all matched items have been processed.
+                            // For 'refresh' / 'refresh_update': keep looping.
                             if refresh_strategy == "update_only" {
                                 let remaining = match crawlflow_lib::repository::RawItemRepository::open(&db_path) {
                                     Ok(r) => r.count_pending_matched().unwrap_or(0),
@@ -1149,10 +1210,26 @@ async fn run_project_loop(
                                 };
                                 if remaining == 0 {
                                     exit_status = "completed";
+                                    // Persist the terminal status now — the
+                                    // service_control='stop' below makes the loop
+                                    // wait for a future Start instead of overwriting.
+                                    set_runner_status(
+                                        &conn,
+                                        &project_id,
+                                        "completed",
+                                        Some(self_pid),
+                                        Some(cycle as i64),
+                                        Some(&now),
+                                        None,
+                                    );
+                                    let _ = conn.execute(
+                                        "UPDATE project_runtime SET service_control = 'stop' WHERE project_id = ?1",
+                                        rusqlite::params![&project_id],
+                                    );
                                     lm.info(
                                         &project_id,
                                         "service",
-                                        &format!("Cycle #{}: all items processed, marking completed (monitoring for new items)", cycle),
+                                        &format!("Cycle #{}: all items processed, marking completed", cycle),
                                     );
                                 } else {
                                     lm.info(
@@ -1205,10 +1282,23 @@ async fn run_project_loop(
             }
         }
 
-        // Sleep in 1s ticks for responsive shutdown
+        // Sleep in 1s ticks for responsive shutdown / control changes. Break
+        // early when the user stops/pauses so the next loop iteration notices.
         for _ in 0..interval_secs {
             if shutdown.load(Ordering::Relaxed) {
                 break;
+            }
+            if let Ok(conn) = rusqlite::Connection::open(&master_db) {
+                let ctl: Result<String, _> = conn.query_row(
+                    "SELECT service_control FROM project_runtime WHERE project_id = ?1",
+                    rusqlite::params![&project_id],
+                    |row| row.get(0),
+                );
+                if let Ok(ctl) = ctl {
+                    if ctl != "run" {
+                        break;
+                    }
+                }
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
@@ -1322,8 +1412,8 @@ fn run_as_console(args: &[String]) {
         ws_hub.set_port_persister(Box::new(move |project_id, port| {
             if let Ok(conn) = rusqlite::Connection::open(&master) {
                 let _ = conn.execute(
-                    "INSERT INTO project_runtime (project_id, ws_port, updated_at)
-                     VALUES (?1, ?2, datetime('now'))
+                    "INSERT INTO project_runtime (project_id, service_control, ws_port, updated_at)
+                     VALUES (?1, 'stopped', ?2, datetime('now'))
                      ON CONFLICT(project_id) DO UPDATE SET ws_port = ?2, updated_at = datetime('now')",
                     rusqlite::params![project_id, port as i64],
                 );
@@ -1360,8 +1450,12 @@ fn run_as_console(args: &[String]) {
     };
 
     if projects.is_empty() {
-        // Always keep running — wait for projects to be enabled
-        log_to_file("[SERVICE] No enabled projects. Service will keep running and wait for projects to be enabled.");
+        if is_service_mode {
+            log_to_file("[SERVICE] No enabled projects. Service will keep running and wait for projects to be enabled.");
+        } else {
+            log_to_file("[SERVICE] No enabled projects. Exiting (command line mode).");
+            return;
+        }
     }
 
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
@@ -1508,8 +1602,8 @@ fn service_main_entry(_arguments: Vec<std::ffi::OsString>) {
         ws_hub.set_port_persister(Box::new(move |project_id, port| {
             if let Ok(conn) = rusqlite::Connection::open(&master) {
                 let _ = conn.execute(
-                    "INSERT INTO project_runtime (project_id, ws_port, updated_at)
-                     VALUES (?1, ?2, datetime('now'))
+                    "INSERT INTO project_runtime (project_id, service_control, ws_port, updated_at)
+                     VALUES (?1, 'stopped', ?2, datetime('now'))
                      ON CONFLICT(project_id) DO UPDATE SET ws_port = ?2, updated_at = datetime('now')",
                     rusqlite::params![project_id, port as i64],
                 );

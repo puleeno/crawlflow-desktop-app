@@ -37,6 +37,19 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
   const [pythonLoading, setPythonLoading] = useState(false);
   const [pythonMessage, setPythonMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const [keepAlive, setKeepAlive] = useState(true);
+  const [savedKeepAlive, setSavedKeepAlive] = useState(true);
+  const [poolSize, setPoolSize] = useState(8);
+  const [savedPoolSize, setSavedPoolSize] = useState(8);
+  const [timeoutSecs, setTimeoutSecs] = useState(30);
+  const [savedTimeoutSecs, setSavedTimeoutSecs] = useState(30);
+  const [retryCount, setRetryCount] = useState(3);
+  const [savedRetryCount, setSavedRetryCount] = useState(3);
+  const [retryDelayMs, setRetryDelayMs] = useState(1000);
+  const [savedRetryDelayMs, setSavedRetryDelayMs] = useState(1000);
+  const [netLoading, setNetLoading] = useState(false);
+  const [netMessage, setNetMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   const isWindows = navigator.platform?.toLowerCase().includes('win');
 
   const fetchInfo = useCallback(async () => {
@@ -89,6 +102,49 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
       setSavedPythonPath(val ?? '');
     } catch (e) { /* ignore */ }
   }, []);
+
+  const fetchNetworkSettings = useCallback(async () => {
+    try {
+        const { invoke } = await import('../lib/platform');
+      const ka: string | null = await invoke('get_app_setting_cmd', { key: 'network_keep_alive' });
+      const ps: string | null = await invoke('get_app_setting_cmd', { key: 'network_pool_size' });
+      const ts: string | null = await invoke('get_app_setting_cmd', { key: 'network_timeout_secs' });
+      const rc: string | null = await invoke('get_app_setting_cmd', { key: 'network_retry_count' });
+      const rd: string | null = await invoke('get_app_setting_cmd', { key: 'network_retry_delay_ms' });
+      const kaVal = ka === null ? true : ka !== 'false';
+      const psVal = ps ? parseInt(ps, 10) || 8 : 8;
+      const tsVal = ts ? parseInt(ts, 10) || 30 : 30;
+      const rcVal = rc ? parseInt(rc, 10) || 3 : 3;
+      const rdVal = rd ? parseInt(rd, 10) || 1000 : 1000;
+      setKeepAlive(kaVal); setSavedKeepAlive(kaVal);
+      setPoolSize(psVal); setSavedPoolSize(psVal);
+      setTimeoutSecs(tsVal); setSavedTimeoutSecs(tsVal);
+      setRetryCount(rcVal); setSavedRetryCount(rcVal);
+      setRetryDelayMs(rdVal); setSavedRetryDelayMs(rdVal);
+    } catch (e) { /* ignore */ }
+  }, []);
+
+  const handleSaveNetwork = async () => {
+    setNetLoading(true);
+    setNetMessage(null);
+    try {
+        const { invoke } = await import('../lib/platform');
+      await invoke('set_app_setting_cmd', { key: 'network_keep_alive', value: keepAlive ? 'true' : 'false' });
+      await invoke('set_app_setting_cmd', { key: 'network_pool_size', value: String(poolSize) });
+      await invoke('set_app_setting_cmd', { key: 'network_timeout_secs', value: String(timeoutSecs) });
+      await invoke('set_app_setting_cmd', { key: 'network_retry_count', value: String(retryCount) });
+      await invoke('set_app_setting_cmd', { key: 'network_retry_delay_ms', value: String(retryDelayMs) });
+      setSavedKeepAlive(keepAlive);
+      setSavedPoolSize(poolSize);
+      setSavedTimeoutSecs(timeoutSecs);
+      setSavedRetryCount(retryCount);
+      setSavedRetryDelayMs(retryDelayMs);
+      setNetMessage({ type: 'success', text: 'Network settings saved.' });
+    } catch (e: any) {
+      setNetMessage({ type: 'error', text: e?.toString() || 'Failed to save' });
+    }
+    setNetLoading(false);
+  };
 
   const handleDetectPython = async () => {
     setPythonLoading(true);
@@ -191,7 +247,8 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
     fetchHeadless();
     fetchExportDir();
     fetchPythonPath();
-  }, [fetchInfo, fetchChromePath, fetchHeadless, fetchExportDir, fetchPythonPath]);
+    fetchNetworkSettings();
+  }, [fetchInfo, fetchChromePath, fetchHeadless, fetchExportDir, fetchPythonPath, fetchNetworkSettings]);
 
   const showMsg = (type: 'success' | 'error', text: string) => {
     setMessage({ type, text });
@@ -502,6 +559,126 @@ const AppSettings: React.FC<AppSettingsProps> = ({ onClose }) => {
                 {pythonMessage.text}
               </p>
             )}
+          </div>
+        </div>
+
+        {/* Network Settings */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-green-100 rounded-lg">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-green-600">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5a17.92 17.92 0 01-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-gray-800">Network</h3>
+              <p className="text-xs text-gray-500">Connection pooling and retry settings for web crawling</p>
+            </div>
+          </div>
+
+          <div className="space-y-5">
+            {/* Keep Alive */}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-gray-700">Keep-Alive Connections</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Maintain persistent TCP connections to reuse between requests. Prevents disconnections during long crawl sessions.
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  className="sr-only peer"
+                  checked={keepAlive}
+                  onChange={(e) => setKeepAlive(e.target.checked)}
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-green-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+              </label>
+            </div>
+
+            {/* Pool Size */}
+            <div>
+              <label className="text-sm font-semibold text-gray-700">Connection Pool Size</label>
+              <p className="text-xs text-gray-500 mt-1 mb-2">
+                Max simultaneous connections per host. Higher = faster crawling but more resource usage.
+              </p>
+              <input
+                type="number"
+                min={1}
+                max={64}
+                value={poolSize}
+                onChange={e => setPoolSize(Math.max(1, Math.min(64, parseInt(e.target.value) || 1)))}
+                className="w-24 p-2.5 text-sm border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              />
+            </div>
+
+            {/* Timeout */}
+            <div>
+              <label className="text-sm font-semibold text-gray-700">Request Timeout (seconds)</label>
+              <p className="text-xs text-gray-500 mt-1 mb-2">
+                Max wait time per request before giving up. Increase for slow websites.
+              </p>
+              <input
+                type="number"
+                min={5}
+                max={300}
+                value={timeoutSecs}
+                onChange={e => setTimeoutSecs(Math.max(5, Math.min(300, parseInt(e.target.value) || 5)))}
+                className="w-24 p-2.5 text-sm border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              />
+            </div>
+
+            {/* Retry Count */}
+            <div>
+              <label className="text-sm font-semibold text-gray-700">Auto Retry Count</label>
+              <p className="text-xs text-gray-500 mt-1 mb-2">
+                Number of automatic retries on network errors or HTTP 5xx. Uses exponential backoff.
+              </p>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                value={retryCount}
+                onChange={e => setRetryCount(Math.max(0, Math.min(10, parseInt(e.target.value) || 0)))}
+                className="w-24 p-2.5 text-sm border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              />
+            </div>
+
+            {/* Retry Delay */}
+            <div>
+              <label className="text-sm font-semibold text-gray-700">Retry Base Delay (ms)</label>
+              <p className="text-xs text-gray-500 mt-1 mb-2">
+                Initial delay before first retry. Doubles on each subsequent attempt.
+              </p>
+              <input
+                type="number"
+                min={100}
+                max={30000}
+                step={100}
+                value={retryDelayMs}
+                onChange={e => setRetryDelayMs(Math.max(100, Math.min(30000, parseInt(e.target.value) || 100)))}
+                className="w-24 p-2.5 text-sm border border-slate-300 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              />
+            </div>
+
+            {/* Save */}
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                onClick={handleSaveNetwork}
+                disabled={netLoading ||
+                  (keepAlive === savedKeepAlive && poolSize === savedPoolSize &&
+                   timeoutSecs === savedTimeoutSecs && retryCount === savedRetryCount &&
+                   retryDelayMs === savedRetryDelayMs)}
+                className="px-5 py-2.5 text-sm font-bold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded-xl shadow-sm transition-colors"
+              >
+                {netLoading ? 'Saving...' : 'Save Network Settings'}
+              </button>
+              {netMessage && (
+                <p className={`text-xs font-medium ${netMessage.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                  {netMessage.text}
+                </p>
+              )}
+            </div>
           </div>
         </div>
 

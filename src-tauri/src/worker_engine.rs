@@ -769,10 +769,22 @@ impl WorkerEngine {
         // block_in_place: yield the tokio thread to blocking work without spawning
         // a new tokio runtime (which would panic when dropped inside an existing one).
         tokio::task::block_in_place(move || {
-            let timeout = std::time::Duration::from_secs(profile.timeout_secs.unwrap_or(30));
+            // Load global network settings for keep-alive / timeout.
+            let db_path = crate::commands::master_db_path();
+            let net = crate::network_client::NetworkSettings::load_from_db(&db_path);
+            let timeout = std::time::Duration::from_secs(
+                profile.timeout_secs.unwrap_or(net.timeout_secs),
+            );
             let mut builder = reqwest::blocking::Client::builder()
                 .timeout(timeout)
-                .danger_accept_invalid_certs(true);
+                .danger_accept_invalid_certs(true)
+                .connect_timeout(std::time::Duration::from_secs(10));
+
+            if net.keep_alive {
+                builder = builder
+                    .tcp_keepalive(Some(std::time::Duration::from_secs(60)))
+                    .tcp_nodelay(true);
+            }
 
             if let Some(ref ua) = profile.user_agent {
                 builder = builder.user_agent(ua.as_str());

@@ -3,6 +3,7 @@ mod crawler;
 pub mod data_preprocessor;
 mod finish_actions;
 mod item_matcher;
+mod network_client;
 mod pipeline_config;
 pub mod logs;
 mod migrations;

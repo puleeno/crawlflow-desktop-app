@@ -794,10 +794,17 @@ fn py_fetch_url(
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
 
         rt.block_on(async {
-            let client = reqwest::Client::builder()
-                .user_agent("CrawlFlow/1.0")
-                .build()
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            // Use the shared pooled client with global network settings
+            // so connections are reused across requests.
+            let db_path = crate::commands::master_db_path();
+            let net_settings = crate::network_client::NetworkSettings::load_from_db(&db_path);
+            let client = crate::network_client::get_shared_client(&net_settings)
+                .unwrap_or_else(|_| {
+                    reqwest::Client::builder()
+                        .user_agent("CrawlFlow/1.0")
+                        .build()
+                        .expect("Failed to build fallback HTTP client")
+                });
 
             let mut builder = client.get(&url);
             if let Some(h) = headers {

@@ -1366,7 +1366,7 @@ fn ensure_runtime_table(conn: &rusqlite::Connection) {
             runner_status TEXT NOT NULL DEFAULT 'stopped',
             runner_pid    INTEGER,
             runner_type   TEXT DEFAULT 'service',
-            service_control TEXT NOT NULL DEFAULT 'run',
+            service_control TEXT NOT NULL DEFAULT 'stopped',
             edit_pid      INTEGER,
             cycle_count   INTEGER NOT NULL DEFAULT 0,
             last_run_at   TEXT,
@@ -1389,9 +1389,12 @@ pub fn lock_project_edit_cmd(project_id: String) -> Result<(), String> {
     ensure_runtime_table(&conn);
     let pid = std::process::id() as i64;
     conn.execute(
-        "INSERT INTO project_runtime (project_id, edit_pid, updated_at)
-         VALUES (?1, ?2, datetime('now'))
-         ON CONFLICT(project_id) DO UPDATE SET edit_pid = ?2, updated_at = datetime('now')",
+        "INSERT INTO project_runtime (project_id, service_control, edit_pid, updated_at)
+         VALUES (?1, 'stopped', ?2, datetime('now'))
+         ON CONFLICT(project_id) DO UPDATE SET
+             edit_pid = ?2,
+             service_control = CASE WHEN runner_status = 'running' THEN service_control ELSE 'stopped' END,
+             updated_at = datetime('now')",
         rusqlite::params![project_id, pid],
     )
     .map_err(|e| e.to_string())?;
