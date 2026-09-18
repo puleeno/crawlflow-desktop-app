@@ -231,6 +231,13 @@ def register_presets():
                             "extract": "text",
                             "extractMultiple": True,
                         },
+                        {
+                            "id": "preset-ecom-html-7",
+                            "name": "stock_quantity",
+                            "extractFrom": "html-element",
+                            "selector": "[class*=\"Field_quantityContainer__\"] span",
+                            "extract": "text",
+                        },
                     ],
                     "presets": ["ecommerce-product"],
                     "inspectorUrl": "https://www.oreka.vn/mua-ban-sach-thieu-nhi/bo-sach-nhung-cam-xuc-nho-quan-trong-cua-be--6-cuon----bia-cung--in-mau-detail/1088773",
@@ -787,6 +794,14 @@ def _safe_int(val, default=0):
         return default
 
 
+def _stock_number(val, default=""):
+    """Trich so luong ton kho tu chuoi, VD '1 sản phẩm có sẵn' -> '1'."""
+    if val is None:
+        return default
+    m = re.search(r'\d+', str(val))
+    return m.group(0) if m else default
+
+
 def _clean_category(value):
     """Chuan hoa chuoi category:
     - Loai bo dau '>' (va cac ky tu phan tach breadcrumb nhu ; | / › >>)
@@ -886,6 +901,12 @@ def oreka_filter_parsed_data(data_json):
             item["image_url"] = _upgrade_oreka_image(item.get("image_url", ""))
         if "images" in item:
             item["images"] = _upgrade_oreka_images(item.get("images"))
+        # stock_quantity: text goc co dang "1 sản phẩm có sẵn" -> chi giu lai so.
+        if "stock_quantity" in item:
+            item["stock_quantity"] = _stock_number(item.get("stock_quantity"))
+        # stock: dong bo voi stock_quantity neu co (uu tien so luong chinh xac).
+        if "stock_quantity" in item:
+            item["stock"] = item["stock_quantity"]
 
     return json.dumps(items)
 
@@ -1169,6 +1190,12 @@ def _parse_product_from_html(html, url):
         stock_match = re.search(r'(?:Còn|còn)\s*(\d+)\s*(?:sản phẩm|sp|hàng)', html, re.IGNORECASE)
         if stock_match:
             stock = stock_match.group(1)
+    stock_quantity = ""
+    qty_match = re.search(r'class\s*=\s*["\'][^"\']*Field_quantityContainer__[^"\']*["\'][^>]*>\s*<span[^>]*>\s*(\d+)', html, re.IGNORECASE)
+    if qty_match:
+        stock_quantity = qty_match.group(1)
+    if not stock and stock_quantity:
+        stock = stock_quantity
 
     # Danh muc
     breadcrumb = re.search(r'<ul[^>]*class\s*=\s*["\'][^"\']*breadcrumb[^"\']*["\']>(.*?)</ul>', html, re.DOTALL)
@@ -1200,6 +1227,7 @@ def _parse_product_from_html(html, url):
         "specs": specs,
         "category": _clean_category(category),
         "stock": stock,
+        "stock_quantity": stock_quantity,
         "availability": availability or "Còn hàng",
         "crawled_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         "raw_html": html,
@@ -1688,7 +1716,7 @@ def _export_xlsx(products, filepath, seen_ids):
             ws.max_row,
             item.get("old_price", 0),
             item.get("price", 0),
-            item.get("stock", ""),
+            item.get("stock_quantity") or item.get("stock", ""),
             _spec_value(specs, "Đơn vị", "Đơn vị tính"),
             _spec_value(specs, "Trọng lượng", "Khối lượng", "Khối lượng (g)"),
             _spec_value(specs, "Kích thước", "Kích thước sản phẩm"),
@@ -1737,7 +1765,7 @@ def _export_csv(products, filepath):
                 count + 1,
                 item.get("old_price", 0),
                 item.get("price", 0),
-                item.get("stock", ""),
+                item.get("stock_quantity") or item.get("stock", ""),
                 _spec_value(specs, "Đơn vị", "Đơn vị tính"),
                 _spec_value(specs, "Trọng lượng", "Khối lượng", "Khối lượng (g)"),
                 _spec_value(specs, "Kích thước", "Kích thước sản phẩm"),
