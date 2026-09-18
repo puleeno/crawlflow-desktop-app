@@ -144,6 +144,26 @@ export const ProjectManager: React.FC<ProjectManagerProps> = ({ onOpenProject, o
                     setServiceInfos((prev) => {
                         const existing = prev[info.project_id];
                         if (!existing) return prev;
+                        // Avoid glitching: Ignore empty Ticker progress if the plugin is manually driving it
+                        if (
+                            payload.items_total === 0 &&
+                            payload.phase === 'running' &&
+                            existing.progress?.phase === 'fetching'
+                        ) {
+                            // Only update the message from the ticker (so live logs still show)
+                            return {
+                                ...prev,
+                                [info.project_id]: {
+                                    ...existing,
+                                    progress: {
+                                        ...existing.progress,
+                                        message: payload.message || existing.progress.message,
+                                    },
+                                    ws_port: port,
+                                },
+                            };
+                        }
+
                         return {
                             ...prev,
                             [info.project_id]: {

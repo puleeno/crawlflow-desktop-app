@@ -1,0 +1,1 @@
+{"id": "tiki-shop-crawler", "name": "Tiki Shop Crawler", "version": "1.0.0", "description": "Crawl toan bo san pham tu mot shop/category tren tiki.vn", "capabilities": ["dataSource", "preprocessor", "processor", "export"]}
